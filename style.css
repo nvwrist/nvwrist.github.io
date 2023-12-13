@@ -1,0 +1,51 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+}
+header {
+    background-color: #f2f2f2;
+    width: 100%;
+    padding: 10px 0;
+    text-align: center;
+}
+.categories, .cart {
+    display: inline-block;
+    margin: 0 20px;
+}
+.products {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    padding: 20px;
+    justify-content: center;
+    max-width: 1200px;
+}
+.product {
+    text-align: center;
+}
+.product img {
+    width: 100%;
+    height: 200px;
+    object-fit: cover;
+    margin-bottom: 10px;
+}
+.product .name {
+    font-weight: bold;
+}
+.product .price {
+    color: green;
+}
+.quantity {
+    margin-top: 10px;
+}
+.quantity button {
+    padding: 5px 10px;
+    margin: 0 5px;
+    font-weight: bold;
+    cursor: pointer;
+}
