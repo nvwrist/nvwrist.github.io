@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Parfum Store — Главная</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Icons" rel="stylesheet">
+  <style>
+    :root{
+      --bg: #fff9fb;
+      --card: #ffffff;
+      --muted: #8b8792;
+      --accent: #f8cdd0; /* soft pink */
+      --accent-2: #cfeef6; /* soft blue */
+      --primary: #6b4b8a; /* lavender purple */
+      --success: #2e7d32;
+      --danger: #c62828;
+      --glass: rgba(255,255,255,0.6);
+      --radius: 14px;
+      --shadow-1: 0 6px 18px rgba(99,86,122,0.08);
+      --shadow-2: 0 10px 30px rgba(92,80,120,0.12);
+      --max-width: 1200px;
+    }
+
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family:Roboto, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial;
+      background: linear-gradient(180deg, var(--bg) 0%, #fff 100%);
+      color:#231f20;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+      padding-bottom:80px;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Layout */
+    .container{max-width:var(--max-width);margin:0 auto;padding:24px}
+
+    header{
+      position:sticky;top:0;backdrop-filter: blur(6px);background:linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.9));border-bottom:1px solid rgba(0,0,0,0.03);z-index:40
+    }
+    .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 24px;max-width:var(--max-width);margin:0 auto;flex-wrap:wrap}
+    .brand{display:flex;align-items:center;gap:12px;min-width:0}
+    .logo{width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;color:var(--primary);font-weight:700;font-size:18px;box-shadow:var(--shadow-1);flex-shrink:0}
+    .brand h1{margin:0;font-size:18px;letter-spacing:0.2px;white-space:nowrap}
+    nav{display:flex;align-items:center;gap:8px;flex:1;min-width:180px;justify-content:center}
+
+    .search{display:flex;align-items:center;background:var(--card);padding:8px 12px;border-radius:999px;box-shadow:var(--shadow-1);min-width:220px;max-width:560px;width:100%}
+    .search input{border:0;outline:none;background:transparent;padding:6px;font-size:14px;width:100%}
+    .icon{font-family:'Material Icons';font-size:20px;margin-right:6px;color:var(--muted)}
+
+    .actions{display:flex;align-items:center;gap:12px;flex-shrink:0}
+    .btn-icon{background:transparent;border:0;padding:8px;border-radius:10px;cursor:pointer}
+    .btn-primary{background:var(--primary);color:white;padding:8px 14px;border-radius:12px;border:0;cursor:pointer;font-weight:500}
+
+    /* Hero */
+    .hero{display:grid;grid-template-columns:1fr 420px;gap:28px;align-items:center;padding:36px 0}
+    .hero-card{background:linear-gradient(180deg, rgba(255,255,255,0.7), rgba(255,255,255,0.85));padding:28px;border-radius:20px;box-shadow:var(--shadow-2)}
+    .hero h2{margin:0 0 6px 0;font-size:28px;color:var(--primary)}
+    .hero p{margin:0;color:var(--muted)}
+    .hero-cta{margin-top:16px}
+
+    .hero-side{display:flex;flex-direction:column;gap:12px}
+    .promo{border-radius:12px;padding:12px;background:linear-gradient(90deg,var(--accent),#fff);box-shadow:var(--shadow-1);display:flex;gap:8px;align-items:center}
+
+    /* Section titles */
+    .section{margin-top:28px}
+    .section-header{display:flex;align-items:end;justify-content:space-between}
+    .section h3{margin:0}
+    .section p{color:var(--muted);margin:2px 0 0 0;font-size:13px}
+
+    /* Product grid */
+    .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-top:16px}
+    .card{background:var(--card);border-radius:12px;padding:12px;box-shadow:var(--shadow-1);transition:transform 220ms cubic-bezier(.2,.9,.3,1), box-shadow 220ms;cursor:pointer;display:flex;flex-direction:column}
+    .card:hover{transform:translateY(-8px);box-shadow:var(--shadow-2)}
+    .card .img-wrap{border-radius:10px;overflow:hidden;position:relative;padding-top:100%}
+    .card img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+    .badge{position:absolute;left:10px;top:10px;background:var(--primary);color:white;padding:6px 8px;border-radius:8px;font-size:12px}
+
+    .card-body{padding-top:10px;display:flex;flex-direction:column;gap:8px}
+    .meta{display:flex;justify-content:space-between;align-items:center}
+    .title{font-weight:500}
+    .brand-small{font-size:13px;color:var(--muted)}
+    .price{font-weight:700}
+    .rating{display:flex;gap:4px;align-items:center}
+    .rating .star{font-family:'Material Icons';font-size:16px;color:#ffb74d}
+
+    .card-actions{display:flex;align-items:center;justify-content:space-between;margin-top:8px}
+    .small{font-size:13px;color:var(--muted)}
+    .ghost{background:transparent;border:1px solid rgba(0,0,0,0.06);padding:8px;border-radius:10px}
+
+    /* Footer */
+    footer{padding:28px 24px;margin-top:40px;background:linear-gradient(180deg, rgba(255,255,255,0), rgba(245,241,247,0.6));border-top:1px solid rgba(0,0,0,0.03)}
+    .footer-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;max-width:var(--max-width);margin:0 auto}
+    .legal{color:var(--muted);font-size:13px}
+
+    /* Modal */
+    .modal-backdrop{position:fixed;inset:0;background:rgba(16,12,18,0.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:80;opacity:0;pointer-events:none;transition:opacity 220ms}
+    .modal-backdrop.open{opacity:1;pointer-events:auto}
+    .modal{background:linear-gradient(180deg,#fff,#fff);border-radius:16px;max-width:920px;width:100%;display:grid;grid-template-columns:1fr 420px;gap:20px;padding:20px;box-shadow:0 30px 60px rgba(8,6,12,0.5);transform:translateY(20px);opacity:0;transition:transform 240ms, opacity 240ms;max-height:calc(100vh - 80px);overflow:auto}
+    .modal-backdrop.open .modal{transform:none;opacity:1}
+    .modal .large-img{border-radius:12px;overflow:hidden}
+    .modal .large-img img{width:100%;height:100%;object-fit:cover;display:block}
+    .modal .content h4{margin:0 0 8px 0}
+    .variant{display:flex;gap:8px;align-items:center;margin-top:8px}
+    .variant button{border-radius:10px;padding:8px 10px;border:1px solid rgba(0,0,0,0.06);background:transparent;cursor:pointer}
+
+    /* Accessibility focus */
+    .card:focus{outline:3px solid rgba(107,75,138,0.12);outline-offset:4px}
+    .btn-primary:focus, .ghost:focus, .btn-icon:focus{outline:2px solid rgba(107,75,138,0.18);outline-offset:2px}
+
+    /* responsive (more granular) */
+    @media (max-width:1100px){
+      .grid{grid-template-columns:repeat(3,1fr)}
+      .hero{grid-template-columns:1fr 320px}
+    }
+    @media (max-width:900px){
+      .hero{grid-template-columns:1fr}
+      .hero-side{flex-direction:row;gap:10px}
+      .modal{grid-template-columns:1fr;max-width:720px}
+      .modal .large-img{height:320px}
+    }
+    @media (max-width:720px){
+      .grid{grid-template-columns:repeat(2,1fr)}
+      .topbar{padding:10px 16px}
+      nav{order:2;justify-content:flex-start;padding-top:8px}
+      .actions{order:3;width:100%;display:flex;justify-content:flex-end;margin-top:8px}
+      .brand{order:1}
+      .logo{width:40px;height:40px}
+      .brand h1{font-size:16px}
+      .hero-card{padding:18px}
+      .hero h2{font-size:22px}
+      .img-wrap{padding-top:92%}
+      .modal .large-img{height:260px}
+      .modal .content{padding:8px}
+      .footer-grid{grid-template-columns:1fr 1fr;gap:12px}
+    }
+    @media (max-width:520px){
+      .grid{grid-template-columns:1fr}
+      .search{min-width:0;width:100%}
+      nav{flex:1;justify-content:flex-start}
+      .actions{justify-content:flex-end}
+      .hero{padding:20px 0}
+      .hero-side{flex-direction:row}
+      .brand h1{font-size:15px}
+      .logo{width:36px;height:36px;font-size:16px}
+      .modal{padding:12px}
+      .modal .large-img{height:220px}
+      .footer-grid{grid-template-columns:1fr;gap:12px}
+    }
+
+    @keyframes floatIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+    .card, .hero-card, .promo{animation:floatIn 420ms ease both}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="topbar">
+      <div class="brand">
+        <div class="logo">PS</div>
+        <div>
+          <h1>Parfum Store</h1>
+          <div style="font-size:12px;color:var(--muted)">Нежные ароматы. Быстрая доставка.</div>
+        </div>
+      </div>
+
+      <nav style="flex:1;margin:0 18px;display:flex;align-items:center;justify-content:center;gap:16px">
+        <div class="search" role="search" aria-label="Поиск товаров">
+          <span class="icon">search</span>
+          <input placeholder="Найти аромат, бренд или ноту..." />
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn-icon" title="Избранное"><span class="icon">favorite_border</span></button>
+          <button class="btn-icon" title="Корзина"><span class="icon">shopping_cart</span></button>
+        </div>
+      </nav>
+
+      <div class="actions">
+        <button class="btn-primary">Войти</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <div class="hero-card">
+        <h2>Нежные ароматы — для каждого дня</h2>
+        <p>Новинки, бестселлеры и коллекции от известных домов парфюмерии. Подбор по настроению, интенсивности и нотам.</p>
+        <div class="hero-cta">
+          <button class="btn-primary">Подобрать аромат</button>
+          <button class="ghost" style="margin-left:10px">Карта ароматов</button>
+        </div>
+        <div style="margin-top:18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <div style="display:flex;gap:10px;align-items:center">
+            <strong style="font-size:28px;color:var(--primary)">120+</strong>
+            <div style="font-size:13px;color:var(--muted)">ароматов в каталоге</div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <strong style="font-size:28px;color:var(--primary)">4.8</strong>
+            <div style="font-size:13px;color:var(--muted)">средний рейтинг</div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="hero-side">
+        <div class="promo">
+          <div style="flex:1">
+            <div style="font-weight:600">Сезонная распродажа</div>
+            <div style="font-size:13px;color:var(--muted)">Скидки до 30% на избранные ароматы</div>
+          </div>
+          <div style="font-size:32px;color:var(--primary)">🌸</div>
+        </div>
+
+        <div class="promo" style="background:linear-gradient(90deg,var(--accent-2),#fff)">
+          <div style="flex:1">
+            <div style="font-weight:600">Бестселлеры недели</div>
+            <div style="font-size:13px;color:var(--muted)">Попробуйте хиты в мини-формате</div>
+          </div>
+          <div style="font-size:28px;color:var(--primary)">⭐</div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- Trending -->
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h3>В тренде</h3>
+          <p>Ароматы, которые покупают и обсуждают прямо сейчас</p>
+        </div>
+        <div style="align-self:flex-end"><a href="#">Смотреть все →</a></div>
+      </div>
+
+      <div class="grid" id="trending-grid">
+        <!-- product card template: data attributes used by modal -->
+
+        <article class="card" tabindex="0" role="button"
+                 data-name="Lumière Blanche"
+                 data-brand="Maison Rosa"
+                 data-price="€89"
+                 data-oldprice="€120"
+                 data-rating="4.7"
+                 data-img="https://images.unsplash.com/photo-1676951394482-1e74ba15d703?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MTI2fHxwYXJmdW18ZW58MHx8MHx8fDA%3D"
+                 data-desc="Нежный цветочный шлейф с нотами жасмина и белой розы. Подходит для дневных прогулок и легких свиданий."
+                 data-volumes='["30 ml","50 ml","100 ml"]'>
+          <div class="img-wrap">
+            <img loading="lazy" src="https://images.unsplash.com/photo-1676951394482-1e74ba15d703?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MTI2fHxwYXJmdW18ZW58MHx8MHx8fDA%3D" alt="Lumiere Blanche">
+            <div class="badge">HOT</div>
+          </div>
+          <div class="card-body">
+            <div class="meta">
+              <div>
+                <div class="title">Lumière Blanche</div>
+                <div class="brand-small">Maison Rosa</div>
+              </div>
+              <div class="price">€89 <span style="font-size:13px;color:var(--muted);text-decoration:line-through;margin-left:6px">€120</span></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div class="rating"><span class="star">star</span><span class="small">4.7</span></div>
+              <div class="card-actions">
+                <button class="ghost" title="Просмотреть">Подробнее</button>
+                <button class="btn-icon" title="В корзину" aria-label="Добавить в корзину"><span class="icon">add_shopping_cart</span></button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card" tabindex="0" role="button"
+                 data-name="Noir Intense"
+                 data-brand="Homme Atelier"
+                 data-price="€72"
+                 data-rating="4.6"
+                 data-img="https://images.unsplash.com/photo-1621962728420-a7328f6ea8ef?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MTM2fHxwYXJmdW18ZW58MHx8MHx8fDA%3D"
+                 data-desc="Тёплый древесно-пряный аромат с мускусными и табачными акцентами. Идеален для вечера."
+                 data-volumes='["50 ml","100 ml"]'>
+          <div class="img-wrap"><img loading="lazy" src="https://images.unsplash.com/photo-1621962728420-a7328f6ea8ef?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MTM2fHxwYXJmdW18ZW58MHx8MHx8fDA%3D" alt="Noir Intense"></div>
+          <div class="card-body">
+            <div class="meta">
+              <div>
+                <div class="title">Noir Intense</div>
+                <div class="brand-small">Homme Atelier</div>
+              </div>
+              <div class="price">€72</div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div class="rating"><span class="star">star</span><span class="small">4.6</span></div>
+              <div class="card-actions">
+                <button class="ghost" title="Просмотреть">Подробнее</button>
+                <button class="btn-icon" title="В корзину"><span class="icon">add_shopping_cart</span></button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card" tabindex="0" role="button"
+                 data-name="Morning Dew"
+                 data-brand="Atélie"
+                 data-price="€55"
+                 data-rating="4.9"
+                 data-img="https://images.unsplash.com/photo-1666621630026-862eea07236c?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MTQ0fHxwYXJmdW18ZW58MHx8MHx8fDA%3D"
+                 data-desc="Свежий цитрусово-озоновый аромат с зелёными нотами. Отличный выбор для лета."
+                 data-volumes='["30 ml","50 ml"]'>
+          <div class="img-wrap"><img loading="lazy" src="https://images.unsplash.com/photo-1666621630026-862eea07236c?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MTQ0fHxwYXJmdW18ZW58MHx8MHx8fDA%3D" alt="Morning Dew"></div>
+          <div class="card-body">
+            <div class="meta">
+              <div>
+                <div class="title">Morning Dew</div>
+                <div class="brand-small">Atélie</div>
+              </div>
+              <div class="price">€55</div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div class="rating"><span class="star">star</span><span class="small">4.9</span></div>
+              <div class="card-actions">
+                <button class="ghost" title="Просмотреть">Подробнее</button>
+                <button class="btn-icon" title="В корзину"><span class="icon">add_shopping_cart</span></button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card" tabindex="0" role="button"
+                 data-name="Velvet Amber"
+                 data-brand="Orchideé"
+                 data-price="€99"
+                 data-rating="4.8"
+                 data-img="https://images.unsplash.com/photo-1514557179557-9efc4d7949cc?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8Nnx8cGFyZnVtfGVufDB8fDB8fHww"
+                 data-desc="Шелковистый амбровый шлейф с пряными акцентами и ванилью."
+                 data-volumes='["50 ml","100 ml"]'>
+          <div class="img-wrap"><img loading="lazy" src="https://images.unsplash.com/photo-1514557179557-9efc4d7949cc?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8Nnx8cGFyZnVtfGVufDB8fDB8fHww" alt="Velvet Amber"></div>
+          <div class="card-body">
+            <div class="meta">
+              <div>
+                <div class="title">Velvet Amber</div>
+                <div class="brand-small">Orchideé</div>
+              </div>
+              <div class="price">€99</div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div class="rating"><span class="star">star</span><span class="small">4.8</span></div>
+              <div class="card-actions">
+                <button class="ghost" title="Просмотреть">Подробнее</button>
+                <button class="btn-icon" title="В корзину"><span class="icon">add_shopping_cart</span></button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- Men & Women sections short -->
+    <section class="section" style="display:flex;gap:18px;flex-direction:column">
+      <div style="display:flex;gap:18px;flex-wrap:wrap">
+        <div style="flex:1;min-width:280px">
+          <div class="section-header">
+            <div>
+              <h3>Для мужчин</h3>
+              <p>Дерево, кожа, табак — стойкие и мужественные композиции</p>
+            </div>
+            <div style="align-self:flex-end"><a href="#">Смотреть все</a></div>
+          </div>
+          <div class="grid" style="margin-top:12px">
+            <!-- small set of 2 cards for men -->
+            <article class="card" tabindex="0" role="button"
+                     data-name="Cedar Road"
+                     data-brand="Nord Perfumes"
+                     data-price="€65"
+                     data-rating="4.5"
+                     data-img="https://images.unsplash.com/photo-1622618991746-fe6004db3a47?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MjR8fHBhcmZ1bXxlbnwwfHwwfHx8MA%3D%3D"
+                     data-desc="Древесно-пряный аромат для любителей строгих композиций"
+                     data-volumes='["50 ml","100 ml"]'>
+              <div class="img-wrap"><img loading="lazy" src="https://images.unsplash.com/photo-1622618991746-fe6004db3a47?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MjR8fHBhcmZ1bXxlbnwwfHwwfHx8MA%3D%3D" alt="Cedar Road"></div>
+              <div class="card-body">
+                <div class="meta"><div><div class="title">Cedar Road</div><div class="brand-small">Nord Perfumes</div></div><div class="price">€65</div></div>
+                <div style="display:flex;justify-content:space-between;align-items:center"><div class="rating"><span class="star">star</span><span class="small">4.5</span></div><div class="card-actions"><button class="ghost">Подробнее</button><button class="btn-icon"><span class="icon">add_shopping_cart</span></button></div></div>
+              </div>
+            </article>
+
+            <article class="card" tabindex="0" role="button"
+                     data-name="Iron Oak"
+                     data-brand="Forge Labs"
+                     data-price="€79"
+                     data-rating="4.4"
+                     data-img="https://images.unsplash.com/photo-1599342166997-58552e91d9f5?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8NjR8fHBhcmZ1bXxlbnwwfHwwfHx8MA%3D%3D"
+                     data-desc="Смелая композиция с нотой кожи и дуба"
+                     data-volumes='["50 ml","100 ml"]'>
+              <div class="img-wrap"><img loading="lazy" src="https://images.unsplash.com/photo-1599342166997-58552e91d9f5?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8NjR8fHBhcmZ1bXxlbnwwfHwwfHx8MA%3D%3D" alt="Iron Oak"></div>
+              <div class="card-body"><div class="meta"><div><div class="title">Iron Oak</div><div class="brand-small">Forge Labs</div></div><div class="price">€79</div></div><div style="display:flex;justify-content:space-between;align-items:center"><div class="rating"><span class="star">star</span><span class="small">4.4</span></div><div class="card-actions"><button class="ghost">Подробнее</button><button class="btn-icon"><span class="icon">add_shopping_cart</span></button></div></div></div>
+            </article>
+
+          </div>
+        </div>
+
+        <div style="flex:1;min-width:280px">
+          <div class="section-header">
+            <div>
+              <h3>Для женщин</h3>
+              <p>Цветочно-ориентальные и гурманские ароматы для романтичных и сильных</p>
+            </div>
+            <div style="align-self:flex-end"><a href="#">Смотреть все</a></div>
+          </div>
+          <div class="grid" style="margin-top:12px">
+            <article class="card" tabindex="0" role="button"
+                     data-name="Rose Velvet"
+                     data-brand="Belle Maison"
+                     data-price="€69"
+                     data-rating="4.7"
+                     data-img="https://images.unsplash.com/photo-1676951334972-2e65e67f4cbe?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8NzZ8fHBhcmZ1bXxlbnwwfHwwfHx8MA%3D%3D"
+                     data-desc="Роскошный букет роз с лёгкой кислинкой малины"
+                     data-volumes='["30 ml","50 ml"]'>
+              <div class="img-wrap"><img loading="lazy" src="https://images.unsplash.com/photo-1676951334972-2e65e67f4cbe?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8NzZ8fHBhcmZ1bXxlbnwwfHwwfHx8MA%3D%3D" alt="Rose Velvet"></div>
+              <div class="card-body"><div class="meta"><div><div class="title">Rose Velvet</div><div class="brand-small">Belle Maison</div></div><div class="price">€69</div></div><div style="display:flex;justify-content:space-between;align-items:center"><div class="rating"><span class="star">star</span><span class="small">4.7</span></div><div class="card-actions"><button class="ghost">Подробнее</button><button class="btn-icon"><span class="icon">add_shopping_cart</span></button></div></div></div>
+            </article>
+
+            <article class="card" tabindex="0" role="button"
+                     data-name="Vanilla Sky"
+                     data-brand="Doux Parfums"
+                     data-price="€59"
+                     data-rating="4.3"
+                     data-img="https://images.unsplash.com/photo-1676951448427-81be1ed4530e?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MTI5fHxwYXJmdW18ZW58MHx8MHx8fDA%3D"
+                     data-desc="Гурманский аромат с нотами ванили и карамели"
+                     data-volumes='["50 ml"]'>
+              <div class="img-wrap"><img loading="lazy" src="https://images.unsplash.com/photo-1676951448427-81be1ed4530e?w=900&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MTI5fHxwYXJmdW18ZW58MHx8MHx8fDA%3D" alt="Vanilla Sky"></div>
+              <div class="card-body"><div class="meta"><div><div class="title">Vanilla Sky</div><div class="brand-small">Doux Parfums</div></div><div class="price">€59</div></div><div style="display:flex;justify-content:space-between;align-items:center"><div class="rating"><span class="star">star</span><span class="small">4.3</span></div><div class="card-actions"><button class="ghost">Подробнее</button><button class="btn-icon"><span class="icon">add_shopping_cart</span></button></div></div></div>
+            </article>
+
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container footer-grid">
+      <div>
+        <h4>Parfum Store</h4>
+        <div class="legal">Адрес: ул. Примерная, 7 · Доставка по всей стране · Поддержка: support@parfum.store</div>
+      </div>
+      <div>
+        <h4>Помощь</h4>
+        <ul style="list-style:none;padding:0;margin:0;color:var(--muted)">
+          <li>Доставка</li>
+          <li>Возврат</li>
+          <li>Оплата</li>
+        </ul>
+      </div>
+      <div>
+        <h4>Подписка</h4>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:8px">Получайте новости и скидки</div>
+        <div style="display:flex;gap:8px"><input placeholder="Ваш email" style="padding:8px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);flex:1" /><button class="btn-primary">Подписаться</button></div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Modal -->
+  <div id="modalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="large-img">
+        <img id="modalImg" src="" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:12px" />
+      </div>
+      <div class="content">
+        <h4 id="modalTitle">Название аромата</h4>
+        <div id="modalBrand" style="color:var(--muted);margin-bottom:8px">Бренд</div>
+        <div style="display:flex;gap:12px;align-items:center">
+          <div id="modalPrice" style="font-weight:700;font-size:20px"></div>
+          <div id="modalRating" style="color:var(--muted)"></div>
+        </div>
+        <p id="modalDesc" style="margin-top:14px;color:var(--muted)"></p>
+
+        <div style="margin-top:12px">
+          <div style="font-size:13px;color:var(--muted)">Объем</div>
+          <div id="modalVolumes" class="variant"></div>
+        </div>
+
+        <div style="margin-top:18px;display:flex;gap:12px">
+          <button class="btn-primary" id="modalAdd">Добавить в корзину</button>
+          <button class="ghost" id="modalClose">Закрыть</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Accessibility helpers
+    const backdrop = document.getElementById('modalBackdrop');
+    const modalImg = document.getElementById('modalImg');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalBrand = document.getElementById('modalBrand');
+    const modalPrice = document.getElementById('modalPrice');
+    const modalRating = document.getElementById('modalRating');
+    const modalDesc = document.getElementById('modalDesc');
+    const modalVolumes = document.getElementById('modalVolumes');
+    const modalClose = document.getElementById('modalClose');
+    const modalAdd = document.getElementById('modalAdd');
+
+    function openModalFromCard(card){
+      const name = card.dataset.name || '—';
+      const brand = card.dataset.brand || '';
+      const price = card.dataset.price || '';
+      const rating = card.dataset.rating || '';
+      const img = card.dataset.img || '';
+      const desc = card.dataset.desc || '';
+      let volumes = [];
+      try{ volumes = JSON.parse(card.dataset.volumes || '[]'); }catch(e){ volumes = [] }
+
+      modalImg.src = img;
+      modalImg.alt = name + ' — ' + brand;
+      modalTitle.textContent = name;
+      modalBrand.textContent = brand;
+      modalPrice.textContent = price;
+      modalRating.textContent = rating ? ('★ ' + rating) : '';
+      modalDesc.textContent = desc;
+
+      modalVolumes.innerHTML = '';
+      if(volumes.length){
+        volumes.forEach((v,i)=>{
+          const btn = document.createElement('button');
+          btn.textContent = v;
+          if(i===0) btn.style.borderColor = 'rgba(107,75,138,0.9)';
+          btn.addEventListener('click',()=>{
+            // simple visual selection
+            [...modalVolumes.children].forEach(ch=>ch.style.borderColor='rgba(0,0,0,0.06)');
+            btn.style.borderColor='rgba(107,75,138,0.9)';
+          })
+          modalVolumes.appendChild(btn);
+        })
+      }
+
+      backdrop.classList.add('open');
+      backdrop.setAttribute('aria-hidden','false');
+      // trap focus
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeModal(){
+      backdrop.classList.remove('open');
+      backdrop.setAttribute('aria-hidden','true');
+      document.body.style.overflow = '';
+    }
+
+    // attach click handlers to all cards
+    document.querySelectorAll('.card').forEach(card=>{
+      card.addEventListener('click', (e)=>{
+        // avoid clicks on internal buttons triggering open
+        if(e.target.tagName.toLowerCase()==='button' || e.target.closest('button')) return;
+        openModalFromCard(card);
+      });
+      card.addEventListener('keydown', (e)=>{
+        if(e.key==='Enter' || e.key===' ') openModalFromCard(card);
+      });
+    });
+
+    modalClose.addEventListener('click', closeModal);
+    backdrop.addEventListener('click', (e)=>{ if(e.target===backdrop) closeModal(); });
+    document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeModal(); });
+
+    modalAdd.addEventListener('click', ()=>{
+      // temporary feedback — in real app, you would call API / update cart state
+      modalAdd.textContent = 'Добавлено ✓';
+      modalAdd.disabled = true;
+      setTimeout(()=>{ modalAdd.textContent = 'Добавить в корзину'; modalAdd.disabled = false; }, 1500);
+    });
+
+    // Ensure inputs don't zoom on mobile (iOS)
+    document.addEventListener('focusin', (e)=>{ if(e.target.tagName==='INPUT' || e.target.tagName==='TEXTAREA') document.documentElement.style.fontSize='100%'; });
+  </script>
+</body>
+</html>
