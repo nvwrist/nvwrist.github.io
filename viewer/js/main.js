@@ -118,6 +118,7 @@ scene.add(modelRoot);
 const character = createCharacter();
 scene.add(character.shadow);
 let current = { obj: character.group, kind: 'char', name: 'Neon Runner', clips: [] };
+let charEntry = current; // заменяется на glb-персонажа, когда он загрузится
 let mixer = null, action = null;
 
 function eachMat(fn) {
@@ -198,16 +199,21 @@ function fillPoseSelect() {
   const names = current.kind === 'char' ? character.poses : ['— без анимации —', ...current.clips.map((c, i) => `${i + 1}. ${c.name || 'clip'}`)];
   names.forEach((n, i) => sel.add(new Option(n, i)));
   sel.disabled = names.length < 2;
-  if (current.kind === 'loaded' && current.clips.length) { sel.value = '1'; playClip(0); }
+  if (current.kind === 'loaded' && current.clips.length) {
+    const idle = Math.max(0, current.clips.findIndex((c) => /idle/i.test(c.name)));
+    sel.value = String(idle + 1); playClip(idle);
+  }
 }
 function playClip(i) {
-  action?.stop();
-  action = i >= 0 && mixer ? mixer.clipAction(current.clips[i]).play() : null;
+  const prev = action;
+  action = i >= 0 && mixer ? mixer.clipAction(current.clips[i]) : null;
+  if (action) { action.reset().play(); if (prev && prev !== action) action.crossFadeFrom(prev, 0.35, false); }
+  else prev?.stop();
 }
 
 function showModel(entry) {
   modelRoot.clear();
-  if (current.kind === 'loaded' && current !== entry) disposeTree(current.obj);
+  if (current.kind === 'loaded' && !current.keep && current !== entry) disposeTree(current.obj);
   current = entry;
   modelRoot.add(entry.obj);
   mixer = entry.kind === 'loaded' && entry.clips.length ? new THREE.AnimationMixer(entry.obj) : null;
@@ -306,7 +312,7 @@ $('pose').addEventListener('change', (e) => {
   if (current.kind === 'char') character.setPose(character.poses[i]);
   else playClip(i - 1);
 });
-$('btnChar').onclick = () => { if (current.kind !== 'char') showModel({ obj: character.group, kind: 'char', name: 'Neon Runner', clips: [] }); else resetCamera(); };
+$('btnChar').onclick = () => { if (current !== charEntry) showModel(charEntry); else resetCamera(); };
 $('file').addEventListener('change', (e) => { loadFiles(e.target.files); e.target.value = ''; });
 $('btnReset').onclick = resetCamera;
 $('toggle').onclick = () => $('panel').classList.toggle('closed');
@@ -324,7 +330,7 @@ $('btnShot').onclick = () => {
 $('btnExport').onclick = () => {
   const obj = current.obj;
   new GLTFExporter().parse(obj, (res) => {
-    download(new Blob([res], { type: 'model/gltf-binary' }), (current.kind === 'char' ? 'neon-runner' : 'model') + '.glb');
+    download(new Blob([res], { type: 'model/gltf-binary' }), (current === charEntry ? 'neon-runner' : 'model') + '.glb');
     toast('Экспортировано .glb');
   }, (e) => toast('Ошибка экспорта: ' + e.message), { binary: true });
 };
@@ -341,8 +347,16 @@ addEventListener('drop', (e) => { e.preventDefault(); dragN = 0; drop.classList.
 addEventListener('resize', resize);
 setEnv('roof');
 resize();
-showModel(current);
 applyStyle();
+showModel(current);
+// основной персонаж — .glb из Blender (tools/make_character.py); процедурный остаётся запасным
+new GLTFLoader().loadAsync('./models/neon-runner.glb').then((gltf) => {
+  const holder = new THREE.Group();
+  holder.add(gltf.scene);
+  fitModel(holder);
+  charEntry = { obj: holder, kind: 'loaded', keep: true, name: 'Neon Runner', clips: gltf.animations };
+  showModel(charEntry);
+}).catch((e) => console.warn('glb персонаж не загрузился, используем процедурного', e));
 
 const clock = new THREE.Clock();
 let fpsN = 0, fps = 0;
@@ -366,4 +380,4 @@ function frame() {
   requestAnimationFrame(frame);
 }
 frame();
-window.__ps1 = { S, scene, camera, renderer, setEnv, character };
+window.__ps1 = { S, scene, camera, renderer, controls, setEnv, character };
