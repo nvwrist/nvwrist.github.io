@@ -350,13 +350,13 @@ resize();
 applyStyle();
 showModel(current);
 // основной персонаж — .glb из Blender (tools/make_character.py); процедурный остаётся запасным
-new GLTFLoader().loadAsync('./models/neon-runner.glb').then((gltf) => {
+new GLTFLoader().loadAsync('./models/neon-runner.glb?v=3').then((gltf) => {
   const holder = new THREE.Group();
   holder.add(gltf.scene);
   fitModel(holder);
   charEntry = { obj: holder, kind: 'loaded', keep: true, name: 'Neon Runner', clips: gltf.animations };
   showModel(charEntry);
-}).catch((e) => console.warn('glb персонаж не загрузился, используем процедурного', e));
+}).catch((e) => { console.warn('glb персонаж не загрузился', e); toast('Не удалось загрузить glb-персонажа: ' + (e.message || e)); });
 
 const clock = new THREE.Clock();
 let fpsN = 0, fps = 0;
