@@ -13,6 +13,11 @@ Live: https://nvwrist.github.io/viewer/ (пользователь пишет п�
 | `js/look.js` | **редактор внешности**: `SCHEMA` (поля UI), `PAL` (палитры), `DEFAULT`, `randomLook()`, `createLook(root)` — перерисовка текстуры из карт + аксессуары на костях + пропорции тела |
 | `js/animator.js` | **ручной аниматор**: выбор кости (список/тап), повороты X/Y/Z, высота таза, ключи на таймлайне, зеркало, сохранение в `AnimationClip` (localStorage `ps1.anims.v1`) |
 | `models/human/` | карты для редактора, запекаются `make_human.py`: `region.png` (id региона ×40), `pos.png` (xyz объекта в T-позе, нормировано), `shade.png` (шум×AO), `meta.json` (границы, ориентиры: талия, колено, лодыжка, голова) |
+| `js/modular.js` | **модульные персонажи Quaternius**: `createUniversal('male'|'female')` (тело + наряды крестьянин/рейнджер + причёски, части грузятся по требованию и пересаживаются на один скелет; тело режется на зоны по костям и зоны под одеждой прячутся) и `createWomen()` (10 нарядов × голова/торс/ноги/обувь + меч/пистолет). `CLIP_RU` — русские названия анимаций |
+| `models/q/` | ассеты Quaternius (см. `models/CREDITS.md`): `anims_ual1/2.glb` (только анимации), `male/`, `female/`, `hair/`, `tex/` (расцветки), `women.glb` |
+| `tools/fetch_quaternius.py` | качает бесплатные Standard-версии паков с itch.io (сценарий «Download Now → No thanks»: POST `/download_url`, затем POST `/file/<id>?source=game_download&after_download_lightbox=true&as_props=1` с csrf) |
+| `tools/build_quaternius.py` + `.mjs` | готовит Universal-персонажей и анимации через gltf-transform (без Blender!): текстуры 64–256px, кожа обесцвечена под тонировку, normal/ORM удалены, simplify до ~40%, quantize |
+| `tools/build_women.py` | Ultimate Modular Women из `All together.blend` (Blender) → `women.glb` + сжатие gltf-transform |
 | `js/env.js` | окружения: **балкон тёмного фэнтези (по умолчанию)** и нейтральная студия — процедурные, без внешних ассетов |
 | `tools/make_human.py` | **основной персонаж «Странник»**: качает CC0-модель Quaternius «Animated Human», перекрашивает, запекает PS1-текстуру 128×128 (Cycles: цвет × шум × AO) → `models/human.glb` (7 анимаций) |
 | `models/*.glb`, `models/CREDITS.md` | готовые модели + источники/лицензии. Коммитятся |
@@ -42,6 +47,15 @@ cd viewer && python3 -m http.server 8123 # открыть http://localhost:8123/
 - Плоские «цветные полосы» на текстуре выглядят дёшево — всегда запекать шум/AO в маленькую текстуру с NEAREST.
 - Нужен **только один персонаж** (Странник) + сцена-балкон. Киберпанк-сцены и Neon Runner v1/v2 удалены по просьбе пользователя (есть в истории git). Персонаж грузится в `showHero()` (main.js); имена клипов переводятся через `CLIP_RU`; источник модели — в `models/CREDITS.md`.
 - Pages кэширует файлы на 10 минут: `index.html` грузит `main.js?t=<now>`, glb тоже с `?t=` — не ломать это.
+
+## Персонажи
+Селектор «Персонаж» (вкладка «Персонаж»): **Странник** (свой редактор, look.js), **Мужчина** / **Женщина** (Quaternius Universal + наряды, 86 анимаций UAL1+2), **Героини** (Ultimate Modular Women, 24 анимации). Выбор и внешность каждого типа хранятся отдельно (`ps1.hero`, `ps1.look.<type>`), свои анимации — по скелету (`ps1.anims.v1.<rig>`: '' Странник, 'ue' Universal, 'women').
+- **Почему Universal без Blender:** Blender-импорт glTF меняет ориентацию костей, и анимации UAL перестают совпадать с моделью. gltf-transform сохраняет узлы как есть.
+- Части нарядов/причёски — отдельные glb со своим скелетом; в браузере `adopt()` перепривязывает их к костям базового тела по именам (`mesh.bind(new Skeleton(...), mesh.bindMatrix)`).
+- Цвет кожи/волос/оттенок одежды — `material.color` (кожа и волосы в текстурах серые/обесцвеченные). Меняя цвет/карту, обновляй и PS1-копию `m.userData.psMat` (см. `setColor`/`setMap`).
+- Аниматор берёт кости из скелета автоматически и подписывает по-русски (`boneLabel`), понимает Mixamo/UE/Quaternius-имена.
+- Кэш паков: `/tmp/quaternius` (itch) и `/tmp/quaternius/women` (gdown с Google Drive). В git — только готовые `models/q/*`.
+- Платные Source/Pro-версии паков (остальные 8 нарядов Fantasy, доп. анимации Pro) НЕ скачиваются — только бесплатные Standard.
 
 ## Редактор персонажа и аниматор — как устроено
 - Панель: вкладки «Персонаж» (редактор + 🎲 Рандом), «Анимация» (список клипов + аниматор), «Вид» (PS1/сцена/загрузка). 🎲 есть и в шапке.

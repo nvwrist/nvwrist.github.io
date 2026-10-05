@@ -9,6 +9,7 @@ import { canvasTex, px } from './textures.js';
 import { createEnv } from './env.js';
 import { createLook, SCHEMA, PAL, DEFAULT, randomLook } from './look.js';
 import { createAnimator } from './animator.js';
+import { createUniversal, createWomen, CLIP_RU as CLIP_RU_Q, ONCE as ONCE_Q } from './modular.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('c');
@@ -101,6 +102,7 @@ function setEnv(kind) {
   if (env) { scene.remove(env.group); disposeTree(env.group); }
   S.env = kind;
   env = createEnv(kind);
+  env.camera = camera;
   scene.add(env.group);
   scene.background = new THREE.Color(env.bg);
   const l = env.lights;
@@ -133,58 +135,103 @@ shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.005;
 scene.add(shadow);
 
 let current = { obj: new THREE.Group(), kind: 'loaded', keep: true, name: '…', clips: [] };
-let hero = null; // персонаж «Странник» (models/human.glb, собирается tools/make_human.py)
-async function showHero() {
-  if (!hero) {
-    try {
-      const gltf = await new GLTFLoader().loadAsync('./models/human.glb?t=' + (window.__v || Date.now()));
-      const holder = new THREE.Group();
-      holder.add(gltf.scene);
-      fitModel(holder);
-      hero = { obj: holder, kind: 'loaded', keep: true, name: 'Странник', clips: gltf.animations, baseClips: gltf.animations };
-      await setupEditor(hero);
-    } catch (e) {
+
+/* ---------- персонажи: Странник (свой редактор) и модульные Quaternius ---------- */
+const HERO_TYPES = { strannik: 'Странник', man: 'Мужчина', woman: 'Женщина', women: 'Героини (10 нарядов)' };
+const lsGet = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* нет доступа */ } };
+const lookKey = (type) => (type === 'strannik' ? 'ps1.look.v1' : 'ps1.look.' + type);
+let heroType = HERO_TYPES[lsGet('ps1.hero')] ? lsGet('ps1.hero') : 'strannik';
+const heroes = {};
+let hero = null, look = null, animator = null;
+
+function snapshotBones(root) {
+  const m = new Map();
+  root.traverse((o) => { if (o.isBone) m.set(o, [o.position.clone(), o.quaternion.clone(), o.scale.clone()]); });
+  return m;
+}
+function restoreBones(m) { m.forEach(([p, q, sc], o) => { o.position.copy(p); o.quaternion.copy(q); o.scale.copy(sc); }); }
+
+async function makeHero(type) {
+  const v = window.__v || Date.now();
+  if (type === 'strannik') {
+    const gltf = await new GLTFLoader().loadAsync('./models/human.glb?t=' + v);
+    const holder = new THREE.Group();
+    holder.add(gltf.scene);
+    fitModel(holder);
+    const rest = snapshotBones(holder);
+    const lk = await createLook(holder, { version: v, clips: gltf.animations });
+    return {
+      obj: holder, kind: 'loaded', keep: true, name: 'Странник', type, rig: '', rest, idle: /idle/i,
+      baseClips: gltf.animations, clips: gltf.animations,
+      look: { schema: SCHEMA, pal: PAL, defaults: DEFAULT, random: randomLook, apply: (c) => lk.apply(c), get cfg() { return lk.cfg; }, update: (t) => lk.update(t) },
+    };
+  }
+  const m = type === 'women' ? await createWomen({ version: v }) : await createUniversal(type === 'man' ? 'male' : 'female', { version: v });
+  await m.apply(lsGet(lookKey(type)) || m.defaults);
+  fitModel(m.root);
+  const entry = { obj: m.root, kind: 'loaded', keep: true, name: m.name, type, rig: m.rig, rest: snapshotBones(m.root), idle: m.idle, baseClips: [], clips: [], look: m };
+  toast('Загрузка анимаций…');
+  m.loadClips().then((clips) => {
+    entry.baseClips = clips;
+    entry.clips = [...clips, ...(entry === hero && animator ? animator.savedClips() : [])];
+    if (current === entry && !animator?.active) fillPoseSelect();
+    toast(`Анимаций: ${clips.length}`);
+  }).catch((e) => toast('Анимации не загрузились: ' + (e.message || e)));
+  return entry;
+}
+
+async function showHero(type = heroType) {
+  heroType = type;
+  lsSet('ps1.hero', type);
+  $('heroType').value = type;
+  if (!heroes[type]) {
+    toast('Загрузка: ' + HERO_TYPES[type] + '…');
+    try { heroes[type] = await makeHero(type); } catch (e) {
       console.warn(e);
       toast('Не удалось загрузить персонажа: ' + (e.message || e));
       return;
     }
   }
+  if (heroType !== type) return; // пока грузилось, выбрали другого
+  animator?.destroy();
+  mixer?.stopAllAction();
+  hero = heroes[type];
+  look = hero.look;
+  restoreBones(hero.rest); // аниматор запоминает «покой» — даём ему исходную позу
+  await look.apply(lsGet(lookKey(type)) || look.defaults);
+  setupAnimator(hero);
   showModel(hero);
+  buildLookUI();
+  refreshModelStyle();
 }
-/* ---------- редактор персонажа и аниматор ---------- */
-let look = null, animator = null;
-const LOOK_KEY = 'ps1.look.v1';
-const lsGet = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
-const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* нет доступа */ } };
 
-async function setupEditor(h) {
-  try {
-    look = await createLook(h.obj, { version: window.__v, clips: h.baseClips });
-  } catch (e) {
-    console.warn('редактор внешности не загрузился', e);
-    toast('Редактор внешности недоступен: ' + (e.message || e));
-  }
+function setupAnimator(h) {
   animator = createAnimator({
-    root: h.obj, scene, camera, canvas, el: $('animator'), toast,
+    root: h.obj, scene, camera, canvas, el: $('animator'), toast, rig: h.rig,
     onEnter: () => { mixer?.stopAllAction(); action = null; animator.prevRotate = controls.autoRotate; controls.autoRotate = false; $('pose').disabled = true; },
-    onExit: () => { controls.autoRotate = animator.prevRotate ?? S.rotate; if (current === hero) fillPoseSelect(); },
+    onExit: () => { controls.autoRotate = animator.prevRotate ?? S.rotate; if (current === h) fillPoseSelect(); },
     onClipsChanged: (clips, play) => {
       h.clips = [...h.baseClips, ...clips];
-      if (current !== hero) return;
+      if (current !== h) return;
       fillPoseSelect();
       const i = play ? h.clips.findIndex((c) => c.name === play) : -1;
       if (i >= 0) { $('pose').value = String(i + 1); playClip(i); }
     },
   });
   h.clips = [...h.baseClips, ...animator.savedClips()];
-  if (look) { look.apply(lsGet(LOOK_KEY) || DEFAULT); buildLookUI(); }
 }
 
 function buildLookUI() {
   const root = $('editor');
   root.innerHTML = '';
-  const set = (k, v) => { const c = { ...look.cfg, [k]: v }; look.apply(c); lsSet(LOOK_KEY, c); refreshModelStyle(); };
-  for (const grp of SCHEMA) {
+  const set = async (k, v) => {
+    const c = { ...look.cfg, [k]: v };
+    lsSet(lookKey(heroType), c);
+    await look.apply(c);
+    refreshModelStyle();
+  };
+  for (const grp of look.schema) {
     const sec = document.createElement('section');
     sec.innerHTML = `<h3>${grp.group}</h3>`;
     for (const it of grp.items) {
@@ -198,9 +245,9 @@ function buildLookUI() {
         w.innerHTML = `<span>${it.label}</span><b></b><input type="range" min="${it.min}" max="${it.max}" step="${it.step}">`;
         w.querySelector('input').oninput = (e) => { w.querySelector('b').textContent = Math.round(e.target.value * 100) + '%'; set(it.k, +e.target.value); };
       } else {
-        w.innerHTML = `<span>${it.label}</span><div class="swatches">${PAL[it.pal].map((c) => `<button style="background:${c}" data-c="${c}" aria-label="${c}"></button>`).join('')}<input type="color"></div>`;
-        w.querySelector('.swatches').onclick = (e) => { const c = e.target.dataset?.c; if (c) { set(it.k, c); syncLookUI(); } };
-        w.querySelector('input').oninput = (e) => { set(it.k, e.target.value); syncLookUI(); };
+        w.innerHTML = `<span>${it.label}</span><div class="swatches">${look.pal[it.pal].map((c) => `<button style="background:${c}" data-c="${c}" aria-label="${c}"></button>`).join('')}<input type="color"></div>`;
+        w.querySelector('.swatches').onclick = async (e) => { const c = e.target.dataset?.c; if (c) { await set(it.k, c); syncLookUI(); } };
+        w.querySelector('input').oninput = async (e) => { await set(it.k, e.target.value); syncLookUI(); };
       }
       sec.appendChild(w);
     }
@@ -215,18 +262,20 @@ function syncLookUI() {
     const sel = w.querySelector('select'), rng = w.querySelector('input[type=range]'), col = w.querySelector('input[type=color]');
     if (sel) sel.value = v;
     if (rng) { rng.value = v; w.querySelector('b').textContent = Math.round(v * 100) + '%'; }
-    if (col) { col.value = v; w.querySelectorAll('[data-c]').forEach((b) => b.classList.toggle('on', b.dataset.c === v)); }
+    if (col) { col.value = /^#[0-9a-f]{6}$/i.test(v) ? v : '#000000'; w.querySelectorAll('[data-c]').forEach((b) => b.classList.toggle('on', b.dataset.c === v)); }
   });
 }
-function randomize() {
+async function randomize() {
   if (!look) return;
-  const c = randomLook();
-  look.apply(c); lsSet(LOOK_KEY, c); syncLookUI(); refreshModelStyle();
+  const c = look.random();
+  lsSet(lookKey(heroType), c);
+  await look.apply(c);
+  syncLookUI(); refreshModelStyle();
 }
 
-const CLIP_RU = { Idle: 'Стоит', Walk: 'Ходьба', Run: 'Бег', Jump: 'Прыжок', Punch: 'Удар', Working: 'Работает', Death: 'Падает',
+const CLIP_RU = { ...CLIP_RU_Q, Idle: 'Стоит', Walk: 'Ходьба', Run: 'Бег', Jump: 'Прыжок', Punch: 'Удар', Working: 'Работает', Death: 'Падает',
   HandsUp: 'Руки вверх', Lean: 'Прислонился', Aim: 'Целится' };
-const ONCE = /death/i;
+const ONCE = ONCE_Q;
 let mixer = null, action = null;
 
 function eachMat(fn) {
@@ -278,7 +327,7 @@ function refreshModelStyle() {
 function stats() {
   let tri = 0, vert = 0;
   current.obj.traverse((o) => {
-    if (!o.isMesh) return;
+    if (!o.isMesh || !o.visible || (o.parent && !o.parent.visible)) return;
     const g = o.geometry;
     vert += g.attributes.position.count;
     tri += (g.index ? g.index.count : g.attributes.position.count) / 3;
@@ -308,7 +357,8 @@ function fillPoseSelect() {
   names.forEach((n, i) => sel.add(new Option(n, i)));
   sel.disabled = names.length < 2;
   if (current.kind === 'loaded' && current.clips.length) {
-    const idle = Math.max(0, current.clips.findIndex((c) => /idle/i.test(c.name)));
+    const re = current.idle || /idle/i;
+    const idle = Math.max(0, current.clips.findIndex((c) => re.test(c.name)), 0);
     sel.value = String(idle + 1); playClip(idle);
   }
 }
@@ -328,7 +378,7 @@ function showModel(entry) {
   if (current.kind === 'loaded' && !current.keep && current !== entry) disposeTree(current.obj);
   current = entry;
   modelRoot.add(entry.obj);
-  mixer = entry.kind === 'loaded' && entry.clips.length ? new THREE.AnimationMixer(entry.obj) : null;
+  mixer = entry.kind === 'loaded' ? new THREE.AnimationMixer(entry.obj) : null;
   action = null;
   HOME.pos.set(1.7, 1.35, 3.6);
   HOME.target.set(0, entry.obj.userData.targetY ?? 0.95, 0);
@@ -418,7 +468,7 @@ bind('animSpeed', 'speed');
 $('env').addEventListener('change', (e) => setEnv(e.target.value));
 $('btnRandom').onclick = randomize;
 $('btnRandom2').onclick = randomize;
-$('btnLookReset').onclick = () => { if (!look) return; look.apply(DEFAULT); lsSet(LOOK_KEY, DEFAULT); syncLookUI(); refreshModelStyle(); };
+$('btnLookReset').onclick = async () => { if (!look) return; lsSet(lookKey(heroType), look.defaults); await look.apply(look.defaults); syncLookUI(); refreshModelStyle(); };
 document.querySelector('.tabs').onclick = (e) => {
   const t = e.target.dataset.tab;
   if (!t) return;
@@ -429,7 +479,9 @@ document.querySelector('.tabs').onclick = (e) => {
 $('pose').addEventListener('change', (e) => {
   playClip(+e.target.value - 1);
 });
-$('btnChar').onclick = () => { if (current !== hero) { animator?.active && animator.exit(); showHero(); } else resetCamera(); };
+$('btnChar').onclick = () => { if (current !== hero) showHero(); else resetCamera(); };
+$('heroType').innerHTML = Object.entries(HERO_TYPES).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+$('heroType').onchange = (e) => showHero(e.target.value);
 $('file').addEventListener('change', (e) => { loadFiles(e.target.files); e.target.value = ''; });
 $('btnReset').onclick = resetCamera;
 $('toggle').onclick = () => $('panel').classList.toggle('closed');
@@ -447,7 +499,7 @@ $('btnShot').onclick = () => {
 $('btnExport').onclick = () => {
   const obj = current.obj;
   new GLTFExporter().parse(obj, (res) => {
-    download(new Blob([res], { type: 'model/gltf-binary' }), (current === hero ? 'strannik' : 'model') + '.glb');
+    download(new Blob([res], { type: 'model/gltf-binary' }), (current === hero ? heroType : 'model') + '.glb');
     toast('Экспортировано .glb');
   }, (e) => toast('Ошибка экспорта: ' + e.message), { binary: true, animations: current.clips || [] });
 };

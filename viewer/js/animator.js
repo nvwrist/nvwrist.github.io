@@ -6,25 +6,41 @@ import * as THREE from 'three';
  * Свои анимации хранятся в localStorage и попадают в экспорт .glb.
  */
 
-const NAMES = {
-  Hips: 'Таз', Spine: 'Поясница', Spine1: 'Живот', Spine2: 'Грудь', Neck: 'Шея', Head: 'Голова',
-  LeftShoulder: 'Ключица Л', LeftArm: 'Плечо Л', LeftForeArm: 'Предплечье Л', LeftHand: 'Кисть Л',
-  RightShoulder: 'Ключица П', RightArm: 'Плечо П', RightForeArm: 'Предплечье П', RightHand: 'Кисть П',
-  LeftUpLeg: 'Бедро Л', LeftLeg: 'Голень Л', LeftFoot: 'Стопа Л', LeftToeBase: 'Носок Л',
-  RightUpLeg: 'Бедро П', RightLeg: 'Голень П', RightFoot: 'Стопа П', RightToeBase: 'Носок П',
-};
-const STORE = 'ps1.anims.v1';
+// русские подписи костей: Mixamo (Hips, LeftArm…), UE (pelvis, upperarm_l…), Quaternius-women (UpperArm.L…)
+const PARTS = [
+  [/^(hips|pelvis)$/i, 'Таз'], [/^(spine|spine_01|abdomen)$/i, 'Поясница'], [/^(spine1|spine_02|torso)$/i, 'Живот'],
+  [/^(spine2|spine_03|chest)$/i, 'Грудь'], [/neck/i, 'Шея'], [/^head$/i, 'Голова'], [/shoulder|clavicle/i, 'Ключица'],
+  [/upperarm|^(left|right)arm$/i, 'Плечо'], [/lowerarm|forearm/i, 'Предплечье'], [/hand$|^hand_|wrist/i, 'Кисть'],
+  [/thigh|upleg|upperleg/i, 'Бедро'], [/calf|lowerleg|^(left|right)leg$/i, 'Голень'], [/foot/i, 'Стопа'], [/^ball_|toebase|toe$/i, 'Носок'],
+];
+function boneLabel(n) {
+  if (/leaf|_end$|end$/i.test(n)) return null;
+  const p = PARTS.find(([re]) => re.test(n));
+  if (!p) return null;
+  if (/^(hips|pelvis|spine\w*|abdomen|torso|chest|neck\w*|head)$/i.test(n)) return p[1];
+  if (/^left|_l$|L$/.test(n) || /^left/i.test(n)) return p[1] + ' Л';
+  if (/^right|_r$|R$/.test(n) || /^right/i.test(n)) return p[1] + ' П';
+  return p[1];
+}
+let STORE = 'ps1.anims.v1';
 const load = () => { try { return JSON.parse(localStorage.getItem(STORE) || '[]'); } catch { return []; } };
 const save = (a) => { try { localStorage.setItem(STORE, JSON.stringify(a)); } catch { /* приватный режим */ } };
 const D = THREE.MathUtils.RAD2DEG, Rr = THREE.MathUtils.DEG2RAD;
 
-export function createAnimator({ root, scene, camera, canvas, el, onClipsChanged, onEnter, onExit, toast }) {
-  const bones = Object.keys(NAMES).map((n) => root.getObjectByName(n)).filter(Boolean);
-  const hips = bones.find((b) => b.name === 'Hips');
+export function createAnimator({ root, scene, camera, canvas, el, onClipsChanged, onEnter, onExit, toast, rig = '' }) {
+  STORE = 'ps1.anims.v1' + (rig ? '.' + rig : ''); // анимации привязаны к скелету конкретного персонажа
+  const seenB = new Set(), bones = [], NAMES = {};
+  root.traverse((o) => {
+    if (!o.isBone || seenB.has(o.name)) return;
+    const l = boneLabel(o.name);
+    if (!l) return;
+    seenB.add(o.name); bones.push(o); NAMES[o.name] = l;
+  });
+  const hips = bones.find((b) => /^(hips|pelvis)$/i.test(b.name)) || bones[0];
   const rest = new Map(bones.map((b) => [b, { q: b.quaternion.clone(), p: b.position.clone() }]));
   const hipsScale = hips.position.length() || 1; // смещение таза — в долях его высоты
 
-  let active = false, playing = false, t = 0, sel = bones.find((b) => b.name === 'RightArm') || bones[0];
+  let active = false, playing = false, t = 0, sel = bones.find((b) => NAMES[b.name] === 'Плечо П') || bones[0];
   let keys = []; // {t, q:{name:[x,y,z,w]}, hy}
   let editingIndex = -1; // индекс сохранённой анимации, которую правим
   const helper = new THREE.SkeletonHelper(root);
@@ -113,7 +129,7 @@ export function createAnimator({ root, scene, camera, canvas, el, onClipsChanged
     const tracks = bones.map((b) => new THREE.QuaternionKeyframeTrack(`${b.name}.quaternion`, times,
       list.flatMap((k) => k.q[b.name] || rest.get(b).q.toArray())));
     const rp = rest.get(hips).p;
-    tracks.push(new THREE.VectorKeyframeTrack('Hips.position', times, list.flatMap((k) => [rp.x, rp.y + (k.hy || 0) * hipsScale, rp.z])));
+    tracks.push(new THREE.VectorKeyframeTrack(`${hips.name}.position`, times, list.flatMap((k) => [rp.x, rp.y + (k.hy || 0) * hipsScale, rp.z])));
     const clip = new THREE.AnimationClip(name, dur, tracks);
     clip.userData = { custom: true };
     return clip;
@@ -225,8 +241,8 @@ export function createAnimator({ root, scene, camera, canvas, el, onClipsChanged
   // выбор кости тапом по модели
   const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
   let down = null;
-  canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; });
-  canvas.addEventListener('pointerup', (e) => {
+  const onDown = (e) => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; };
+  const onUp = (e) => {
     if (!active || !down) return;
     if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6 || performance.now() - down.t > 400) return;
     const r = canvas.getBoundingClientRect();
@@ -238,7 +254,16 @@ export function createAnimator({ root, scene, camera, canvas, el, onClipsChanged
     const wp = new THREE.Vector3();
     bones.forEach((b) => { b.getWorldPosition(wp); const dd = wp.distanceTo(hit.point); if (dd < bd) { bd = dd; best = b; } });
     if (best) select(best.name);
-  });
+  };
+  canvas.addEventListener('pointerdown', onDown);
+  canvas.addEventListener('pointerup', onUp);
+  function destroy() {
+    if (active) exit();
+    canvas.removeEventListener('pointerdown', onDown);
+    canvas.removeEventListener('pointerup', onUp);
+    scene.remove(helper); scene.remove(marker);
+    el.innerHTML = '';
+  }
 
   function update(dt) {
     if (!active) return;
@@ -251,5 +276,5 @@ export function createAnimator({ root, scene, camera, canvas, el, onClipsChanged
     marker.scale.setScalar(s);
   }
 
-  return { update, get active() { return active; }, savedClips, exit };
+  return { update, get active() { return active; }, savedClips, exit, destroy };
 }

@@ -68,8 +68,11 @@ function medieval(env, group, updaters) {
   const floor = new THREE.Mesh(tiledBox(3.4, 0.16, 6, 0.9), planks);
   floor.position.set(-0.2, -0.08, 0); group.add(floor);
   // каменная стена башни справа
+  // стена башни и всё, что на ней, — в отдельной группе: прячем, когда камера заходит за стену
+  const wallGroup = new THREE.Group(); group.add(wallGroup);
+  updaters.push(() => { if (env.camera) wallGroup.visible = env.camera.position.x < 1.4; });
   const wall = new THREE.Mesh(tiledBox(1.2, 10, 7, 1.2), stone);
-  wall.position.set(2.1, 3.5, 0); group.add(wall);
+  wall.position.set(2.1, 3.5, 0); wallGroup.add(wall);
   // вымпел/гобелен на стене
   const banner = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 1.8), basic({
     map: canvasTex(16, 32, (g, w, h) => {
@@ -77,7 +80,7 @@ function medieval(env, group, updaters) {
       g.strokeStyle = '#8a6a3a'; g.strokeRect(1.5, 1.5, w - 3, h - 3);
       px(g, '#8a6a3a', 7, 8, 2, 14); px(g, '#8a6a3a', 4, 12, 8, 2); px(g, '#b08a4a', 6, 22, 4, 2);
     }), color: 0x9a9a9a }));
-  banner.position.set(1.49, 2.3, -1.6); banner.rotation.y = -Math.PI / 2; group.add(banner);
+  banner.position.set(1.49, 2.3, -1.6); banner.rotation.y = -Math.PI / 2; wallGroup.add(banner);
 
   // перила по левой стороне и по торцам
   const rail = (x0, z0, x1, z1) => {
@@ -98,7 +101,7 @@ function medieval(env, group, updaters) {
   const beam = new THREE.Mesh(tiledBox(2.9, 0.14, 0.14, 0.6), wood);
   beam.position.set(0.15, 2.9, 0.9); group.add(beam);
   const brace = new THREE.Mesh(tiledBox(0.1, 0.9, 0.1, 0.5), wood);
-  brace.position.set(1.2, 2.55, 0.9); brace.rotation.z = -0.75; group.add(brace);
+  brace.position.set(1.2, 2.55, 0.9); brace.rotation.z = -0.75; wallGroup.add(brace);
   const chain = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.32, 0.02), iron);
   chain.position.set(-1.15, 2.68, 0.9); group.add(chain);
   const lantern = new THREE.Group();
@@ -137,13 +140,13 @@ function medieval(env, group, updaters) {
   updaters.push((t) => { flask.material.color.setHSL(0.38, 1, 0.55 + Math.sin(t * 2) * 0.08); });
 
   // полка с бутылками у стены
-  const shelf = new THREE.Mesh(tiledBox(0.35, 0.05, 1.4, 0.6), wood); shelf.position.set(1.33, 1.5, 1.6); group.add(shelf);
-  const shelf2 = shelf.clone(); shelf2.position.y = 1.05; group.add(shelf2);
+  const shelf = new THREE.Mesh(tiledBox(0.35, 0.05, 1.4, 0.6), wood); shelf.position.set(1.33, 1.5, 1.6); wallGroup.add(shelf);
+  const shelf2 = shelf.clone(); shelf2.position.y = 1.05; wallGroup.add(shelf2);
   const glassCols = [0x3a6a4a, 0x6a5a3a, 0x3a4a6a, 0x5a7a5a, 0x4a3a2a];
   for (let i = 0; i < 9; i++) {
     const h = 0.14 + R() * 0.14;
     const b = new THREE.Mesh(new THREE.CylinderGeometry(0.035 + R() * 0.02, 0.05, h, 6), lambert({ color: pick(glassCols) }));
-    b.position.set(1.3 + (R() - 0.5) * 0.12, (i % 2 ? 1.08 : 1.53) + h / 2, 1.0 + (i / 9) * 1.25); group.add(b);
+    b.position.set(1.3 + (R() - 0.5) * 0.12, (i % 2 ? 1.08 : 1.53) + h / 2, 1.0 + (i / 9) * 1.25); wallGroup.add(b);
   }
   const crate = new THREE.Mesh(tiledBox(0.6, 0.6, 0.6, 0.6), wood); crate.position.set(-1.35, 0.3, -2.3); crate.rotation.y = 0.2; group.add(crate);
   const jug = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.16, 0.42, 6), lambert({ color: 0x6a5a48 })); jug.position.set(-1.45, 0.21, -1.55); group.add(jug);
