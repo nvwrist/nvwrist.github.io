@@ -37,3 +37,22 @@ input[type=range]{accent-color:var(--pink);height:22px}
   #panel.closed{transform:translateY(110%)}
 }
 select.btn{appearance:none;-webkit-appearance:none;text-align:center;text-align-last:center;border-radius:0}
+
+.tabs{display:flex;gap:4px;margin:-2px 0 12px;position:sticky;top:-12px;background:var(--panel);padding:4px 0;z-index:2}
+.tabs button{flex:1;background:none;border:1px solid var(--line);color:var(--mut);font:inherit;padding:8px 4px;cursor:pointer}
+.tabs button.on{border-color:var(--pink);color:var(--pink)}
+.field>span{display:block}
+#editor .field>b{float:right;margin-top:-17px}
+.swatches{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;align-items:center}
+.swatches button{width:24px;height:24px;border:1px solid #0008;cursor:pointer;padding:0}
+.swatches button.on{outline:2px solid var(--cyan);outline-offset:1px}
+.swatches input[type=color]{width:30px;height:26px;border:1px solid var(--line);background:none;padding:0;cursor:pointer}
+.field input[type=text],.field input[type=number]{display:block;width:100%;margin-top:5px;background:#1c1714;color:var(--txt);border:1px solid var(--line);padding:7px;font:inherit}
+.timeline{position:relative;margin-top:10px}
+.timeline .keys{position:relative;height:14px;margin:0 8px}
+.timeline .keys i{position:absolute;top:0;width:10px;height:14px;margin-left:-5px;background:var(--pink);cursor:pointer;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)}
+.timeline input{width:100%}
+.anim-item{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+.anim-item span{flex:1;color:var(--cyan)}
+.anim-item .btn{width:40px;margin:0;padding:6px}
+.row .check{flex:0 0 auto}

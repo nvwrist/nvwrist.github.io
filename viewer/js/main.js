@@ -7,6 +7,8 @@ import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { ps1, lambert, basic } from './ps1.js';
 import { canvasTex, px } from './textures.js';
 import { createEnv } from './env.js';
+import { createLook, SCHEMA, PAL, DEFAULT, randomLook } from './look.js';
+import { createAnimator } from './animator.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('c');
@@ -139,7 +141,8 @@ async function showHero() {
       const holder = new THREE.Group();
       holder.add(gltf.scene);
       fitModel(holder);
-      hero = { obj: holder, kind: 'loaded', keep: true, name: 'Странник', clips: gltf.animations };
+      hero = { obj: holder, kind: 'loaded', keep: true, name: 'Странник', clips: gltf.animations, baseClips: gltf.animations };
+      await setupEditor(hero);
     } catch (e) {
       console.warn(e);
       toast('Не удалось загрузить персонажа: ' + (e.message || e));
@@ -148,6 +151,79 @@ async function showHero() {
   }
   showModel(hero);
 }
+/* ---------- редактор персонажа и аниматор ---------- */
+let look = null, animator = null;
+const LOOK_KEY = 'ps1.look.v1';
+const lsGet = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* нет доступа */ } };
+
+async function setupEditor(h) {
+  try {
+    look = await createLook(h.obj, { version: window.__v, clips: h.baseClips });
+  } catch (e) {
+    console.warn('редактор внешности не загрузился', e);
+    toast('Редактор внешности недоступен: ' + (e.message || e));
+  }
+  animator = createAnimator({
+    root: h.obj, scene, camera, canvas, el: $('animator'), toast,
+    onEnter: () => { mixer?.stopAllAction(); action = null; animator.prevRotate = controls.autoRotate; controls.autoRotate = false; $('pose').disabled = true; },
+    onExit: () => { controls.autoRotate = animator.prevRotate ?? S.rotate; if (current === hero) fillPoseSelect(); },
+    onClipsChanged: (clips, play) => {
+      h.clips = [...h.baseClips, ...clips];
+      if (current !== hero) return;
+      fillPoseSelect();
+      const i = play ? h.clips.findIndex((c) => c.name === play) : -1;
+      if (i >= 0) { $('pose').value = String(i + 1); playClip(i); }
+    },
+  });
+  h.clips = [...h.baseClips, ...animator.savedClips()];
+  if (look) { look.apply(lsGet(LOOK_KEY) || DEFAULT); buildLookUI(); }
+}
+
+function buildLookUI() {
+  const root = $('editor');
+  root.innerHTML = '';
+  const set = (k, v) => { const c = { ...look.cfg, [k]: v }; look.apply(c); lsSet(LOOK_KEY, c); refreshModelStyle(); };
+  for (const grp of SCHEMA) {
+    const sec = document.createElement('section');
+    sec.innerHTML = `<h3>${grp.group}</h3>`;
+    for (const it of grp.items) {
+      const w = document.createElement('div');
+      w.className = 'field';
+      w.dataset.k = it.k;
+      if (it.type === 'select') {
+        w.innerHTML = `<span>${it.label}</span><select>${Object.entries(it.options).map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>`;
+        w.querySelector('select').onchange = (e) => set(it.k, e.target.value);
+      } else if (it.type === 'range') {
+        w.innerHTML = `<span>${it.label}</span><b></b><input type="range" min="${it.min}" max="${it.max}" step="${it.step}">`;
+        w.querySelector('input').oninput = (e) => { w.querySelector('b').textContent = Math.round(e.target.value * 100) + '%'; set(it.k, +e.target.value); };
+      } else {
+        w.innerHTML = `<span>${it.label}</span><div class="swatches">${PAL[it.pal].map((c) => `<button style="background:${c}" data-c="${c}" aria-label="${c}"></button>`).join('')}<input type="color"></div>`;
+        w.querySelector('.swatches').onclick = (e) => { const c = e.target.dataset?.c; if (c) { set(it.k, c); syncLookUI(); } };
+        w.querySelector('input').oninput = (e) => { set(it.k, e.target.value); syncLookUI(); };
+      }
+      sec.appendChild(w);
+    }
+    root.appendChild(sec);
+  }
+  syncLookUI();
+}
+function syncLookUI() {
+  const c = look.cfg;
+  document.querySelectorAll('#editor .field').forEach((w) => {
+    const v = c[w.dataset.k];
+    const sel = w.querySelector('select'), rng = w.querySelector('input[type=range]'), col = w.querySelector('input[type=color]');
+    if (sel) sel.value = v;
+    if (rng) { rng.value = v; w.querySelector('b').textContent = Math.round(v * 100) + '%'; }
+    if (col) { col.value = v; w.querySelectorAll('[data-c]').forEach((b) => b.classList.toggle('on', b.dataset.c === v)); }
+  });
+}
+function randomize() {
+  if (!look) return;
+  const c = randomLook();
+  look.apply(c); lsSet(LOOK_KEY, c); syncLookUI(); refreshModelStyle();
+}
+
 const CLIP_RU = { Idle: 'Стоит', Walk: 'Ходьба', Run: 'Бег', Jump: 'Прыжок', Punch: 'Удар', Working: 'Работает', Death: 'Падает',
   HandsUp: 'Руки вверх', Lean: 'Прислонился', Aim: 'Целится' };
 const ONCE = /death/i;
@@ -166,7 +242,7 @@ function setNearest(tex, on) {
 }
 function convertMaterials(obj, on) {
   obj.traverse((o) => {
-    if (!o.isMesh) return;
+    if (!o.isMesh || o.userData.noConvert) return;
     o.userData.orig ??= o.material;
     const conv = (m) => {
       if (m.userData.ps1src) return m;
@@ -228,7 +304,7 @@ function fitModel(obj) {
 function fillPoseSelect() {
   const sel = $('pose');
   sel.innerHTML = '';
-  const names = ['— без анимации —', ...current.clips.map((c, i) => CLIP_RU[c.name] || `${i + 1}. ${c.name || 'clip'}`)];
+  const names = ['— без анимации —', ...current.clips.map((c, i) => c.userData?.custom ? '✎ ' + c.name : CLIP_RU[c.name] || `${i + 1}. ${c.name || 'clip'}`)];
   names.forEach((n, i) => sel.add(new Option(n, i)));
   sel.disabled = names.length < 2;
   if (current.kind === 'loaded' && current.clips.length) {
@@ -340,10 +416,20 @@ bind('fog', 'fog', null, () => env && applyFog());
 bind('rotate', 'rotate', null, applyStyle);
 bind('animSpeed', 'speed');
 $('env').addEventListener('change', (e) => setEnv(e.target.value));
+$('btnRandom').onclick = randomize;
+$('btnRandom2').onclick = randomize;
+$('btnLookReset').onclick = () => { if (!look) return; look.apply(DEFAULT); lsSet(LOOK_KEY, DEFAULT); syncLookUI(); refreshModelStyle(); };
+document.querySelector('.tabs').onclick = (e) => {
+  const t = e.target.dataset.tab;
+  if (!t) return;
+  document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
+  document.querySelectorAll('.tab').forEach((d) => { d.hidden = d.dataset.tab !== t; });
+  $('panel').classList.remove('closed');
+};
 $('pose').addEventListener('change', (e) => {
   playClip(+e.target.value - 1);
 });
-$('btnChar').onclick = () => { if (current !== hero) showHero(); else resetCamera(); };
+$('btnChar').onclick = () => { if (current !== hero) { animator?.active && animator.exit(); showHero(); } else resetCamera(); };
 $('file').addEventListener('change', (e) => { loadFiles(e.target.files); e.target.value = ''; });
 $('btnReset').onclick = resetCamera;
 $('toggle').onclick = () => $('panel').classList.toggle('closed');
@@ -363,7 +449,7 @@ $('btnExport').onclick = () => {
   new GLTFExporter().parse(obj, (res) => {
     download(new Blob([res], { type: 'model/gltf-binary' }), (current === hero ? 'strannik' : 'model') + '.glb');
     toast('Экспортировано .glb');
-  }, (e) => toast('Ошибка экспорта: ' + e.message), { binary: true });
+  }, (e) => toast('Ошибка экспорта: ' + e.message), { binary: true, animations: current.clips || [] });
 };
 
 // drag & drop
@@ -386,7 +472,9 @@ let fpsN = 0, fps = 0;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1) * S.speed;
   const t = clock.elapsedTime;
-  mixer?.update(dt);
+  if (animator?.active && current === hero) animator.update(dt);
+  else mixer?.update(dt);
+  if (look && current === hero) look.update(t);
   env.update(t, dt);
   controls.update();
   render();
@@ -402,4 +490,4 @@ function frame() {
   requestAnimationFrame(frame);
 }
 frame();
-window.__ps1 = { S, scene, camera, renderer, controls, setEnv };
+window.__ps1 = { S, scene, camera, renderer, controls, setEnv, get look() { return look; }, get animator() { return animator; }, randomize };

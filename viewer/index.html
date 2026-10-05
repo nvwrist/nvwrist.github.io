@@ -16,48 +16,67 @@
   <header class="top">
     <div class="logo">PS1<span>·</span>VIEWER</div>
     <div class="stats" id="stats">—</div>
+    <button class="icon" id="btnRandom2" aria-label="Случайный персонаж" title="Рандом">🎲</button>
     <button class="icon" id="toggle" aria-label="Панель">☰</button>
   </header>
 
   <aside id="panel">
-    <section>
-      <h3>Модель</h3>
+    <nav class="tabs">
+      <button data-tab="char" class="on">Персонаж</button>
+      <button data-tab="anim">Анимация</button>
+      <button data-tab="view">Вид</button>
+    </nav>
+
+    <div class="tab" data-tab="char">
       <div class="row">
-        <button id="btnChar" class="btn primary">Персонаж</button>
-        <label class="btn">Загрузить<input id="file" type="file" multiple accept=".glb,.gltf,.obj,.stl,.bin,.png,.jpg,.jpeg" hidden></label>
+        <button id="btnRandom" class="btn primary">🎲 Рандом</button>
+        <button id="btnLookReset" class="btn">Сброс</button>
       </div>
-      <div class="hint" id="modelName">Странник</div>
-      <label class="field">Поза / анимация <select id="pose"></select></label>
-      <label class="field">Скорость <input type="range" id="animSpeed" min="0" max="3" step="0.1" value="1"></label>
+      <div id="editor"><p class="hint">Загрузка…</p></div>
       <div class="row">
         <button id="btnExport" class="btn">Экспорт .glb</button>
         <button id="btnShot" class="btn">Скриншот</button>
       </div>
-    </section>
+    </div>
 
-    <section>
-      <h3>Стиль PS1</h3>
-      <label class="check"><input type="checkbox" id="ps1" checked> Режим PS1</label>
-      <label class="check"><input type="checkbox" id="convert" checked> Применять к загруженным моделям</label>
-      <label class="field">Разрешение <b id="vRes">240</b><input type="range" id="res" min="0" max="5" step="1" value="3"></label>
-      <label class="field">Дрожание вершин <b id="vSnap">1</b><input type="range" id="snap" min="0" max="4" step="0.5" value="1"></label>
-      <label class="field">Кривые текстуры <b id="vAffine">1</b><input type="range" id="affine" min="0" max="1" step="0.05" value="1"></label>
-      <label class="field">Дизеринг <b id="vDither">0.8</b><input type="range" id="dither" min="0" max="1" step="0.05" value="0.8"></label>
-      <label class="field">Бит на канал <b id="vBits">5</b><input type="range" id="bits" min="2" max="8" step="1" value="5"></label>
-      <label class="check"><input type="checkbox" id="flat" checked> Плоское освещение</label>
-      <label class="check"><input type="checkbox" id="wire"> Каркас</label>
-    </section>
+    <div class="tab" data-tab="anim" hidden>
+      <label class="field">Анимация <select id="pose"></select></label>
+      <label class="field">Скорость <input type="range" id="animSpeed" min="0" max="3" step="0.1" value="1"></label>
+      <section><h3>Аниматор</h3><div id="animator"></div></section>
+    </div>
 
-    <section>
-      <h3>Сцена</h3>
-      <label class="field">Окружение
-        <select id="env"><option value="medieval">Балкон (тёмное фэнтези)</option><option value="studio">Студия</option></select>
-      </label>
-      <label class="field">Туман <b id="vFog">1</b><input type="range" id="fog" min="0" max="2.5" step="0.1" value="1"></label>
-      <label class="check"><input type="checkbox" id="rotate" checked> Автовращение</label>
-      <button id="btnReset" class="btn">Сбросить камеру</button>
-    </section>
-    <p class="hint small">Тяните — вращать · колесо/щипок — зум · правая кнопка/два пальца — сдвиг.<br>Можно перетащить .glb / .gltf / .obj / .stl прямо в окно.</p>
+    <div class="tab" data-tab="view" hidden>
+      <section>
+        <h3>Модель</h3>
+        <div class="row">
+          <button id="btnChar" class="btn primary">Персонаж</button>
+          <label class="btn">Загрузить<input id="file" type="file" multiple accept=".glb,.gltf,.obj,.stl,.bin,.png,.jpg,.jpeg" hidden></label>
+        </div>
+        <div class="hint" id="modelName">Странник</div>
+      </section>
+      <section>
+        <h3>Стиль PS1</h3>
+        <label class="check"><input type="checkbox" id="ps1" checked> Режим PS1</label>
+        <label class="check"><input type="checkbox" id="convert" checked> Применять к загруженным моделям</label>
+        <label class="field">Разрешение <b id="vRes">240</b><input type="range" id="res" min="0" max="5" step="1" value="3"></label>
+        <label class="field">Дрожание вершин <b id="vSnap">1</b><input type="range" id="snap" min="0" max="4" step="0.5" value="1"></label>
+        <label class="field">Кривые текстуры <b id="vAffine">1</b><input type="range" id="affine" min="0" max="1" step="0.05" value="1"></label>
+        <label class="field">Дизеринг <b id="vDither">0.8</b><input type="range" id="dither" min="0" max="1" step="0.05" value="0.8"></label>
+        <label class="field">Бит на канал <b id="vBits">5</b><input type="range" id="bits" min="2" max="8" step="1" value="5"></label>
+        <label class="check"><input type="checkbox" id="flat" checked> Плоское освещение</label>
+        <label class="check"><input type="checkbox" id="wire"> Каркас</label>
+      </section>
+      <section>
+        <h3>Сцена</h3>
+        <label class="field">Окружение
+          <select id="env"><option value="medieval">Балкон (тёмное фэнтези)</option><option value="studio">Студия</option></select>
+        </label>
+        <label class="field">Туман <b id="vFog">1</b><input type="range" id="fog" min="0" max="2.5" step="0.1" value="1"></label>
+        <label class="check"><input type="checkbox" id="rotate" checked> Автовращение</label>
+        <button id="btnReset" class="btn">Сбросить камеру</button>
+      </section>
+      <p class="hint small">Тяните — вращать · колесо/щипок — зум · правая кнопка/два пальца — сдвиг.<br>Можно перетащить .glb / .gltf / .obj / .stl прямо в окно.</p>
+    </div>
   </aside>
 
   <div id="drop">Отпустите файл модели</div>
