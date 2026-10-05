@@ -36,3 +36,4 @@ input[type=range]{accent-color:var(--pink);height:22px}
   #panel{top:auto;left:0;right:0;bottom:0;width:auto;max-height:52vh;border-width:1px 0 0}
   #panel.closed{transform:translateY(110%)}
 }
+select.btn{appearance:none;-webkit-appearance:none;text-align:center;text-align-last:center;border-radius:0}

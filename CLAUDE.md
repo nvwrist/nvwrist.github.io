@@ -10,15 +10,17 @@ Live: https://nvwrist.github.io/viewer/ (пользователь пишет п�
 | `index.html`, `style.css` | UI (панель справа/снизу на мобиле), importmap на локальный three |
 | `js/main.js` | сцена, камера, пост-обработка (RT низкого разрешения → дизеринг/глубина цвета), загрузка файлов, экспорт, UI |
 | `js/ps1.js` | `patch(material)` — вертексный snap + аффинные UV через `onBeforeCompile`; общие юниформы `ps1` |
-| `js/env.js` | окружения: крыша / переулок / студия (процедурные, без внешних ассетов) |
-| `js/character.js` | запасной процедурный «майнкрафтный» персонаж (используется только если glb не загрузился) |
-| `tools/make_character.py` | **генератор основного персонажа** (Blender `bpy`) → `models/neon-runner.glb` |
-| `models/neon-runner.glb` | результат генератора (скелет, веса, 5 анимаций, атлас 128×128). Коммитится |
+| `js/env.js` | окружения: **балкон тёмного фэнтези (по умолчанию)** / крыша-киберпанк / переулок / студия — процедурные, без внешних ассетов |
+| `js/character.js` | Neon Runner v1 — процедурный персонаж из боксов (пользователю нравился, оставлен в списке моделей) |
+| `tools/make_human.py` | **основной персонаж «Странник»**: качает CC0-модель Quaternius «Animated Human», перекрашивает, запекает PS1-текстуру 128×128 (Cycles: цвет × шум × AO) → `models/human.glb` (7 анимаций) |
+| `tools/make_character.py` | генератор Neon Runner v2 (процедурный меш в Blender `bpy`) → `models/neon-runner.glb` |
+| `models/*.glb`, `models/CREDITS.md` | готовые модели + источники/лицензии. Коммитятся |
 | `vendor/three/` | three r170 + addons локально (без CDN, работает офлайн/на Pages) |
 
-## Как пересобрать персонажа
+## Как пересобрать персонажей
 ```bash
 pip install bpy numpy pillow             # bpy = Blender как python-модуль (~370 МБ), ставится через pip в облачной сессии
+python3 viewer/tools/make_human.py       # → viewer/models/human.glb (качает исходник с OpenGameArt, ~6 с)
 python3 viewer/tools/make_character.py   # → viewer/models/neon-runner.glb (~1 с)
 cd viewer && python3 -m http.server 8123 # открыть http://localhost:8123/
 ```
@@ -33,6 +35,13 @@ cd viewer && python3 -m http.server 8123 # открыть http://localhost:8123/
 - **Playwright + Chromium** — скриншоты вьюера для визуальной проверки (в облаке software-GL работает).
 - Реестр MCP: готовых Blender/3D-генерирующих коннекторов нет. Есть «Three.js 3D Viewer» (демо-рендер, не нужен) и «Trimble SketchUp» (не подключён, не для персонажей). Скиллов по 3D-моделированию в каталоге нет — поэтому добавлен проектный скилл `.claude/skills/ps1-character/`.
 - Если нужен «художественный» уровень (скульпт, ретопология) — это ручной Blender/Nomad на стороне пользователя; результат можно загрузить во вьюер как .glb (drag & drop).
+
+## Предпочтения пользователя
+- Хочет «как на PS1-скринах из инсты» (тёмное фэнтези, грязные пиксельные текстуры, туман), **не киберпанк**, обычный человек.
+- Готовые модели из интернета — ок. Брать только **CC0** (Quaternius: quaternius.com / opengameart.org, Kenney). У Quaternius архивы на OpenGameArt качаются curl'ом напрямую; на quaternius.com ссылки ведут на Google Drive.
+- Плоские «цветные полосы» на текстуре выглядят дёшево — всегда запекать шум/AO в маленькую текстуру с NEAREST.
+- Новые встроенные модели: положить .glb в `viewer/models/`, добавить в `BUILTIN` (main.js) и `<select id="builtin">`, указать источник в `models/CREDITS.md`. Имена клипов переводятся через `CLIP_RU`.
+- Pages кэширует файлы на 10 минут: `index.html` грузит `main.js?t=<now>`, glb тоже с `?t=` — не ломать это.
 
 ## Конвенции и грабли
 - Blender: Z вверх, персонаж смотрит в **−Y**, левая сторона = **+X**; glTF-экспорт конвертирует в Y-up/+Z сам.

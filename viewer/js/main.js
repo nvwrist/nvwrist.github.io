@@ -13,7 +13,7 @@ const canvas = $('c');
 
 /* ---------- настройки ---------- */
 const RES = [120, 160, 200, 240, 360, 480];
-const S = { ps1: true, convert: true, res: 3, snap: 1, affine: 1, dither: 0.8, bits: 5, flat: true, wire: false, fog: 1, rotate: true, env: 'roof', speed: 1 };
+const S = { ps1: true, convert: true, res: 3, snap: 1, affine: 1, dither: 0.8, bits: 5, flat: true, wire: false, fog: 1, rotate: true, env: 'medieval', speed: 1 };
 
 /* ---------- three ---------- */
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -105,6 +105,10 @@ function setEnv(kind) {
   L.amb.color.setHex(l.amb); L.amb.intensity = l.ambI;
   L.dir.color.setHex(l.dir); L.dir.intensity = l.dirI;
   L.p1.color.setHex(l.p1); L.p2.color.setHex(l.p2);
+  const lp = env.lightPos || { p1: [-2.4, 2.2, 1.8], p2: [2.6, 1.4, -2.2] };
+  L.p1.position.set(...lp.p1); L.p2.position.set(...lp.p2);
+  L.p1.intensity = 12; L.p2.intensity = kind === 'medieval' ? 1.2 : 12;
+  env.light1 = L.p1;
   controls.maxDistance = env.maxDist;
   applyFog();
 }
@@ -117,8 +121,38 @@ const modelRoot = new THREE.Group();
 scene.add(modelRoot);
 const character = createCharacter();
 scene.add(character.shadow);
-let current = { obj: character.group, kind: 'char', name: 'Neon Runner', clips: [] };
-let charEntry = current; // заменяется на glb-персонажа, когда он загрузится
+const RUNNER1 = { obj: character.group, kind: 'char', keep: true, name: 'Neon Runner v1', clips: [] };
+let current = RUNNER1;
+// встроенные модели: .glb лежат в models/ и собираются скриптами из tools/
+const BUILTIN = {
+  human: { name: 'Странник', url: './models/human.glb' },
+  runner2: { name: 'Neon Runner v2', url: './models/neon-runner.glb' },
+  runner1: { name: 'Neon Runner v1' },
+};
+const builtinCache = { runner1: RUNNER1 };
+let builtinKey = 'human';
+async function showBuiltin(key) {
+  builtinKey = key;
+  if (!builtinCache[key]) {
+    const b = BUILTIN[key];
+    toast('Загрузка: ' + b.name + '…');
+    try {
+      const gltf = await new GLTFLoader().loadAsync(b.url + '?t=' + (window.__v || Date.now()));
+      const holder = new THREE.Group();
+      holder.add(gltf.scene);
+      fitModel(holder);
+      builtinCache[key] = { obj: holder, kind: 'loaded', keep: true, name: b.name, clips: gltf.animations };
+    } catch (e) {
+      console.warn(e);
+      toast('Не удалось загрузить ' + b.name + ': ' + (e.message || e));
+      return;
+    }
+  }
+  if (builtinKey === key) showModel(builtinCache[key]);
+}
+const CLIP_RU = { Idle: 'Стоит', Walk: 'Ходьба', Run: 'Бег', Jump: 'Прыжок', Punch: 'Удар', Working: 'Работает', Death: 'Падает',
+  HandsUp: 'Руки вверх', Lean: 'Прислонился', Aim: 'Целится' };
+const ONCE = /death/i;
 let mixer = null, action = null;
 
 function eachMat(fn) {
@@ -189,14 +223,14 @@ function fitModel(obj) {
   const c = b.getCenter(new THREE.Vector3());
   obj.position.x -= c.x; obj.position.z -= c.z; obj.position.y -= b.min.y;
   const sz = b.getSize(new THREE.Vector3());
-  character.shadow.scale.setScalar(Math.max(sz.x, sz.z) * 1.4 / 0.9);
-  HOME.target.set(0, sz.y * 0.52, 0);
+  obj.userData.shadow = Math.min(Math.max(sz.x, sz.z), sz.y * 0.5) * 1.4 / 0.9;
+  obj.userData.targetY = sz.y * 0.52;
 }
 
 function fillPoseSelect() {
   const sel = $('pose');
   sel.innerHTML = '';
-  const names = current.kind === 'char' ? character.poses : ['— без анимации —', ...current.clips.map((c, i) => `${i + 1}. ${c.name || 'clip'}`)];
+  const names = current.kind === 'char' ? character.poses : ['— без анимации —', ...current.clips.map((c, i) => CLIP_RU[c.name] || `${i + 1}. ${c.name || 'clip'}`)];
   names.forEach((n, i) => sel.add(new Option(n, i)));
   sel.disabled = names.length < 2;
   if (current.kind === 'loaded' && current.clips.length) {
@@ -207,7 +241,11 @@ function fillPoseSelect() {
 function playClip(i) {
   const prev = action;
   action = i >= 0 && mixer ? mixer.clipAction(current.clips[i]) : null;
-  if (action) { action.reset().play(); if (prev && prev !== action) action.crossFadeFrom(prev, 0.35, false); }
+  if (action) {
+    const once = ONCE.test(current.clips[i].name);
+    action.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
+    action.clampWhenFinished = once;
+    action.reset().play(); if (prev && prev !== action) action.crossFadeFrom(prev, 0.35, false); }
   else prev?.stop();
 }
 
@@ -223,6 +261,8 @@ function showModel(entry) {
     HOME.pos.set(1.7, 1.35, 3.6); HOME.target.set(0, 0.95, 0);
   } else {
     HOME.pos.set(1.7, 1.35, 3.6);
+    HOME.target.set(0, entry.obj.userData.targetY ?? 0.95, 0);
+    character.shadow.scale.setScalar(entry.obj.userData.shadow ?? 1);
   }
   $('modelName').textContent = entry.name;
   fillPoseSelect();
@@ -312,7 +352,7 @@ $('pose').addEventListener('change', (e) => {
   if (current.kind === 'char') character.setPose(character.poses[i]);
   else playClip(i - 1);
 });
-$('btnChar').onclick = () => { if (current !== charEntry) showModel(charEntry); else resetCamera(); };
+$('builtin').addEventListener('change', (e) => showBuiltin(e.target.value));
 $('file').addEventListener('change', (e) => { loadFiles(e.target.files); e.target.value = ''; });
 $('btnReset').onclick = resetCamera;
 $('toggle').onclick = () => $('panel').classList.toggle('closed');
@@ -330,7 +370,7 @@ $('btnShot').onclick = () => {
 $('btnExport').onclick = () => {
   const obj = current.obj;
   new GLTFExporter().parse(obj, (res) => {
-    download(new Blob([res], { type: 'model/gltf-binary' }), (current === charEntry ? 'neon-runner' : 'model') + '.glb');
+    download(new Blob([res], { type: 'model/gltf-binary' }), (current.keep ? builtinKey : 'model') + '.glb');
     toast('Экспортировано .glb');
   }, (e) => toast('Ошибка экспорта: ' + e.message), { binary: true });
 };
@@ -345,18 +385,11 @@ addEventListener('drop', (e) => { e.preventDefault(); dragN = 0; drop.classList.
 
 /* ---------- запуск ---------- */
 addEventListener('resize', resize);
-setEnv('roof');
+setEnv(S.env);
 resize();
 applyStyle();
 showModel(current);
-// основной персонаж — .glb из Blender (tools/make_character.py); процедурный остаётся запасным
-new GLTFLoader().loadAsync('./models/neon-runner.glb?t=' + (window.__v || Date.now())).then((gltf) => {
-  const holder = new THREE.Group();
-  holder.add(gltf.scene);
-  fitModel(holder);
-  charEntry = { obj: holder, kind: 'loaded', keep: true, name: 'Neon Runner', clips: gltf.animations };
-  showModel(charEntry);
-}).catch((e) => { console.warn('glb персонаж не загрузился', e); toast('Не удалось загрузить glb-персонажа: ' + (e.message || e)); });
+showBuiltin('human');
 
 const clock = new THREE.Clock();
 let fpsN = 0, fps = 0;
