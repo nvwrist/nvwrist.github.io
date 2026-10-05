@@ -1,7 +1,7 @@
 # nvwrist.github.io
 
 GitHub Pages сайт. Корень — `index.html` (витрина Parfum Store, не трогать без запроса).
-`viewer/` — **PS1 3D Viewer**: three.js-просмотрщик моделей в стиле PlayStation 1 + персонаж «Neon Runner».
+`viewer/` — **PS1 3D Viewer**: three.js-просмотрщик моделей в стиле PlayStation 1 с одним персонажем «Странник» на тёмно-фэнтезийном балконе.
 Live: https://nvwrist.github.io/viewer/ (пользователь пишет по-русски, UI и ответы — на русском).
 
 ## Структура viewer/
@@ -10,10 +10,8 @@ Live: https://nvwrist.github.io/viewer/ (пользователь пишет п�
 | `index.html`, `style.css` | UI (панель справа/снизу на мобиле), importmap на локальный three |
 | `js/main.js` | сцена, камера, пост-обработка (RT низкого разрешения → дизеринг/глубина цвета), загрузка файлов, экспорт, UI |
 | `js/ps1.js` | `patch(material)` — вертексный snap + аффинные UV через `onBeforeCompile`; общие юниформы `ps1` |
-| `js/env.js` | окружения: **балкон тёмного фэнтези (по умолчанию)** / крыша-киберпанк / переулок / студия — процедурные, без внешних ассетов |
-| `js/character.js` | Neon Runner v1 — процедурный персонаж из боксов (пользователю нравился, оставлен в списке моделей) |
+| `js/env.js` | окружения: **балкон тёмного фэнтези (по умолчанию)** и нейтральная студия — процедурные, без внешних ассетов |
 | `tools/make_human.py` | **основной персонаж «Странник»**: качает CC0-модель Quaternius «Animated Human», перекрашивает, запекает PS1-текстуру 128×128 (Cycles: цвет × шум × AO) → `models/human.glb` (7 анимаций) |
-| `tools/make_character.py` | генератор Neon Runner v2 (процедурный меш в Blender `bpy`) → `models/neon-runner.glb` |
 | `models/*.glb`, `models/CREDITS.md` | готовые модели + источники/лицензии. Коммитятся |
 | `vendor/three/` | three r170 + addons локально (без CDN, работает офлайн/на Pages) |
 
@@ -21,11 +19,10 @@ Live: https://nvwrist.github.io/viewer/ (пользователь пишет п�
 ```bash
 pip install bpy numpy pillow             # bpy = Blender как python-модуль (~370 МБ), ставится через pip в облачной сессии
 python3 viewer/tools/make_human.py       # → viewer/models/human.glb (качает исходник с OpenGameArt, ~6 с)
-python3 viewer/tools/make_character.py   # → viewer/models/neon-runner.glb (~1 с)
 cd viewer && python3 -m http.server 8123 # открыть http://localhost:8123/
 ```
 Проверка визуально: Playwright + Chromium (`/opt/pw-browsers/chromium`, флаги `--use-angle=swiftshader --enable-unsafe-swiftshader --no-sandbox`).
-`window.__ps1` (в main.js) отдаёт `{S, scene, camera, controls, renderer, setEnv, character}` для скриптов-скриншотов.
+`window.__ps1` (в main.js) отдаёт `{S, scene, camera, controls, renderer, setEnv}` для скриптов-скриншотов.
 Скриншоты клади в scratchpad, не в репозиторий. Не используй `pkill -f` для остановки http.server — убивает оболочку; запускай сервер в фоне и просто оставь.
 
 ## Инструменты и скиллы, которые нашли (для качественных моделей)
@@ -40,16 +37,14 @@ cd viewer && python3 -m http.server 8123 # открыть http://localhost:8123/
 - Хочет «как на PS1-скринах из инсты» (тёмное фэнтези, грязные пиксельные текстуры, туман), **не киберпанк**, обычный человек.
 - Готовые модели из интернета — ок. Брать только **CC0** (Quaternius: quaternius.com / opengameart.org, Kenney). У Quaternius архивы на OpenGameArt качаются curl'ом напрямую; на quaternius.com ссылки ведут на Google Drive.
 - Плоские «цветные полосы» на текстуре выглядят дёшево — всегда запекать шум/AO в маленькую текстуру с NEAREST.
-- Новые встроенные модели: положить .glb в `viewer/models/`, добавить в `BUILTIN` (main.js) и `<select id="builtin">`, указать источник в `models/CREDITS.md`. Имена клипов переводятся через `CLIP_RU`.
+- Нужен **только один персонаж** (Странник) + сцена-балкон. Киберпанк-сцены и Neon Runner v1/v2 удалены по просьбе пользователя (есть в истории git). Персонаж грузится в `showHero()` (main.js); имена клипов переводятся через `CLIP_RU`; источник модели — в `models/CREDITS.md`.
 - Pages кэширует файлы на 10 минут: `index.html` грузит `main.js?t=<now>`, glb тоже с `?t=` — не ломать это.
 
 ## Конвенции и грабли
 - Blender: Z вверх, персонаж смотрит в **−Y**, левая сторона = **+X**; glTF-экспорт конвертирует в Y-up/+Z сам.
 - Вершинные цвета экспортируются **только** с `export_vertex_color='ACTIVE'`; цвета в скрипте задаются sRGB-hex и переводятся в linear (`lin()`).
-- Модель = один меш + скелет. Веса считаются по расстоянию до костей **с белым списком костей на часть** (`allowed_bones`), иначе торс/штаны тянутся за поднятой рукой. Жёсткие части (голова, очки, ботинки, кобура) привязаны к одной кости через `bone=`.
-- Анимации: позы заданы углами Эйлера в осях Blender; `q()` пересчитывает их в локальные кватернионы кости. Рука вперёд = `rx<0`, колено сгибается `rx>0`, отведение левой руки наружу = `ry<0`.
+- Скелет/анимации берутся из исходника Quaternius как есть (Mixamo-кости: Hips, Spine…, LeftArm…). Новые анимации — добавлять action'ы в Blender в `make_human.py` до экспорта.
 - Экспорт анимаций: `export_animation_mode='ACTIONS'` + `use_fake_user=True` у каждого action. Во вьюере клипы листаются в селекторе «Поза / анимация», по умолчанию играет `Idle`.
 - Загруженные модели во вьюере конвертируются в Lambert + `patch()` (`convertMaterials`), текстуры → NEAREST. Для skinned-мешей snap идёт после skinning — так и должно быть.
-- UV торса: планарная проекция в левую/правую нижние четверти атласа (майка спереди/сзади); значения клампятся, чтобы не вылезти в белую область.
-- Бюджет персонажа: ~5k треугольников, ~360 КБ. Не раздувать — это PS1-стиль.
+- Бюджет персонажа: ~1.6k треугольников, текстура 128×128, glb ~750 КБ (в основном анимации). Не раздувать — это PS1-стиль.
 - Коммиты на `main` пушатся напрямую (так хочет пользователь). PR не создавать без просьбы.

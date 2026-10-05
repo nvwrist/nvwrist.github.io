@@ -4,8 +4,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
-import { ps1, lambert } from './ps1.js';
-import { createCharacter } from './character.js';
+import { ps1, lambert, basic } from './ps1.js';
+import { canvasTex, px } from './textures.js';
 import { createEnv } from './env.js';
 
 const $ = (id) => document.getElementById(id);
@@ -119,36 +119,34 @@ function applyFog() {
 /* ---------- модели ---------- */
 const modelRoot = new THREE.Group();
 scene.add(modelRoot);
-const character = createCharacter();
-scene.add(character.shadow);
-const RUNNER1 = { obj: character.group, kind: 'char', keep: true, name: 'Neon Runner v1', clips: [] };
-let current = RUNNER1;
-// встроенные модели: .glb лежат в models/ и собираются скриптами из tools/
-const BUILTIN = {
-  human: { name: 'Странник', url: './models/human.glb' },
-  runner2: { name: 'Neon Runner v2', url: './models/neon-runner.glb' },
-  runner1: { name: 'Neon Runner v1' },
-};
-const builtinCache = { runner1: RUNNER1 };
-let builtinKey = 'human';
-async function showBuiltin(key) {
-  builtinKey = key;
-  if (!builtinCache[key]) {
-    const b = BUILTIN[key];
-    toast('Загрузка: ' + b.name + '…');
+// блоб-тень под моделью (как в играх PS1)
+const shadow = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.9), basic({
+  map: canvasTex(16, 16, (g, w, h) => {
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const d = Math.hypot(x - 7.5, y - 7.5) / 7.5;
+      if (d < 1) px(g, `rgba(0,0,0,${(0.55 * (1 - d)).toFixed(2)})`, x, y);
+    }
+  }), transparent: true, depthWrite: false }));
+shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.005;
+scene.add(shadow);
+
+let current = { obj: new THREE.Group(), kind: 'loaded', keep: true, name: '…', clips: [] };
+let hero = null; // персонаж «Странник» (models/human.glb, собирается tools/make_human.py)
+async function showHero() {
+  if (!hero) {
     try {
-      const gltf = await new GLTFLoader().loadAsync(b.url + '?t=' + (window.__v || Date.now()));
+      const gltf = await new GLTFLoader().loadAsync('./models/human.glb?t=' + (window.__v || Date.now()));
       const holder = new THREE.Group();
       holder.add(gltf.scene);
       fitModel(holder);
-      builtinCache[key] = { obj: holder, kind: 'loaded', keep: true, name: b.name, clips: gltf.animations };
+      hero = { obj: holder, kind: 'loaded', keep: true, name: 'Странник', clips: gltf.animations };
     } catch (e) {
       console.warn(e);
-      toast('Не удалось загрузить ' + b.name + ': ' + (e.message || e));
+      toast('Не удалось загрузить персонажа: ' + (e.message || e));
       return;
     }
   }
-  if (builtinKey === key) showModel(builtinCache[key]);
+  showModel(hero);
 }
 const CLIP_RU = { Idle: 'Стоит', Walk: 'Ходьба', Run: 'Бег', Jump: 'Прыжок', Punch: 'Удар', Working: 'Работает', Death: 'Падает',
   HandsUp: 'Руки вверх', Lean: 'Прислонился', Aim: 'Целится' };
@@ -230,7 +228,7 @@ function fitModel(obj) {
 function fillPoseSelect() {
   const sel = $('pose');
   sel.innerHTML = '';
-  const names = current.kind === 'char' ? character.poses : ['— без анимации —', ...current.clips.map((c, i) => CLIP_RU[c.name] || `${i + 1}. ${c.name || 'clip'}`)];
+  const names = ['— без анимации —', ...current.clips.map((c, i) => CLIP_RU[c.name] || `${i + 1}. ${c.name || 'clip'}`)];
   names.forEach((n, i) => sel.add(new Option(n, i)));
   sel.disabled = names.length < 2;
   if (current.kind === 'loaded' && current.clips.length) {
@@ -256,14 +254,9 @@ function showModel(entry) {
   modelRoot.add(entry.obj);
   mixer = entry.kind === 'loaded' && entry.clips.length ? new THREE.AnimationMixer(entry.obj) : null;
   action = null;
-  if (entry.kind === 'char') {
-    character.shadow.scale.setScalar(1);
-    HOME.pos.set(1.7, 1.35, 3.6); HOME.target.set(0, 0.95, 0);
-  } else {
-    HOME.pos.set(1.7, 1.35, 3.6);
-    HOME.target.set(0, entry.obj.userData.targetY ?? 0.95, 0);
-    character.shadow.scale.setScalar(entry.obj.userData.shadow ?? 1);
-  }
+  HOME.pos.set(1.7, 1.35, 3.6);
+  HOME.target.set(0, entry.obj.userData.targetY ?? 0.95, 0);
+  shadow.scale.setScalar(entry.obj.userData.shadow ?? 1);
   $('modelName').textContent = entry.name;
   fillPoseSelect();
   refreshModelStyle();
@@ -348,11 +341,9 @@ bind('rotate', 'rotate', null, applyStyle);
 bind('animSpeed', 'speed');
 $('env').addEventListener('change', (e) => setEnv(e.target.value));
 $('pose').addEventListener('change', (e) => {
-  const i = +e.target.value;
-  if (current.kind === 'char') character.setPose(character.poses[i]);
-  else playClip(i - 1);
+  playClip(+e.target.value - 1);
 });
-$('builtin').addEventListener('change', (e) => showBuiltin(e.target.value));
+$('btnChar').onclick = () => { if (current !== hero) showHero(); else resetCamera(); };
 $('file').addEventListener('change', (e) => { loadFiles(e.target.files); e.target.value = ''; });
 $('btnReset').onclick = resetCamera;
 $('toggle').onclick = () => $('panel').classList.toggle('closed');
@@ -370,7 +361,7 @@ $('btnShot').onclick = () => {
 $('btnExport').onclick = () => {
   const obj = current.obj;
   new GLTFExporter().parse(obj, (res) => {
-    download(new Blob([res], { type: 'model/gltf-binary' }), (current.keep ? builtinKey : 'model') + '.glb');
+    download(new Blob([res], { type: 'model/gltf-binary' }), (current === hero ? 'strannik' : 'model') + '.glb');
     toast('Экспортировано .glb');
   }, (e) => toast('Ошибка экспорта: ' + e.message), { binary: true });
 };
@@ -388,15 +379,13 @@ addEventListener('resize', resize);
 setEnv(S.env);
 resize();
 applyStyle();
-showModel(current);
-showBuiltin('human');
+showHero();
 
 const clock = new THREE.Clock();
 let fpsN = 0, fps = 0;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1) * S.speed;
   const t = clock.elapsedTime;
-  if (current.kind === 'char') character.update(t * S.speed, dt || 0.0001);
   mixer?.update(dt);
   env.update(t, dt);
   controls.update();
@@ -413,4 +402,4 @@ function frame() {
   requestAnimationFrame(frame);
 }
 frame();
-window.__ps1 = { S, scene, camera, renderer, controls, setEnv, character };
+window.__ps1 = { S, scene, camera, renderer, controls, setEnv };

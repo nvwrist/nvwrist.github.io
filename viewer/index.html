@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-  <meta name="theme-color" content="#0b0614">
+  <meta name="theme-color" content="#100e0d">
   <title>PS1 3D Viewer</title>
   <link rel="stylesheet" href="./style.css">
   <script type="importmap">
@@ -23,11 +23,7 @@
     <section>
       <h3>Модель</h3>
       <div class="row">
-        <select id="builtin" class="btn primary" aria-label="Встроенная модель">
-          <option value="human">Странник</option>
-          <option value="runner1">Neon Runner v1</option>
-          <option value="runner2">Neon Runner v2</option>
-        </select>
+        <button id="btnChar" class="btn primary">Персонаж</button>
         <label class="btn">Загрузить<input id="file" type="file" multiple accept=".glb,.gltf,.obj,.stl,.bin,.png,.jpg,.jpeg" hidden></label>
       </div>
       <div class="hint" id="modelName">Странник</div>
@@ -55,7 +51,7 @@
     <section>
       <h3>Сцена</h3>
       <label class="field">Окружение
-        <select id="env"><option value="medieval">Балкон (тёмное фэнтези)</option><option value="roof">Крыша (киберпанк)</option><option value="alley">Переулок</option><option value="studio">Студия</option></select>
+        <select id="env"><option value="medieval">Балкон (тёмное фэнтези)</option><option value="studio">Студия</option></select>
       </label>
       <label class="field">Туман <b id="vFog">1</b><input type="range" id="fog" min="0" max="2.5" step="0.1" value="1"></label>
       <label class="check"><input type="checkbox" id="rotate" checked> Автовращение</label>
