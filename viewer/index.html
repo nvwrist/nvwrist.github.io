@@ -63,6 +63,10 @@
   <div id="drop">Отпустите файл модели</div>
   <div id="toast"></div>
 
-  <script type="module" src="./js/main.js?v=3"></script>
+  <script type="module">
+    // всегда свежий main.js и glb (Pages кэширует файлы на 10 минут)
+    window.__v = Date.now();
+    import("./js/main.js?t=" + window.__v);
+  </script>
 </body>
 </html>

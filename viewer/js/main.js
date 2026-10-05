@@ -350,7 +350,7 @@ resize();
 applyStyle();
 showModel(current);
 // основной персонаж — .glb из Blender (tools/make_character.py); процедурный остаётся запасным
-new GLTFLoader().loadAsync('./models/neon-runner.glb?v=3').then((gltf) => {
+new GLTFLoader().loadAsync('./models/neon-runner.glb?t=' + (window.__v || Date.now())).then((gltf) => {
   const holder = new THREE.Group();
   holder.add(gltf.scene);
   fitModel(holder);
