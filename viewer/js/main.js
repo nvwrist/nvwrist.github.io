@@ -153,8 +153,87 @@ function snapshotBones(root) {
 }
 function restoreBones(m) { m.forEach(([p, q, sc], o) => { o.position.copy(p); o.quaternion.copy(q); o.scale.copy(sc); }); }
 
+/* ---------- служебные пометки в userData не должны попадать в .glb ---------- */
+const RUNTIME_KEYS = ['orig', 'psMat', 'ps1src', 'ps1'];
+function sanitize(root) { // чистим то, что могло приехать из старых экспортов
+  const junk = [];
+  root.traverse((o) => { if (o.userData.edHelper) junk.push(o); });
+  junk.forEach((o) => o.parent?.remove(o));
+  root.traverse((o) => {
+    RUNTIME_KEYS.forEach((k) => delete o.userData[k]);
+    for (const m of [].concat(o.material || [])) RUNTIME_KEYS.forEach((k) => delete m.userData[k]);
+  });
+}
+function exportClean(root, opts) {
+  const stash = [];
+  root.traverse((o) => {
+    if (o.userData.edHelper && o.visible) { stash.push([o, null]); o.visible = false; } // оверлеи Мастерской не экспортируем
+    for (const t of [o, ...[].concat(o.material || [])]) {
+      const saved = {};
+      let any = false;
+      RUNTIME_KEYS.forEach((k) => { if (k in t.userData) { saved[k] = t.userData[k]; delete t.userData[k]; any = true; } });
+      if (any) stash.push([t, saved]);
+    }
+  });
+  const restore = () => stash.forEach(([t, saved]) => { if (saved) Object.assign(t.userData, saved); else t.visible = true; });
+  return new Promise((resolve, reject) => {
+    new GLTFExporter().parse(root, (r) => { restore(); resolve(r); }, (e) => { restore(); reject(e); }, opts);
+  });
+}
+
+/* ---------- свои модели (вернулись из three.js Editor) — хранятся в IndexedDB ---------- */
+const idb = (() => {
+  let p = null;
+  const open = () => (p ??= new Promise((res, rej) => {
+    const r = indexedDB.open('ps1-viewer', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('models', { keyPath: 'id' });
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  }));
+  const tx = async (mode, fn) => { const db = await open(); return new Promise((res, rej) => { const t = db.transaction('models', mode); const q = fn(t.objectStore('models')); t.oncomplete = () => res(q?.result); t.onerror = () => rej(t.error); }); };
+  return { all: () => tx('readonly', (st) => st.getAll()), put: (r) => tx('readwrite', (st) => st.put(r)), del: (id) => tx('readwrite', (st) => st.delete(id)) };
+})();
+const customModels = {};
+const CUSTOM_LOOK = { schema: [], pal: {}, defaults: {}, random: () => ({}), apply: async () => ({}), cfg: {}, update() {} };
+function refreshHeroSelect() {
+  $('heroType').innerHTML = Object.entries(HERO_TYPES).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+  $('heroType').value = heroType;
+}
+async function loadCustomList() {
+  try {
+    for (const r of await idb.all()) { customModels[r.id] = r; HERO_TYPES['custom:' + r.id] = '✎ ' + r.name; }
+  } catch (e) { console.warn('IndexedDB недоступна', e); }
+  refreshHeroSelect();
+}
+async function saveCustomModel(buffer, name) {
+  const id = Date.now().toString(36);
+  const rec = { id, name: name.replace(/ \(правка\)$/, '') + ' (правка)', buffer, date: Date.now() };
+  try { await idb.put(rec); } catch (e) { toast('Не удалось сохранить в браузере: ' + e.message); }
+  customModels[id] = rec; HERO_TYPES['custom:' + id] = '✎ ' + rec.name;
+  if (editor.active) editor.exit();
+  await showHero('custom:' + id);
+  refreshHeroSelect();
+  toast('Модель из three.js Editor сохранена: «' + rec.name + '» (список «Персонаж»)');
+}
+async function deleteCustom(type) {
+  const id = type.slice(7);
+  if (!confirm('Удалить «' + customModels[id]?.name + '» из браузера?')) return;
+  try { await idb.del(id); } catch { /* */ }
+  delete customModels[id]; delete HERO_TYPES[type]; delete heroes[type];
+  await showHero('strannik'); refreshHeroSelect();
+}
+
 async function makeHero(type) {
   const v = window.__v || Date.now();
+  if (type.startsWith('custom:')) {
+    const rec = customModels[type.slice(7)];
+    const gltf = await new GLTFLoader().parseAsync(rec.buffer.slice(0), '');
+    sanitize(gltf.scene);
+    const holder = new THREE.Group();
+    holder.add(gltf.scene);
+    fitModel(holder);
+    return { obj: holder, kind: 'loaded', keep: true, name: rec.name, type, rig: type, rest: snapshotBones(holder), idle: /idle|стоит/i,
+      baseClips: gltf.animations, clips: gltf.animations, look: CUSTOM_LOOK };
+  }
   if (type === 'strannik') {
     const gltf = await new GLTFLoader().loadAsync('./models/human.glb?t=' + v);
     const holder = new THREE.Group();
@@ -227,6 +306,12 @@ function setupAnimator(h) {
 function buildLookUI() {
   const root = $('editor');
   root.innerHTML = '';
+  if (!look.schema.length) {
+    root.innerHTML = `<p class="hint">Это твоя модель, сохранённая из three.js Editor. Её форму и цвета меняй в 🛠 Мастерской или снова в three.js Editor.</p>
+      <button class="btn" id="btnDelCustom">Удалить эту модель</button>`;
+    $('btnDelCustom').onclick = () => deleteCustom(heroType);
+    return;
+  }
   const set = async (k, v) => {
     const c = { ...look.cfg, [k]: v };
     lsSet(lookKey(heroType), c);
@@ -287,6 +372,7 @@ function eachMat(fn) {
 }
 function setNearest(tex, on) {
   if (!tex) return;
+  tex.userData ??= {};
   tex.userData.o ??= { mag: tex.magFilter, min: tex.minFilter, gen: tex.generateMipmaps };
   tex.magFilter = on ? THREE.NearestFilter : tex.userData.o.mag;
   tex.minFilter = on ? THREE.NearestFilter : tex.userData.o.min;
@@ -427,6 +513,7 @@ async function loadFiles(fileList) {
       geo.computeVertexNormals();
       obj = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xb9b3d6, roughness: 0.8 }));
     }
+    sanitize(obj);
     obj.traverse((o) => { if (o.isMesh && !o.geometry.attributes.normal) o.geometry.computeVertexNormals(); });
     const holder = new THREE.Group();
     holder.add(obj);
@@ -486,7 +573,7 @@ $('pose').addEventListener('change', (e) => {
   playClip(+e.target.value - 1);
 });
 $('btnChar').onclick = () => { if (current !== hero) showHero(); else resetCamera(); };
-$('heroType').innerHTML = Object.entries(HERO_TYPES).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+refreshHeroSelect();
 $('heroType').onchange = (e) => showHero(e.target.value);
 $('file').addEventListener('change', (e) => { loadFiles(e.target.files); e.target.value = ''; });
 $('btnReset').onclick = resetCamera;
@@ -503,11 +590,10 @@ $('btnShot').onclick = () => {
   canvas.toBlob((b) => b && download(b, 'ps1-shot.png'), 'image/png');
 };
 $('btnExport').onclick = () => {
-  const obj = current.obj;
-  new GLTFExporter().parse(obj, (res) => {
-    download(new Blob([res], { type: 'model/gltf-binary' }), (current === hero ? heroType : 'model') + '.glb');
+  exportClean(current.obj, { binary: true, animations: current.clips || [] }).then((res) => {
+    download(new Blob([res], { type: 'model/gltf-binary' }), (current === hero ? heroType.replace(':', '-') : 'model') + '.glb');
     toast('Экспортировано .glb');
-  }, (e) => toast('Ошибка экспорта: ' + e.message), { binary: true, animations: current.clips || [] });
+  }, (e) => toast('Ошибка экспорта: ' + e.message));
 };
 
 // drag & drop
@@ -523,6 +609,8 @@ const editKey = () => (current === hero ? heroType : 'file:' + current.name);
 let edState = null;
 const editor = createEditor({
   scene, camera, renderer, controls, canvas, toast, getKey: editKey,
+  exportGlb: () => exportClean(current.obj, { binary: true, animations: current.clips || [] }).then((buffer) => ({ buffer, name: current.name || 'Модель' })),
+  onGlb: (msg) => saveCustomModel(msg.buffer, msg.name),
   onEnter: ({ pose, ps1: preview, start }) => {
     if (start) {
       animator?.active && animator.exit();
@@ -548,7 +636,7 @@ addEventListener('resize', resize);
 setEnv(S.env);
 resize();
 applyStyle();
-showHero();
+loadCustomList().finally(() => showHero(HERO_TYPES[lsGet('ps1.hero')] ? lsGet('ps1.hero') : heroType));
 
 const clock = new THREE.Clock();
 let fpsN = 0, fps = 0;

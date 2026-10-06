@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>SculptGL — PS1 Viewer</title>
+  <link rel="stylesheet" type="text/css" href="css/yagui.css" />
+  <script>
+  'use strict';
+  window.sketchfabOAuth2Config = { hostname: 'sketchfab.com', client_id: '', redirect_uri: '' };
+
+  // Мост PS1 Viewer ⇄ SculptGL: деталь приходит как OBJ (вершины в мировых координатах Т-позы),
+  // «Вернуть» отдаёт новые координаты вершин в том же порядке — вьюер переносит их на исходную деталь со скелетом.
+  function ps1Bridge(app) {
+    var bridge = null;
+    try { bridge = window.opener && window.opener.__ps1Bridge; } catch (e) { bridge = null; }
+    if (!bridge || bridge.kind !== 'obj') return;
+    bridge.data.then(function (src) {
+      app.clearScene();
+      app.loadScene(src.text, 'obj');
+      // наши координаты — метры; SculptGL ждёт свой масштаб: нормализуем через матрицу меша (вершины не трогаем)
+      try { app.normalizeAndCenterMeshes(app.getMeshes()); app.resetCameraMeshes(app.getMeshes()); app.render(); } catch (e) { console.warn(e); }
+      var bar = document.createElement('div');
+      bar.style.cssText = 'position:fixed;left:50%;bottom:12px;transform:translateX(-50%);z-index:9999;display:flex;gap:8px;align-items:center;' +
+        'background:#14110f;border:1px solid #c98a3a;padding:8px 12px;font:13px monospace;color:#e8e0cf;box-shadow:0 4px 18px #0008;max-width:94vw;flex-wrap:wrap;justify-content:center';
+      bar.innerHTML = '<span>PS1 Viewer · ' + src.name + '</span>' +
+        '<button style="background:#c98a3a;color:#140f0a;border:0;padding:7px 12px;font:inherit;font-weight:700;cursor:pointer">↩ Вернуть в PS1 Viewer</button>' +
+        '<span style="color:#9c9080;font-size:11px">не используй Multiresolution / Dynamic topology — число вершин должно остаться ' + src.count + '</span>';
+      document.body.appendChild(bar);
+      bar.querySelector('button').onclick = function () {
+        var target = window.opener && window.opener.__ps1Bridge;
+        if (!target) return alert('Вкладка PS1 Viewer закрыта.');
+        var m = app.getMeshes()[0];
+        if (!m) return alert('В сцене нет модели.');
+        var n = m.getNbVertices();
+        if (n !== src.count) return alert('Число вершин изменилось (' + n + ' вместо ' + src.count + '). Отмени подразделение/дин. топологию — тогда форму можно будет вернуть.');
+        var v = m.getVertices();
+        target.receive({ kind: 'sculpt', key: src.key, positions: Array.prototype.slice.call(v, 0, n * 3) });
+        alert('Готово: форма отправлена в PS1 Viewer. Эту вкладку можно закрыть.');
+      };
+    });
+  }
+
+  window.addEventListener('load', function () {
+    var app = new window.SculptGL();
+    window.__sgApp = app;
+    app.start();
+    ps1Bridge(app);
+  });
+  </script>
+</head>
+<body oncontextmenu="return false;">
+  <input type="file" id="fileopen" multiple style="display: none" />
+  <input type="file" id="backgroundopen" style="display: none" />
+  <input type="file" id="alphaopen" style="display: none" />
+  <input type="file" id="textureopen" style="display: none" />
+  <input type="file" id="matcapopen" style="display: none" />
+  <div id="viewport"><canvas id="canvas"></canvas></div>
+  <script src="sculptgl.js"></script>
+</body>
+</html>

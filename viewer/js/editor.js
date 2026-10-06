@@ -25,7 +25,7 @@ const TOOLS = {
 };
 const PAINT_PAL = ['#000000', '#ffffff', '#2a1e18', '#5a3a22', '#8a5a2c', '#c99a7a', '#a83228', '#d8b048', '#3a5a2a', '#2a3a5a', '#5a2a5a', '#7a7a7a'];
 
-export function createEditor({ scene, camera, renderer, controls, canvas, toast, onEnter, onExit, getKey }) {
+export function createEditor({ scene, camera, renderer, controls, canvas, toast, onEnter, onExit, getKey, exportGlb, onGlb }) {
   const st = {
     active: false, mode: 'object', tool: 'select', mesh: null, sel: new Set(), cam: false, xray: false,
     prop: false, propR: 0.12, brushR: 0.08, brushS: 0.5, sym: true,
@@ -752,6 +752,64 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     controls.update();
   }
 
+  /* ======================= внешние редакторы ======================= */
+  // Обмен через window.opener.__ps1Bridge: { kind, data: Promise, receive(msg) } — та же вкладка-источник, тот же домен.
+  const sculptPending = new Map();
+  function bridge(kind, data) {
+    window.__ps1Bridge = {
+      kind, data,
+      receive: (msg) => {
+        if (msg.kind === 'sculpt') importSculpt({ kind: 'sculpt', key: String(msg.key), positions: Float32Array.from(msg.positions) });
+        // данные приходят из другой вкладки — копируем в «свою» память (иначе instanceof ArrayBuffer не сработает)
+        else if (msg.kind === 'glb') onGlb?.({ kind: 'glb', name: String(msg.name), buffer: new Uint8Array(msg.buffer).slice().buffer });
+      },
+    };
+  }
+  function openThree() {
+    const w = window.open('./vendor/threejs-editor/editor/index.html', '_blank'); // открываем сразу — иначе iOS заблокирует окно
+    if (!w) return toast('Браузер заблокировал новую вкладку — разреши всплывающие окна');
+    bridge('glb', exportGlb());
+    toast('Модель открыта в three.js Editor. Когда закончишь — нажми там «↩ Вернуть в PS1 Viewer»');
+  }
+  function openSculpt() {
+    if (!st.mesh) return toast('Сначала выбери деталь (режим «Объект» или список деталей)');
+    const w = window.open('./vendor/sculptgl/index.html', '_blank');
+    if (!w) return toast('Браузер заблокировал новую вкладку — разреши всплывающие окна');
+    const mesh = st.mesh, md = prepare(mesh);
+    mesh.updateMatrixWorld(true);
+    const n = md.members.length, W0 = new Float32Array(n * 3);
+    let text = '# PS1 Viewer → SculptGL: ' + (mesh.name || 'mesh') + '\n';
+    for (let g = 0; g < n; g++) { worldPos(mesh, md.members[g][0], _v); _v.toArray(W0, g * 3); text += `v ${_v.x.toFixed(6)} ${_v.y.toFixed(6)} ${_v.z.toFixed(6)}\n`; }
+    const idx = md.geo.index ? md.geo.index.array : null, tn = idx ? idx.length : md.pos.count;
+    for (let t = 0; t < tn; t += 3) {
+      const a = md.groups[idx ? idx[t] : t], b = md.groups[idx ? idx[t + 1] : t + 1], c = md.groups[idx ? idx[t + 2] : t + 2];
+      if (a !== b && b !== c && a !== c) text += `f ${a + 1} ${b + 1} ${c + 1}\n`;
+    }
+    const key = meshKey(mesh);
+    sculptPending.set(key, { mesh, W0 });
+    bridge('obj', Promise.resolve({ text, count: n, key, name: mesh.name || 'деталь' }));
+    toast('Деталь открыта в SculptGL. Когда закончишь — нажми там «↩ Вернуть в PS1 Viewer»');
+  }
+  function importSculpt(msg) {
+    const pend = sculptPending.get(msg.key);
+    if (!pend) return toast('Не нашёл деталь, которую отправлял в SculptGL');
+    const { mesh, W0 } = pend, md = prepare(mesh);
+    if (msg.positions.length !== W0.length) return toast('Число вершин не совпадает — форму не перенести');
+    const before = md.pos.array.slice(), inv = new Map(), d = V3();
+    for (let g = 0; g < md.members.length; g++) {
+      d.set(msg.positions[g * 3] - W0[g * 3], msg.positions[g * 3 + 1] - W0[g * 3 + 1], msg.positions[g * 3 + 2] - W0[g * 3 + 2]);
+      if (d.lengthSq() > 1e-14) moveGroup(md, g, d, inv);
+    }
+    finishGeometry(md);
+    push({ type: 'verts', attr: md.pos, mesh, before, after: md.pos.array.slice() });
+    // следующий заход в SculptGL начнётся с новой формы
+    for (let g = 0; g < md.members.length; g++) W0.set(msg.positions.slice(g * 3, g * 3 + 3), g * 3);
+    if (st.active) { st.mesh = mesh; refreshOverlay(); refreshOutliner(); }
+    scheduleSave();
+    toast('Форма из SculptGL применена ✓ (Ctrl+Z — отменить)');
+    window.focus();
+  }
+
   /* ======================= UI ======================= */
   function buildUI() {
     const top = document.createElement('div'); top.id = 'ed-top';
@@ -763,6 +821,8 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
       <button class="ed-b" data-a="cam" title="Вращать камеру одним пальцем/левой кнопкой">🎥</button>
       <button class="ed-b" data-a="pose" title="Поза для правки">Т-поза</button>
       <button class="ed-b" data-a="ps1" title="Показывать в стиле PS1">PS1</button>
+      <button class="ed-b ed-ext" data-a="three" title="Открыть всю модель в three.js Editor (официальный редактор three.js)">three.js Editor ↗</button>
+      <button class="ed-b ed-ext" data-a="sculptgl" title="Скульптить выбранную деталь в SculptGL">SculptGL ↗</button>
       <span class="ed-saved"></span>`;
     const tools = document.createElement('div'); tools.id = 'ed-tools';
     const side = document.createElement('div'); side.id = 'ed-side';
@@ -781,6 +841,8 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
       else if (a === 'redo') doRedo();
       else if (a === 'cam') { st.cam = !st.cam; applyCamMode(); }
       else if (a === 'pose') { st.pose = st.pose === 'rest' ? 'frame' : 'rest'; onEnter?.({ pose: st.pose }); setTimeout(refreshOverlay, 50); syncTop(); }
+      else if (a === 'three') openThree();
+      else if (a === 'sculptgl') openSculpt();
       else if (a === 'ps1') { st.ps1Preview = !st.ps1Preview; onEnter?.({ ps1: st.ps1Preview }); syncTop(); }
     });
     tools.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b?.dataset.tool) setTool(b.dataset.tool); });
