@@ -13,6 +13,7 @@ Live: https://nvwrist.github.io/viewer/ (пользователь пишет п�
 | `js/look.js` | **редактор внешности**: `SCHEMA` (поля UI), `PAL` (палитры), `DEFAULT`, `randomLook()`, `createLook(root)` — перерисовка текстуры из карт + аксессуары на костях + пропорции тела |
 | `js/animator.js` | **ручной аниматор**: выбор кости (список/тап), повороты X/Y/Z, высота таза, ключи на таймлайне, зеркало, сохранение в `AnimationClip` (localStorage `ps1.anims.v1`) |
 | `models/human/` | карты для редактора, запекаются `make_human.py`: `region.png` (id региона ×40), `pos.png` (xyz объекта в T-позе, нормировано), `shade.png` (шум×AO), `meta.json` (границы, ориентиры: талия, колено, лодыжка, голова) |
+| `js/editor.js` | **Мастерская** — ручной редактор модели «как в Blender» (кнопка 🛠): режимы Объект / Правка / Скульпт / Покраска, гизмо TransformControls, undo/redo, горячие клавиши, автосохранение правок в localStorage (`ps1.edits.<ключ>`, `ps1.paint.<ключ>`) |
 | `js/modular.js` | **модульные персонажи Quaternius**: `createUniversal('male'|'female')` (тело + наряды крестьянин/рейнджер + причёски, части грузятся по требованию и пересаживаются на один скелет; тело режется на зоны по костям и зоны под одеждой прячутся) и `createWomen()` (10 нарядов × голова/торс/ноги/обувь + меч/пистолет). `CLIP_RU` — русские названия анимаций |
 | `models/q/` | ассеты Quaternius (см. `models/CREDITS.md`): `anims_ual1/2.glb` (только анимации), `male/`, `female/`, `hair/`, `tex/` (расцветки), `women.glb` |
 | `tools/fetch_quaternius.py` | качает бесплатные Standard-версии паков с itch.io (сценарий «Download Now → No thanks»: POST `/download_url`, затем POST `/file/<id>?source=game_download&after_download_lightbox=true&as_props=1` с csrf) |
@@ -30,7 +31,7 @@ python3 viewer/tools/make_human.py       # → viewer/models/human.glb (кача
 cd viewer && python3 -m http.server 8123 # открыть http://localhost:8123/
 ```
 Проверка визуально: Playwright + Chromium (`/opt/pw-browsers/chromium`, флаги `--use-angle=swiftshader --enable-unsafe-swiftshader --no-sandbox`).
-`window.__ps1` (в main.js) отдаёт `{S, scene, camera, controls, renderer, setEnv}` для скриптов-скриншотов.
+`window.__ps1` (в main.js) отдаёт `{S, scene, camera, controls, renderer, setEnv, look, animator, randomize, editor}` для скриптов-скриншотов.
 Скриншоты клади в scratchpad, не в репозиторий. Не используй `pkill -f` для остановки http.server — убивает оболочку; запускай сервер в фоне и просто оставь.
 
 ## Инструменты и скиллы, которые нашли (для качественных моделей)
@@ -56,6 +57,15 @@ cd viewer && python3 -m http.server 8123 # открыть http://localhost:8123/
 - Аниматор берёт кости из скелета автоматически и подписывает по-русски (`boneLabel`), понимает Mixamo/UE/Quaternius-имена.
 - Кэш паков: `/tmp/quaternius` (itch) и `/tmp/quaternius/women` (gdown с Google Drive). В git — только готовые `models/q/*`.
 - Платные Source/Pro-версии паков (остальные 8 нарядов Fantasy, доп. анимации Pro) НЕ скачиваются — только бесплатные Standard.
+
+## Мастерская (js/editor.js) — как устроено
+- Вход: 🛠 в шапке или кнопка во вкладке «Персонаж». На время правки анимация на паузе, PS1-эффект выключен (кнопка «PS1» — превью), поза «Т-поза» (покой, `current.rest`) или «Кадр».
+- Правки идут в ЛЮБОЙ позе: сдвиг в мире переводится в координаты меша обратной матрицей скиннинга вершины (`invLinear`: Σw·Bone·BoneInv, с bindMatrix). Не заменяй это на прямую запись мировых координат.
+- Вершины «свариваются» по позиции (`prepare` → `groups/members`), иначе правка рвёт швы UV. Квантованные атрибуты (KHR_mesh_quantization у Quaternius) переводятся во Float32 (`floatify`) — с заменой во всех мешах, где атрибут общий (зоны тела Universal делят один атрибут; нормали пересчитываются на геометрии с полным индексом).
+- У `BufferAttribute` в three r170 нет `userData` → исходные позиции в `WeakMap ORIG`.
+- Покраска — отдельный слой-канвас поверх исходной текстуры (`layers`), ластик стирает слой. После каждого `look.apply` main вызывает `editor.afterLook(root, ключ)` — он заново накладывает слои/правки (look.js Странника перерисовывает текстуру).
+- Ключ правок: тип персонажа (`strannik`, `man`, `woman`, `women`) или `file:<имя>` для загруженных файлов. Сохраняются: смещения вершин (дельты), удалённые грани, скрытые детали, цвета материалов, слои покраски (PNG dataURL).
+- Горячие клавиши: 1–4 режимы, Tab объект/правка, G/R/S, A / Alt+A, Ctrl+I, L, O, Alt+Z, X/Delete, H / Alt+H, F, [ ], Ctrl+Z / Ctrl+Shift+Z, Esc. Камера в режимах правки — правая кнопка, 2 пальца или 🎥.
 
 ## Редактор персонажа и аниматор — как устроено
 - Панель: вкладки «Персонаж» (редактор + 🎲 Рандом), «Анимация» (список клипов + аниматор), «Вид» (PS1/сцена/загрузка). 🎲 есть и в шапке.

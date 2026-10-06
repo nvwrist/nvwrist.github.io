@@ -56,3 +56,39 @@ select.btn{appearance:none;-webkit-appearance:none;text-align:center;text-align-
 .anim-item span{flex:1;color:var(--cyan)}
 .anim-item .btn{width:40px;margin:0;padding:6px}
 .row .check{flex:0 0 auto}
+
+/* ---------- Мастерская ---------- */
+body.editing .top, body.editing #panel{display:none}
+#ed-top{position:fixed;top:0;left:0;right:0;z-index:20;display:flex;gap:6px;align-items:center;padding:calc(6px + env(safe-area-inset-top)) 8px 6px;background:var(--panel);border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+#ed-top::-webkit-scrollbar{display:none}
+.ed-b{flex:0 0 auto;background:#1c1714;border:1px solid var(--line);color:var(--txt);font:inherit;padding:7px 10px;cursor:pointer;white-space:nowrap}
+.ed-b.on{border-color:var(--pink);color:var(--pink)}
+.ed-seg{display:flex;flex:0 0 auto;border:1px solid var(--line)}
+.ed-seg button{background:none;border:0;border-right:1px solid var(--line);color:var(--mut);font:inherit;padding:7px 11px;cursor:pointer;white-space:nowrap}
+.ed-seg button:last-child{border-right:0}
+.ed-seg button.on{background:var(--pink);color:#140f0a;font-weight:700}
+.ed-saved{color:var(--mut);font-size:11px;margin-left:auto;white-space:nowrap;padding-right:4px}
+#ed-tools{position:fixed;left:8px;top:58px;z-index:20;display:flex;flex-direction:column;gap:4px}
+#ed-tools button{width:64px;padding:6px 2px;background:var(--panel);border:1px solid var(--line);color:var(--txt);font:inherit;font-size:10px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px}
+#ed-tools button b{font-size:18px;line-height:1}
+#ed-tools button.on{border-color:var(--pink);color:var(--pink)}
+#ed-side{position:fixed;right:8px;top:58px;bottom:34px;width:270px;z-index:20;background:var(--panel);border:1px solid var(--line);overflow:auto;padding:10px 12px}
+.ed-sidetoggle{display:none}
+.ed-outliner{max-height:30vh;overflow:auto;border:1px solid var(--line)}
+.ed-row{display:flex;gap:6px;align-items:center;padding:3px 6px;cursor:pointer;font-size:12px;border-bottom:1px solid #2a221c}
+.ed-row:hover{background:#241c16}
+.ed-row.on{background:#3a2a18;color:var(--pink)}
+.ed-row button{background:none;border:0;color:var(--txt);cursor:pointer;width:22px;padding:0}
+.ed-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ed-status{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--panel);border-top:1px solid var(--line);color:var(--mut);font-size:11px;padding:6px 10px calc(6px + env(safe-area-inset-bottom));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ed-box{position:fixed;display:none;z-index:25;border:1px dashed var(--pink);background:#c98a3a22;pointer-events:none}
+#ed-side .row .btn{font-size:12px;padding:7px 4px}
+@media (max-width:700px){
+  #ed-tools{top:auto;bottom:34px;left:0;right:0;flex-direction:row;overflow-x:auto;padding:4px 6px;background:var(--panel);border-top:1px solid var(--line)}
+  #ed-tools button{flex:0 0 auto;width:62px}
+  #ed-side{top:auto;left:0;right:0;width:auto;bottom:96px;max-height:44px;overflow:hidden;padding-top:4px}
+  #ed-side.open{max-height:45vh;overflow:auto}
+  .ed-sidetoggle{display:block;width:100%;margin:0 0 8px;position:sticky;top:0;z-index:1}
+  #ed-status{font-size:10px}
+}
+#ed-top[hidden],#ed-tools[hidden],#ed-side[hidden],#ed-status[hidden]{display:none!important}

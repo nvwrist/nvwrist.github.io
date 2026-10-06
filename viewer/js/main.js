@@ -9,6 +9,7 @@ import { canvasTex, px } from './textures.js';
 import { createEnv } from './env.js';
 import { createLook, SCHEMA, PAL, DEFAULT, randomLook } from './look.js';
 import { createAnimator } from './animator.js';
+import { createEditor } from './editor.js';
 import { createUniversal, createWomen, CLIP_RU as CLIP_RU_Q, ONCE as ONCE_Q } from './modular.js';
 
 const $ = (id) => document.getElementById(id);
@@ -200,6 +201,7 @@ async function showHero(type = heroType) {
   look = hero.look;
   restoreBones(hero.rest); // аниматор запоминает «покой» — даём ему исходную позу
   await look.apply(lsGet(lookKey(type)) || look.defaults);
+  editor.afterLook(hero.obj, heroType);
   setupAnimator(hero);
   showModel(hero);
   buildLookUI();
@@ -229,6 +231,7 @@ function buildLookUI() {
     const c = { ...look.cfg, [k]: v };
     lsSet(lookKey(heroType), c);
     await look.apply(c);
+    editor.afterLook(hero.obj, heroType);
     refreshModelStyle();
   };
   for (const grp of look.schema) {
@@ -270,6 +273,7 @@ async function randomize() {
   const c = look.random();
   lsSet(lookKey(heroType), c);
   await look.apply(c);
+  editor.afterLook(hero.obj, heroType);
   syncLookUI(); refreshModelStyle();
 }
 
@@ -468,7 +472,9 @@ bind('animSpeed', 'speed');
 $('env').addEventListener('change', (e) => setEnv(e.target.value));
 $('btnRandom').onclick = randomize;
 $('btnRandom2').onclick = randomize;
-$('btnLookReset').onclick = async () => { if (!look) return; lsSet(lookKey(heroType), look.defaults); await look.apply(look.defaults); syncLookUI(); refreshModelStyle(); };
+$('btnEditor').onclick = () => openEditor();
+$('btnEditor2').onclick = () => openEditor();
+$('btnLookReset').onclick = async () => { if (!look) return; lsSet(lookKey(heroType), look.defaults); await look.apply(look.defaults); editor.afterLook(hero.obj, heroType); syncLookUI(); refreshModelStyle(); };
 document.querySelector('.tabs').onclick = (e) => {
   const t = e.target.dataset.tab;
   if (!t) return;
@@ -512,6 +518,31 @@ addEventListener('dragleave', () => { if (--dragN <= 0) { dragN = 0; drop.classL
 addEventListener('dragover', (e) => e.preventDefault());
 addEventListener('drop', (e) => { e.preventDefault(); dragN = 0; drop.classList.remove('on'); if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files); });
 
+/* ---------- Мастерская (ручной редактор модели) ---------- */
+const editKey = () => (current === hero ? heroType : 'file:' + current.name);
+let edState = null;
+const editor = createEditor({
+  scene, camera, renderer, controls, canvas, toast, getKey: editKey,
+  onEnter: ({ pose, ps1: preview, start }) => {
+    if (start) {
+      animator?.active && animator.exit();
+      edState = { ps1: S.ps1, rotate: controls.autoRotate, frame: snapshotBones(current.obj) };
+    }
+    if (pose === 'rest' && current.rest) restoreBones(current.rest);
+    else if (pose === 'frame' && edState) restoreBones(edState.frame);
+    if (preview !== undefined) { S.ps1 = preview; applyStyle(); refreshModelStyle(); }
+  },
+  onExit: () => {
+    if (edState) { S.ps1 = edState.ps1; $('ps1').checked = S.ps1; applyStyle(); refreshModelStyle(); controls.autoRotate = S.rotate; }
+    $('panel').classList.remove('closed');
+  },
+});
+function openEditor() {
+  if (!current?.obj) return;
+  $('panel').classList.add('closed');
+  editor.enter(current.obj, editKey());
+}
+
 /* ---------- запуск ---------- */
 addEventListener('resize', resize);
 setEnv(S.env);
@@ -524,7 +555,8 @@ let fpsN = 0, fps = 0;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1) * S.speed;
   const t = clock.elapsedTime;
-  if (animator?.active && current === hero) animator.update(dt);
+  if (editor.active) { /* анимация на паузе, пока правим модель */ }
+  else if (animator?.active && current === hero) animator.update(dt);
   else mixer?.update(dt);
   if (look && current === hero) look.update(t);
   env.update(t, dt);
@@ -542,4 +574,4 @@ function frame() {
   requestAnimationFrame(frame);
 }
 frame();
-window.__ps1 = { S, scene, camera, renderer, controls, setEnv, get look() { return look; }, get animator() { return animator; }, randomize };
+window.__ps1 = { S, scene, camera, renderer, controls, setEnv, get look() { return look; }, get animator() { return animator; }, randomize, editor };
