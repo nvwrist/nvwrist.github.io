@@ -11,6 +11,8 @@ import { createLook, SCHEMA, PAL, DEFAULT, randomLook } from './look.js';
 import { createAnimator } from './animator.js';
 import { createEditor } from './editor.js';
 import { createUniversal, createWomen, CLIP_RU as CLIP_RU_Q, ONCE as ONCE_Q } from './modular.js';
+import { createEquip, catalog, CATS, SOCKETS } from './equip.js';
+import { db } from './db.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('c');
@@ -181,17 +183,8 @@ function exportClean(root, opts) {
   });
 }
 
-/* ---------- свои модели (вернулись из three.js Editor) — хранятся в IndexedDB ---------- */
-const idb = (() => {
-  let p = null;
-  const open = () => (p ??= new Promise((res, rej) => {
-    const r = indexedDB.open('ps1-viewer', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('models', { keyPath: 'id' });
-    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
-  }));
-  const tx = async (mode, fn) => { const db = await open(); return new Promise((res, rej) => { const t = db.transaction('models', mode); const q = fn(t.objectStore('models')); t.oncomplete = () => res(q?.result); t.onerror = () => rej(t.error); }); };
-  return { all: () => tx('readonly', (st) => st.getAll()), put: (r) => tx('readwrite', (st) => st.put(r)), del: (id) => tx('readwrite', (st) => st.delete(id)) };
-})();
+/* ---------- свои модели (вернулись из three.js Editor) — хранятся в IndexedDB (db.js) ---------- */
+const idb = { all: () => db.all('models'), put: (r) => db.put('models', r), del: (id) => db.del('models', id) };
 const customModels = {};
 const CUSTOM_LOOK = { schema: [], pal: {}, defaults: {}, random: () => ({}), apply: async () => ({}), cfg: {}, update() {} };
 function refreshHeroSelect() {
@@ -222,6 +215,14 @@ async function deleteCustom(type) {
   await showHero('strannik'); refreshHeroSelect();
 }
 
+// временно ставим персонажа в позу покоя (для расчётов привязки одежды), потом возвращаем кадр
+function withRest(root, rest, fn) {
+  const snap = snapshotBones(root);
+  restoreBones(rest); root.updateMatrixWorld(true);
+  try { return fn(); } finally { restoreBones(snap); root.updateMatrixWorld(true); }
+}
+const makeEquip = (root, rest, key) => createEquip({ root, key, toast, withRest: (fn) => withRest(root, rest, fn) });
+
 async function makeHero(type) {
   const v = window.__v || Date.now();
   if (type.startsWith('custom:')) {
@@ -231,8 +232,9 @@ async function makeHero(type) {
     const holder = new THREE.Group();
     holder.add(gltf.scene);
     fitModel(holder);
-    return { obj: holder, kind: 'loaded', keep: true, name: rec.name, type, rig: type, rest: snapshotBones(holder), idle: /idle|стоит/i,
-      baseClips: gltf.animations, clips: gltf.animations, look: CUSTOM_LOOK };
+    const rest = snapshotBones(holder);
+    return { obj: holder, kind: 'loaded', keep: true, name: rec.name, type, rig: type, rest, idle: /idle|стоит/i,
+      baseClips: gltf.animations, clips: gltf.animations, look: CUSTOM_LOOK, equip: makeEquip(holder, rest, type) };
   }
   if (type === 'strannik') {
     const gltf = await new GLTFLoader().loadAsync('./models/human.glb?t=' + v);
@@ -240,9 +242,10 @@ async function makeHero(type) {
     holder.add(gltf.scene);
     fitModel(holder);
     const rest = snapshotBones(holder);
-    const lk = await createLook(holder, { version: v, clips: gltf.animations });
+    const equip = makeEquip(holder, rest, type);
+    const lk = await createLook(holder, { version: v, equip });
     return {
-      obj: holder, kind: 'loaded', keep: true, name: 'Странник', type, rig: '', rest, idle: /idle/i,
+      obj: holder, kind: 'loaded', keep: true, name: 'Странник', type, rig: '', rest, idle: /idle/i, equip,
       baseClips: gltf.animations, clips: gltf.animations,
       look: { schema: SCHEMA, pal: PAL, defaults: DEFAULT, random: randomLook, apply: (c) => lk.apply(c), get cfg() { return lk.cfg; }, update: (t) => lk.update(t) },
     };
@@ -250,7 +253,8 @@ async function makeHero(type) {
   const m = type === 'women' ? await createWomen({ version: v }) : await createUniversal(type === 'man' ? 'male' : 'female', { version: v });
   await m.apply(lsGet(lookKey(type)) || m.defaults);
   fitModel(m.root);
-  const entry = { obj: m.root, kind: 'loaded', keep: true, name: m.name, type, rig: m.rig, rest: snapshotBones(m.root), idle: m.idle, baseClips: [], clips: [], look: m };
+  const rest = snapshotBones(m.root);
+  const entry = { obj: m.root, kind: 'loaded', keep: true, name: m.name, type, rig: m.rig, rest, idle: m.idle, baseClips: [], clips: [], look: m, equip: makeEquip(m.root, rest, type) };
   toast('Загрузка анимаций…');
   m.loadClips().then((clips) => {
     entry.baseClips = clips;
@@ -280,6 +284,7 @@ async function showHero(type = heroType) {
   look = hero.look;
   restoreBones(hero.rest); // аниматор запоминает «покой» — даём ему исходную позу
   await look.apply(lsGet(lookKey(type)) || look.defaults);
+  if (!hero.equipLoaded) { hero.equipLoaded = true; await hero.equip.loadSaved(); }
   editor.afterLook(hero.obj, heroType);
   setupAnimator(hero);
   showModel(hero);
@@ -308,8 +313,9 @@ function buildLookUI() {
   root.innerHTML = '';
   if (!look.schema.length) {
     root.innerHTML = `<p class="hint">Это твоя модель, сохранённая из three.js Editor. Её форму и цвета меняй в 🛠 Мастерской или снова в three.js Editor.</p>
-      <button class="btn" id="btnDelCustom">Удалить эту модель</button>`;
+      <button class="btn" id="btnDelCustom">Удалить эту модель</button><section id="equipUI"></section>`;
     $('btnDelCustom').onclick = () => deleteCustom(heroType);
+    buildEquipUI();
     return;
   }
   const set = async (k, v) => {
@@ -318,6 +324,7 @@ function buildLookUI() {
     await look.apply(c);
     editor.afterLook(hero.obj, heroType);
     refreshModelStyle();
+    if (look.schema === SCHEMA) buildEquipUI();
   };
   for (const grp of look.schema) {
     const sec = document.createElement('section');
@@ -341,7 +348,42 @@ function buildLookUI() {
     }
     root.appendChild(sec);
   }
+  const eqSec = document.createElement('section');
+  eqSec.id = 'equipUI';
+  root.appendChild(eqSec);
   syncLookUI();
+  buildEquipUI();
+}
+/* ---------- снаряжение во вкладке «Персонаж»: быстро надеть/снять; подгонка — в Мастерской ---------- */
+async function buildEquipUI() {
+  const box = $('equipUI');
+  if (!box) return;
+  const eq = hero?.equip;
+  if (!eq) { box.innerHTML = ''; return; }
+  const list = await catalog();
+  const groups = {};
+  list.forEach((it) => (groups[it.cat] ??= []).push(it));
+  const items = eq.containers().sort((a, b) => !!b.userData.equip.builtinId - !!a.userData.equip.builtinId);
+  const esc = (t) => String(t).replace(/</g, '&lt;');
+  box.innerHTML = `<h3>Снаряжение</h3>
+    <div class="eq-list">${items.map((c, i) => { const d = c.userData.equip; return `<div class="eq-row" data-i="${i}"><span>${d.builtinId ? '◇ ' : ''}${esc(d.name)} <i>· ${SOCKETS[d.socket] || d.socket}</i></span>
+      <button data-a="eye" title="Скрыть/показать">${c.visible ? '👁' : '—'}</button>${d.builtinId ? '' : '<button data-a="del" title="Снять">✕</button>'}</div>`; }).join('') || '<p class="hint">Ничего не надето.</p>'}</div>
+    <div class="field"><select id="eqAdd"><option value="">＋ Надеть предмет…</option>${Object.entries(CATS).filter(([k]) => groups[k]).map(([k, l]) =>
+      `<optgroup label="${l}">${groups[k].map((it) => `<option value="${it.ref}">${esc(it.name)}${it.user ? ' ★' : ''}</option>`).join('')}</optgroup>`).join('')}</select></div>
+    <button class="btn" id="eqTune">🛠 Подогнать / создать свои предметы</button>
+    <p class="hint">◇ — из настроек выше. Положение, размер, хват, форму и материалы любого предмета правь в Мастерской → «Снаряжение».</p>`;
+  $('eqAdd').onchange = async (e) => {
+    if (!e.target.value) return;
+    try { await eq.equip(e.target.value); refreshModelStyle(); toast('Надето. Подогнать — «🛠 Подогнать»'); } catch (err) { toast('Не загрузилось: ' + err.message); }
+    buildEquipUI();
+  };
+  $('eqTune').onclick = () => openEditor('equip');
+  box.querySelector('.eq-list').onclick = (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    const c = items[+b.closest('.eq-row').dataset.i];
+    if (b.dataset.a === 'eye') eq.setHidden(c, c.visible); else eq.remove(c);
+    buildEquipUI();
+  };
 }
 function syncLookUI() {
   const c = look.cfg;
@@ -359,7 +401,7 @@ async function randomize() {
   lsSet(lookKey(heroType), c);
   await look.apply(c);
   editor.afterLook(hero.obj, heroType);
-  syncLookUI(); refreshModelStyle();
+  syncLookUI(); refreshModelStyle(); buildEquipUI();
 }
 
 const CLIP_RU = { ...CLIP_RU_Q, Idle: 'Стоит', Walk: 'Ходьба', Run: 'Бег', Jump: 'Прыжок', Punch: 'Удар', Working: 'Работает', Death: 'Падает',
@@ -518,7 +560,10 @@ async function loadFiles(fileList) {
     const holder = new THREE.Group();
     holder.add(obj);
     fitModel(holder);
-    showModel({ obj: holder, kind: 'loaded', name: main.name, clips });
+    const rest = snapshotBones(holder);
+    const equip = makeEquip(holder, rest, 'file:' + main.name); // свою модель тоже можно вооружить (гнёзда — по найденным костям)
+    await equip.loadSaved();
+    showModel({ obj: holder, kind: 'loaded', name: main.name, clips, rest, equip });
   } catch (err) {
     console.error(err);
     toast('Не удалось загрузить: ' + (err.message || err));
@@ -561,7 +606,7 @@ $('btnRandom').onclick = randomize;
 $('btnRandom2').onclick = randomize;
 $('btnEditor').onclick = () => openEditor();
 $('btnEditor2').onclick = () => openEditor();
-$('btnLookReset').onclick = async () => { if (!look) return; lsSet(lookKey(heroType), look.defaults); await look.apply(look.defaults); editor.afterLook(hero.obj, heroType); syncLookUI(); refreshModelStyle(); };
+$('btnLookReset').onclick = async () => { if (!look) return; lsSet(lookKey(heroType), look.defaults); await look.apply(look.defaults); editor.afterLook(hero.obj, heroType); syncLookUI(); refreshModelStyle(); buildEquipUI(); };
 document.querySelector('.tabs').onclick = (e) => {
   const t = e.target.dataset.tab;
   if (!t) return;
@@ -611,6 +656,8 @@ const editor = createEditor({
   scene, camera, renderer, controls, canvas, toast, getKey: editKey,
   exportGlb: () => exportClean(current.obj, { binary: true, animations: current.clips || [] }).then((buffer) => ({ buffer, name: current.name || 'Модель' })),
   onGlb: (msg) => saveCustomModel(msg.buffer, msg.name),
+  getEquip: () => current?.equip || null,
+  onModelChanged: () => { refreshModelStyle(); },
   onEnter: ({ pose, ps1: preview, start }) => {
     if (start) {
       animator?.active && animator.exit();
@@ -623,12 +670,13 @@ const editor = createEditor({
   onExit: () => {
     if (edState) { S.ps1 = edState.ps1; $('ps1').checked = S.ps1; applyStyle(); refreshModelStyle(); controls.autoRotate = S.rotate; }
     $('panel').classList.remove('closed');
+    if (current === hero) buildEquipUI();
   },
 });
-function openEditor() {
+function openEditor(mode) {
   if (!current?.obj) return;
   $('panel').classList.add('closed');
-  editor.enter(current.obj, editKey());
+  editor.enter(current.obj, editKey(), { mode });
 }
 
 /* ---------- запуск ---------- */
@@ -643,10 +691,11 @@ let fpsN = 0, fps = 0;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1) * S.speed;
   const t = clock.elapsedTime;
-  if (editor.active) { /* анимация на паузе, пока правим модель */ }
+  if (editor.active && !editor.playing) { /* анимация на паузе, пока правим модель */ }
   else if (animator?.active && current === hero) animator.update(dt);
   else mixer?.update(dt);
-  if (look && current === hero) look.update(t);
+  if (look && current === hero) { look.update(t); hero.equip?.update(t); }
+  else current.equip?.update(t);
   env.update(t, dt);
   controls.update();
   render();
@@ -662,4 +711,4 @@ function frame() {
   requestAnimationFrame(frame);
 }
 frame();
-window.__ps1 = { S, scene, camera, renderer, controls, setEnv, get look() { return look; }, get animator() { return animator; }, randomize, editor };
+window.__ps1 = { S, scene, camera, renderer, controls, setEnv, get look() { return look; }, get animator() { return animator; }, get hero() { return hero; }, showHero, randomize, editor, refreshModelStyle };

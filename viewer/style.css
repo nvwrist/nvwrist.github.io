@@ -92,3 +92,29 @@ body.editing .top, body.editing #panel{display:none}
   #ed-status{font-size:10px}
 }
 #ed-top[hidden],#ed-tools[hidden],#ed-side[hidden],#ed-status[hidden]{display:none!important}
+
+/* ---------- снаряжение и материалы ---------- */
+.eq-list{border:1px solid var(--line);margin-bottom:8px;max-height:26vh;overflow:auto}
+.eq-row{display:flex;gap:6px;align-items:center;padding:4px 6px;border-bottom:1px solid #2a221c;font-size:12px}
+.eq-row span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.eq-row i,.ed-row i{color:var(--mut);font-style:normal}
+.eq-row button,.ed-row button{background:none;border:0;color:var(--txt);cursor:pointer;width:24px;padding:0;flex:0 0 auto}
+#ed-side select{width:100%;margin:4px 0 8px}
+#ed-side .row select{margin:0}
+#ed-side .field select{margin-top:5px}
+.eq-nums{border:1px solid var(--line);padding:6px;margin:6px 0 8px}
+.eq-nums>div{display:flex;gap:4px;align-items:center;margin:3px 0}
+.eq-nums span{flex:0 0 74px;color:var(--mut);font-size:11px}
+.eq-nums label{flex:1;display:flex;align-items:center;gap:2px;color:var(--mut);font-size:10px}
+.eq-nums input{width:100%;min-width:0;background:#1c1714;color:var(--txt);border:1px solid var(--line);padding:4px 3px;font:inherit;font-size:12px}
+.ed-file{display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.ed-mat{border:1px solid var(--line);padding:6px;margin-bottom:6px}
+.ed-mat-h{font-size:11px;color:var(--cyan);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ed-mat-r{display:flex;gap:4px;align-items:center;margin-top:4px}
+#ed-side .ed-mat-r select{flex:1;margin:0;padding:5px}
+.ed-mat-r input[type=color]{width:30px;height:28px;border:1px solid var(--line);background:none;padding:0;cursor:pointer;flex:0 0 auto}
+.ed-mat-r input[type=color]:disabled{opacity:.3}
+.ed-mat-r label{display:flex;align-items:center;gap:2px;color:var(--mut)}
+.ed-mat-r input[type=number]{width:44px;background:#1c1714;color:var(--txt);border:1px solid var(--line);padding:5px 3px;font:inherit}
+.ed-mat-r .ed-b{padding:5px 7px}
+#ed-top [hidden]{display:none!important}

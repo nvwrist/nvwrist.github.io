@@ -6,6 +6,9 @@
 | `q/anims_ual1.glb`, `q/anims_ual2.glb` | [Universal Animation Library 1](https://quaternius.com/packs/universalanimationlibrary.html) и [2](https://quaternius.com/packs/universalanimationlibrary2.html) — Quaternius, версия Standard (86 анимаций, без манекена) | CC0 |
 | `q/male/*`, `q/female/*`, `q/hair/*` | [Universal Base Characters](https://quaternius.com/packs/universalbasecharacters.html) + [Modular Character Outfits – Fantasy](https://quaternius.com/packs/modularcharacteroutfitsfantasy.html) — Quaternius, Standard; текстуры ужаты, геометрия упрощена `tools/build_quaternius.py` | CC0 |
 | `q/women.glb` | [Ultimate Modular Women](https://quaternius.com/packs/ultimatemodularwomen.html) — Quaternius (10 нарядов, 24 анимации), `tools/build_women.py` | CC0 |
+| `items/*.glb`, `items/items.json` | [Medieval Weapons Pack](https://quaternius.com/packs/medievalweapons.html) — Quaternius (24 предмета: мечи, топоры, молоты, копьё, коса, луки, щиты, стрела), приведены к стандарту предметов и перезапечены 64×64 `tools/build_weapons.py` | CC0 |
+
+Встроенные предметы (капюшон, шляпы, причёски, плащи, факел, посох, сумки…) — процедурные, `js/items.js`; текстуры материалов — процедурные, `js/matlib.js`.
 
 ## Встроенные программы (`viewer/vendor/`)
 | Папка | Что | Лицензия |

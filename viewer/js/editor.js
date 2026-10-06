@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { PRESETS, applySpec, normalize, pixelate } from './matlib.js';
+import { createEquipPanel } from './editor-equip.js';
 
 /*
  * «Мастерская» — ручной редактор модели в духе Blender.
@@ -8,6 +10,9 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
  *              сгладить, удалить грани, вернуть выделенное к исходному.
  *   Скульпт  — кисти: захват, надуть, вытянуть/вдавить, сгладить, сплющить; симметрия по X.
  *   Покраска — пиксельная кисть по текстуре (отдельный слой поверх исходной), ластик, пипетка; цвет материала.
+ *   Снаряжение — предметы в гнёздах на костях (equip.js): выбрать, подвинуть гизмо/числами, сменить гнездо,
+ *                отзеркалить, сделать одеждой, библиотека/импорт/свои предметы из примитивов (editor-equip.js).
+ *   Материал любой детали — пресеты matlib.js (ткань, кожа, металл…), 2 цвета, размер пикселей, повтор, своя картинка.
  * Правки работают в любой позе: смещение в мире переводится в координаты меша через матрицу скиннинга вершины.
  * Всё хранится в localStorage по типу персонажа и заново применяется при загрузке (afterLook).
  */
@@ -16,23 +21,32 @@ const V3 = () => new THREE.Vector3();
 const lsGet = (k, d = null) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } };
 
-const MODES = { object: 'Объект', edit: 'Правка', sculpt: 'Скульпт', paint: 'Покраска' };
+const MODES = { object: 'Объект', edit: 'Правка', sculpt: 'Скульпт', paint: 'Покраска', equip: 'Снаряжение' };
 const TOOLS = {
   object: [['select', '⬚', 'Выбор'], ['translate', '✥', 'Сдвиг (G)'], ['rotate', '⟳', 'Поворот (R)'], ['scale', '⤢', 'Масштаб (S)']],
   edit: [['select', '⬚', 'Выбор/рамка'], ['translate', '✥', 'Сдвиг (G)'], ['rotate', '⟳', 'Поворот (R)'], ['scale', '⤢', 'Масштаб (S)']],
   sculpt: [['grab', '✊', 'Захват'], ['inflate', '◉', 'Надуть'], ['draw', '▲', 'Вытянуть'], ['dent', '▼', 'Вдавить'], ['smooth', '≈', 'Сгладить'], ['flatten', '▬', 'Сплющить']],
   paint: [['brush', '✎', 'Кисть'], ['erase', '⌫', 'Ластик'], ['pick', '⊙', 'Пипетка']],
+  equip: [['select', '⬚', 'Выбор'], ['translate', '✥', 'Сдвиг (G)'], ['rotate', '⟳', 'Поворот (R)'], ['scale', '⤢', 'Масштаб (S)'], ['space', '⊕', 'Оси (L)']],
 };
 const PAINT_PAL = ['#000000', '#ffffff', '#2a1e18', '#5a3a22', '#8a5a2c', '#c99a7a', '#a83228', '#d8b048', '#3a5a2a', '#2a3a5a', '#5a2a5a', '#7a7a7a'];
 
-export function createEditor({ scene, camera, renderer, controls, canvas, toast, onEnter, onExit, getKey, exportGlb, onGlb }) {
+export function createEditor({ scene, camera, renderer, controls, canvas, toast, onEnter, onExit, getKey, exportGlb, onGlb, getEquip = () => null, onModelChanged = () => {} }) {
   const st = {
     active: false, mode: 'object', tool: 'select', mesh: null, sel: new Set(), cam: false, xray: false,
     prop: false, propR: 0.12, brushR: 0.08, brushS: 0.5, sym: true,
-    color: '#a83228', px: 2, alpha: 1, ps1Preview: false, pose: 'rest',
+    color: '#a83228', px: 2, alpha: 1, ps1Preview: false, pose: 'rest', playing: false, local: true,
   };
   let root = null, key = 'x';
   const ui = buildUI();
+  const eqPanel = createEquipPanel({
+    getEquip, toast, push: (op) => push(op),
+    changed: () => { onModelChanged(); refreshOutliner(); },
+    editPart: (m) => { setMode('edit'); selectMesh(m); },
+    matUI: (mats) => matUI(mats), bindMat: (el, mats, owner) => bindMat(el, mats, owner),
+    target: (o) => { if (o && st.tool === 'select') setTool('translate'); else updateGizmo(); }, frame: (o) => frameObj(o),
+    refresh: () => { refreshProps(); updateGizmo(); updateStatus(); },
+  });
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
 
@@ -138,9 +152,15 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     const all = sharers(md.pos);
     const full = all.reduce((a, m) => ((m.geometry.index?.count || 0) > (a.geometry.index?.count || 0) ? m : a), all[0] || md.mesh);
     full.geometry.computeVertexNormals();
-    all.forEach((m) => { m.geometry.boundingSphere = null; m.geometry.boundingBox = null; m.boundingSphere = null; m.boundingBox = null; });
+    all.forEach((m) => {
+      m.geometry.boundingSphere = null; m.geometry.boundingBox = null;
+      if (m.isSkinnedMesh) { m.boundingSphere = null; m.boundingBox = null; } // у обычного Mesh этих полей нет (иначе рендер ищет computeBoundingSphere)
+    });
     edited.add(md.pos);
+    if (md.mesh?.userData.libItem && !applying) getEquip()?.commit(md.mesh);
   }
+  let applying = false;
+  const isLib = (m) => !!m.userData.libItem;
 
   /* ======================= история ======================= */
   const undo = [], redo = [];
@@ -151,7 +171,9 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     else if (op.type === 'paint') { op.L.layer.getContext('2d').putImageData(dir === 'undo' ? op.before : op.after, 0, 0); composite(op.L); }
     else if (op.type === 'color') { setMatColor(op.mat, dir === 'undo' ? op.before : op.after); }
     else if (op.type === 'hide') { op.mesh.visible = dir === 'undo' ? op.before : !op.before; }
+    else if (op.type === 'fn' || op.type === 'mat') (dir === 'undo' ? op.undo : op.redo)();
     refreshOverlay(); scheduleSave();
+    if (op.type === 'fn' || op.type === 'mat') refreshProps();
   }
   function doUndo() { const op = undo.pop(); if (op) { applyOp(op, 'undo'); redo.push(op); } updateStatus(); }
   function doRedo() { const op = redo.pop(); if (op) { applyOp(op, 'redo'); undo.push(op); } updateStatus(); }
@@ -163,6 +185,7 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     if (!root) return;
     const verts = {}, tris = {};
     for (const m of meshesOf(root, true)) {
+      if (isLib(m)) continue; // свой предмет хранит форму сам
       const a = m.geometry.attributes.position;
       if (ORIG.has(a) && !verts[attrKey(m)]) {
         const o = ORIG.get(a), cur = a.array, ii = [], d = [];
@@ -185,9 +208,10 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     const hidden = meshesOf(root, true).filter((m) => m.userData.edHidden).map(meshKey);
     const paint = {};
     for (const [, L] of layers) if (L.dirty) paint[L.key] = L.layer.toDataURL('image/png');
-    const colors = {};
+    const colors = {}, mats = {};
     for (const [mat, c] of matColors) colors[mat.name || 'mat'] = c;
-    const ok = lsSet('ps1.edits.' + key, { verts, tris, hidden, colors }) && lsSet('ps1.paint.' + key, paint);
+    for (const [mat, sp] of matSpecs) mats[mat.name || 'mat'] = sp;
+    const ok = lsSet('ps1.edits.' + key, { verts, tris, hidden, colors, mats }) && lsSet('ps1.paint.' + key, paint);
     ui.saved.textContent = ok ? '✓ сохранено' : '⚠ мало места';
   }
 
@@ -195,9 +219,10 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
   function afterLook(r, k) {
     root = r; key = k || getKey?.() || 'x';
     const ed = lsGet('ps1.edits.' + key, {});
+    applying = true;
     for (const m of meshesOf(r, true)) {
       const a = m.geometry.attributes.position;
-      const v = ed.verts?.[attrKey(m)];
+      const v = isLib(m) ? null : ed.verts?.[attrKey(m)];
       if (v && !APPLIED.has(a)) {
         const md = prepare(m);
         const o = ORIG.get(md.pos);
@@ -206,7 +231,7 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
         APPLIED.add(md.pos);
         finishGeometry(md);
       }
-      const del = ed.tris?.[meshKey(m)];
+      const del = isLib(m) ? null : ed.tris?.[meshKey(m)];
       if (del && !m.geometry.userData.trisApplied) {
         prepare(m);
         const oi = m.geometry.userData.origIndex, ds = new Set(del), ni = [];
@@ -216,10 +241,14 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
       }
       if (ed.hidden?.includes(meshKey(m))) { m.userData.edHidden = true; m.visible = false; }
       for (const mat of [].concat(m.material, m.userData.orig || [])) {
-        const c = ed.colors?.[mat?.name];
-        if (mat && c) { setMatColor(mat, c, false); matColors.set(mat, c); }
+        if (!mat || mat.userData.ps1src) continue;
+        const sp = ed.mats?.[mat.name];
+        if (sp && JSON.stringify(mat.userData.matSpec) !== JSON.stringify(normalize(sp))) setMatSpec(mat, sp);
+        const c = ed.colors?.[mat.name];
+        if (c) { setMatColor(mat, c, false); matColors.set(mat, c); }
       }
     }
+    applying = false;
     // слои покраски: если внешний код перерисовал текстуру (look.js), заново накладываем слой
     const paint = lsGet('ps1.paint.' + key, {});
     for (const m of meshesOf(r, true)) for (const mat of [].concat(m.material)) {
@@ -283,6 +312,77 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     mat.color?.set(hex); mat.userData.psMat?.color.set(hex);
     if (remember) matColors.set(mat, hex);
   }
+  // пресеты материалов (matlib.js): исходный вид запоминаем, чтобы можно было вернуть
+  const ORIGMAT = new WeakMap(), matSpecs = new Map();
+  function setMatSpec(mat, spec) {
+    if (!ORIGMAT.has(mat)) ORIGMAT.set(mat, { map: mat.map, color: mat.color?.getHex(), emissive: mat.emissive?.getHex(), emissiveMap: mat.emissiveMap });
+    if (!spec) {
+      const o = ORIGMAT.get(mat);
+      for (const m of [mat, mat.userData.psMat].filter(Boolean)) {
+        m.map = o.map; if (o.color !== undefined) m.color.setHex(o.color);
+        if (m.emissive && o.emissive !== undefined) { m.emissive.setHex(o.emissive); m.emissiveMap = o.emissiveMap; }
+        m.needsUpdate = true;
+      }
+      delete mat.userData.matSpec; matSpecs.delete(mat); matColors.delete(mat);
+      return;
+    }
+    applySpec(mat, spec);
+    matSpecs.set(mat, mat.userData.matSpec); matColors.delete(mat);
+  }
+  const specOf = (mat) => (matSpecs.has(mat) ? { ...matSpecs.get(mat) } : null);
+  function matUI(mats) {
+    if (!mats.length) return '';
+    const presets = Object.entries(PRESETS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+    return `<h3>Материал</h3>${mats.map((m, i) => {
+      const sp = specOf(m), hex = sp ? sp.c1 : matColorHex(m);
+      return `<div class="ed-mat" data-mi="${i}">
+        <div class="ed-mat-h"><span>${(m.name || 'материал ' + (i + 1)).replace(/</g, '')}</span></div>
+        <div class="ed-mat-r"><select data-mf="preset" title="Пресет текстуры"><option value="">Исходный вид</option>${presets}</select>
+          <input type="color" data-mf="c1" value="${hex}" title="${sp ? 'Основной цвет' : 'Оттенок'}">
+          <input type="color" data-mf="c2" value="${sp ? sp.c2 : '#000000'}" title="Второй цвет" ${sp ? '' : 'disabled'}></div>
+        <div class="ed-mat-r"><select data-mf="res" title="Размер текстуры (меньше — крупнее пиксели)" ${sp ? '' : 'disabled'}>${[16, 32, 64, 128].map((r) => `<option value="${r}"${sp?.res === r ? ' selected' : ''}>${r}px</option>`).join('')}</select>
+          <label title="Повтор узора">×<input type="number" data-mf="rep" min="1" max="16" step="1" value="${sp?.rep || 1}" ${sp ? '' : 'disabled'}></label>
+          <button class="ed-b" data-mf="seed" title="Другой вариант узора" ${sp ? '' : 'disabled'}>🎲</button>
+          <label class="ed-b ed-file" title="Своя картинка (будет пикселизирована)">🖼<input type="file" accept="image/*" data-mf="img" hidden></label></div>
+      </div>`;
+    }).join('')}<p class="hint small">Пресет даёт пиксельную PS1-текстуру из двух цветов. «Исходный вид» — вернуть как было.</p>`;
+  }
+  function bindMat(el, mats, owner = null) {
+    el.querySelectorAll('.ed-mat').forEach((box) => { const sp = specOf(mats[+box.dataset.mi]); box.querySelector('[data-mf=preset]').value = sp ? sp.preset : ''; });
+    const touched = () => {
+      scheduleSave();
+      const c = owner || (st.mesh && getEquip()?.findContainer(st.mesh));
+      if (c?.userData.equip?.libItem) getEquip().markDirty(c.userData.equip.libItem, c);
+    };
+    const change = (mat, next) => {
+      const before = specOf(mat), beforeCol = matColorHex(mat);
+      setMatSpec(mat, next);
+      push({ type: 'mat', undo: () => { setMatSpec(mat, before); if (!before) setMatColor(mat, beforeCol); }, redo: () => setMatSpec(mat, next) });
+      touched();
+    };
+    const handler = async (e) => {
+      const f = e.target.dataset.mf; if (!f) return;
+      const box = e.target.closest('.ed-mat'), mat = mats[+box.dataset.mi]; if (!mat) return;
+      const sp = specOf(mat), v = e.target.value;
+      if (e.type === 'input' && f !== 'c1' && f !== 'c2') return; // списки/числа/файлы — только по change
+      if (f === 'preset') { change(mat, v ? { ...(sp || {}), preset: v, c1: undefined, c2: undefined, img: null } : null); refreshProps(); }
+      else if (f === 'c1' && !sp) {
+        if (e.type === 'input') { setMatColor(mat, v); return; }
+        const before = box.dataset.before || matColorHex(mat);
+        push({ type: 'color', mat, before, after: v }); touched();
+      } else if (f === 'c1' || f === 'c2') { if (e.type === 'change') change(mat, { ...sp, [f]: v }); else applySpec(mat, { ...sp, [f]: v }); }
+      else if ((f === 'res' || f === 'rep') && e.type === 'change') change(mat, { ...sp, [f]: +v });
+      else if (f === 'img' && e.target.files[0]) {
+        const img = await pixelate(e.target.files[0], sp?.res || 64);
+        change(mat, { ...(sp || { preset: 'none' }), preset: sp?.preset === 'glow' ? 'glow' : 'none', img }); refreshProps();
+      }
+    };
+    el.querySelectorAll('.ed-mat').forEach((box) => {
+      box.addEventListener('input', handler); box.addEventListener('change', handler);
+      box.querySelector('[data-mf=c1]').addEventListener('focus', (e) => { box.dataset.before = e.target.value; });
+      box.addEventListener('click', (e) => { if (e.target.dataset.mf === 'seed') { const mat = mats[+box.dataset.mi], sp = specOf(mat); if (sp) change(mat, { ...sp, seed: (sp.seed || 7) + 1 + Math.floor(Math.random() * 97) }); } });
+    });
+  }
 
   /* ======================= оверлеи ======================= */
   const pivot = new THREE.Object3D(); pivot.userData.edHelper = true; scene.add(pivot);
@@ -317,7 +417,7 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
   function refreshOverlay() {
     const showPts = st.active && st.mode === 'edit' && st.mesh;
     points.visible = !!showPts;
-    if (st.mesh && st.active) setWire(st.mesh); else setWire(null);
+    if (st.mesh && st.active && st.mode !== 'equip') setWire(st.mesh); else setWire(null);
     if (!showPts) { updateGizmo(); return; }
     st.mesh.updateMatrixWorld(true);
     const md = prepare(st.mesh), n = md.members.length;
@@ -343,6 +443,12 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     return n ? c.multiplyScalar(1 / n) : null;
   }
   function updateGizmo() {
+    if (st.active && st.mode === 'equip') {
+      const t = eqPanel?.sel?.obj;
+      if (!t || !['translate', 'rotate', 'scale'].includes(st.tool)) { tc.detach(); tc.enabled = false; tcHelper.visible = false; return; }
+      tc.setMode(st.tool); tc.setSpace(st.local ? 'local' : 'world'); tc.attach(t); tc.enabled = true; tcHelper.visible = true;
+      return;
+    }
     const want = st.active && st.mesh && ['translate', 'rotate', 'scale'].includes(st.tool) && (st.mode === 'object' || st.sel.size);
     if (!want) { tc.detach(); tc.enabled = false; tcHelper.visible = false; return; }
     const c = selCenter();
@@ -352,8 +458,9 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
   }
 
   // гизмо: тянем выделение (или всю деталь в режиме «Объект»), с пропорциональным спадом
-  let drag = null;
+  let drag = null, eqDrag = null;
   tc.addEventListener('mouseDown', () => {
+    if (st.mode === 'equip') { const o = tc.object; if (o) { o.updateMatrix(); eqDrag = { obj: o, before: o.matrix.clone() }; } return; }
     if (!st.mesh) return;
     const md = prepare(st.mesh);
     const w = new Map();
@@ -376,6 +483,7 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     drag = { md, w, orig, P0inv: pivot.matrixWorld.clone().invert(), before: md.pos.array.slice(), base: md.pos.array.slice(), inv: new Map() };
   });
   tc.addEventListener('objectChange', () => {
+    if (eqDrag) { eqPanel.syncNums(); return; }
     if (!drag) return;
     const { md, w, orig, P0inv, base, inv } = drag;
     md.pos.array.set(base);
@@ -390,6 +498,7 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     md.pos.needsUpdate = true;
   });
   tc.addEventListener('mouseUp', () => {
+    if (eqDrag) { const { obj, before } = eqDrag; eqDrag = null; eqPanel.committed(obj, before); scheduleSave(); return; }
     if (!drag) return;
     const { md, before } = drag;
     drag = null;
@@ -437,7 +546,14 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     box.style.display = 'none';
     if (st.mode === 'sculpt') return endSculpt();
     if (st.mode === 'paint') return endPaint();
-    if (st.mode === 'object' && !p.moved) {
+    if (st.mode === 'equip' && !p.moved) {
+      setNDC(e);
+      const marks = [];
+      root?.traverse((o) => { if (o.isMesh && o.userData.socketMarker) marks.push(o); });
+      const hm = ray.intersectObjects(marks, false)[0];
+      const h = hm || hitMeshes(e)[0];
+      if (eqPanel.pick(h ? h.object : null) && st.tool === 'select') setTool('translate');
+    } else if (st.mode === 'object' && !p.moved) {
       const h = hitMeshes(e)[0];
       selectMesh(h ? h.object : null);
     } else if (st.mode === 'edit' && st.mesh) {
@@ -744,6 +860,12 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     toast('Правки сброшены (цвета материалов вернутся после перезагрузки)');
     refreshOverlay(); refreshOutliner(); updateStatus();
   }
+  function frameObj(o) {
+    const b = new THREE.Box3().setFromObject(o), c = b.isEmpty() ? o.getWorldPosition(V3()) : b.getCenter(V3());
+    const off = V3().subVectors(camera.position, controls.target);
+    controls.target.copy(c); camera.position.copy(c).add(off.setLength(Math.min(off.length(), 1.3)));
+    controls.update();
+  }
   function frameSel() {
     const c = selCenter() || (st.mesh ? new THREE.Box3().setFromObject(st.mesh).getCenter(V3()) : null);
     if (!c) return;
@@ -821,6 +943,7 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
       <button class="ed-b" data-a="cam" title="Вращать камеру одним пальцем/левой кнопкой">🎥</button>
       <button class="ed-b" data-a="pose" title="Поза для правки">Т-поза</button>
       <button class="ed-b" data-a="ps1" title="Показывать в стиле PS1">PS1</button>
+      <button class="ed-b" data-a="play" title="Проиграть анимацию — проверить, как сидит снаряжение">▶ Анимация</button>
       <button class="ed-b ed-ext" data-a="three" title="Открыть всю модель в three.js Editor (официальный редактор three.js)">three.js Editor ↗</button>
       <button class="ed-b ed-ext" data-a="sculptgl" title="Скульптить выбранную деталь в SculptGL">SculptGL ↗</button>
       <span class="ed-saved"></span>`;
@@ -828,7 +951,7 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     const side = document.createElement('div'); side.id = 'ed-side';
     side.innerHTML = `
       <button class="ed-b ed-sidetoggle" data-a="side">⚙ Панель</button>
-      <section><h3>Детали</h3><div class="ed-outliner"></div></section>
+      <section class="ed-parts"><h3>Детали</h3><div class="ed-outliner"></div></section>
       <section class="ed-props"></section>`;
     const status = document.createElement('div'); status.id = 'ed-status';
     [top, tools, side, status].forEach((el) => { el.hidden = true; document.body.appendChild(el); });
@@ -844,8 +967,13 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
       else if (a === 'three') openThree();
       else if (a === 'sculptgl') openSculpt();
       else if (a === 'ps1') { st.ps1Preview = !st.ps1Preview; onEnter?.({ ps1: st.ps1Preview }); syncTop(); }
+      else if (a === 'play') { st.playing = !st.playing; syncTop(); if (!st.playing) setTimeout(refreshOverlay, 30); }
     });
-    tools.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b?.dataset.tool) setTool(b.dataset.tool); });
+    tools.addEventListener('click', (e) => {
+      const b = e.target.closest('button'); if (!b?.dataset.tool) return;
+      if (b.dataset.tool === 'space') { st.local = !st.local; syncSpace(); updateGizmo(); toast('Оси гизмо: ' + (st.local ? 'предмета (локальные)' : 'мира')); return; }
+      setTool(b.dataset.tool);
+    });
     side.addEventListener('click', (e) => {
       const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.a === 'side') side.classList.toggle('open');
@@ -858,30 +986,48 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     ui.top.querySelector('[data-a=cam]').classList.toggle('on', st.cam);
     ui.top.querySelector('[data-a=pose]').textContent = st.pose === 'rest' ? 'Т-поза' : 'Кадр';
     ui.top.querySelector('[data-a=ps1]').classList.toggle('on', st.ps1Preview);
+    const pl = ui.top.querySelector('[data-a=play]');
+    pl.hidden = st.mode !== 'equip'; pl.classList.toggle('on', st.playing); pl.textContent = st.playing ? '❚❚ Пауза' : '▶ Анимация';
+    ui.top.querySelector('[data-a=pose]').hidden = st.mode === 'equip';
+    const on = ui.top.querySelector('[data-mode].on'); // на телефоне шапка прокручивается — показываем активный режим
+    if (on && st.active) { const r = on.getBoundingClientRect(); if (r.right > innerWidth || r.left < 0) ui.top.scrollLeft += r.left - 60; }
   }
   function setMode(m) {
+    if (st.mode === 'equip' && m !== 'equip') { eqPanel.leave(); st.playing = false; }
+    if (m === 'equip') {
+      if (st.pose === 'rest') { st.pose = 'frame'; onEnter?.({ pose: 'frame' }); } // снаряжение удобнее подгонять в позе анимации
+      eqPanel.enter();
+    }
     st.mode = m;
     st.tool = TOOLS[m][0][0];
+    ui.side.querySelector('.ed-parts').hidden = m === 'equip';
     ui.tools.innerHTML = TOOLS[m].map(([k, ic, l]) => `<button data-tool="${k}" title="${l}"><b>${ic}</b><span>${l.replace(/ \(.\)/, '')}</span></button>`).join('');
     if (m !== 'edit') st.sel.clear();
     cursor.visible = false;
     syncTop(); setTool(st.tool); refreshProps(); refreshOverlay(); applyCamMode(); updateStatus();
   }
+  function syncSpace() { const b = ui.tools.querySelector('[data-tool=space]'); if (b) { b.classList.toggle('on', !st.local); b.querySelector('span').textContent = st.local ? 'Оси: свои' : 'Оси: мир'; } }
   function setTool(t) {
     st.tool = t;
     ui.tools.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.tool === t));
+    syncSpace();
     updateGizmo(); updateStatus();
   }
   function applyCamMode() {
-    const free = st.cam || st.mode === 'object';
+    const free = st.cam || st.mode === 'object' || st.mode === 'equip';
     controls.mouseButtons = { LEFT: free ? THREE.MOUSE.ROTATE : null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
     controls.touches = { ONE: free ? THREE.TOUCH.ROTATE : null, TWO: THREE.TOUCH.DOLLY_PAN };
+  }
+  function label(m) {
+    const eq = getEquip(), c = eq?.findContainer(m) || (m.userData.clothingOf && eq?.containers().find((x) => x.userData.equip.uid === m.userData.clothingOf));
+    if (!c) return m.name || 'деталь';
+    return '⚔ ' + c.userData.equip.name + (m.userData.partName ? ' · ' + m.userData.partName : '') + (m.userData.clothingOf ? ' (на теле)' : '');
   }
   function refreshOutliner() {
     const el = ui.side.querySelector('.ed-outliner');
     const ms = meshesOf(root, true).filter((m) => isShown(m) || m.userData.edHidden);
     el.innerHTML = ms.map((m, i) => `<div class="ed-row${m === st.mesh ? ' on' : ''}" data-i="${i}">
-      <button data-eye="${i}" title="Скрыть/показать (H)">${m.visible ? '👁' : '—'}</button><span>${(m.name || 'деталь').replace(/</g, '')}</span></div>`).join('') || '<p class="hint small">Нет деталей</p>';
+      <button data-eye="${i}" title="Скрыть/показать (H)">${m.visible ? '👁' : '—'}</button><span>${label(m).replace(/</g, '')}</span></div>`).join('') || '<p class="hint small">Нет деталей</p>';
     el.onclick = (e) => {
       const eye = e.target.closest('[data-eye]');
       if (eye) { const m = ms[+eye.dataset.eye]; hideMesh(m, m.visible); return; }
@@ -894,12 +1040,18 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     const chk = (k, label) => `<label class="check"><input type="checkbox" data-k="${k}" ${st[k] ? 'checked' : ''}> ${label}</label>`;
     const btn = (a, l) => `<button class="btn" data-op="${a}">${l}</button>`;
     let h = '';
+    if (st.mode === 'equip') {
+      el.oninput = null; el.onclick = (e) => eqPanel.onClick(e, el); el.onchange = (e) => eqPanel.onInput(e, el);
+      eqPanel.render(el);
+      return;
+    }
+    el.onchange = null;
     const mats = st.mesh ? [...new Set([].concat(st.mesh.userData.orig || st.mesh.material))].filter((m) => m?.color) : [];
-    const matUI = mats.length ? `<h3>Материал детали</h3>${mats.map((m, i) => `<label class="field">${m.name || 'материал ' + (i + 1)} <input type="color" data-mat="${i}" value="${matColorHex(m)}"></label>`).join('')}` : '';
+    const matHTML = matUI(mats);
     if (st.mode === 'object') {
       h = `<h3>Объект</h3><p class="hint small">${st.mesh ? 'Выбрано: <b>' + (st.mesh.name || 'деталь') + '</b>' : 'Нажми на деталь модели или выбери в списке.'}</p>
         <div class="row">${btn('hide', 'Скрыть (H)')}${btn('showall', 'Показать всё')}</div>
-        <div class="row">${btn('revertmesh', 'Вернуть форму детали')}${btn('frame', 'Показать (F)')}</div>${matUI}`;
+        <div class="row">${btn('revertmesh', 'Вернуть форму детали')}${btn('frame', 'Показать (F)')}</div>${matHTML}`;
     } else if (st.mode === 'edit') {
       h = `<h3>Правка вершин</h3><p class="hint small">${st.mesh ? '' : 'Сначала выбери деталь в режиме «Объект» или в списке.'}</p>
         <div class="row">${btn('all', 'Все (A)')}${btn('none', 'Снять')}${btn('inv', 'Инверсия')}</div>
@@ -907,26 +1059,21 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
         ${chk('xray', 'Сквозное выделение (Alt+Z)')}
         ${chk('prop', 'Пропорциональное (O)')}${rng('propR', 'Радиус влияния', 0.02, 0.6, 0.01, (v) => Math.round(v * 100) + ' см')}
         <div class="row">${btn('smooth', 'Сгладить')}${btn('revert', 'Вернуть')}</div>
-        <div class="row">${btn('delete', 'Удалить грани (X)')}</div>${matUI}`;
+        <div class="row">${btn('delete', 'Удалить грани (X)')}</div>${matHTML}`;
     } else if (st.mode === 'sculpt') {
       h = `<h3>Кисть</h3>${rng('brushR', 'Радиус ([ ])', 0.01, 0.4, 0.005, (v) => Math.round(v * 100) + ' см')}${rng('brushS', 'Сила', 0.05, 1, 0.05)}
         ${chk('sym', 'Симметрия по X')}<p class="hint small">Кисть работает по детали, на которой начат мазок. Камера — правой кнопкой, двумя пальцами или кнопкой 🎥.</p>`;
     } else {
       h = `<h3>Краска</h3><div class="swatches">${PAINT_PAL.map((c) => `<button style="background:${c}" data-c="${c}"></button>`).join('')}<input type="color" data-k="color" value="${st.color}"></div>
         ${rng('px', 'Размер кисти, пикс.', 1, 16, 1)}${rng('alpha', 'Непрозрачность', 0.1, 1, 0.05)}
-        <p class="hint small">Рисуешь на отдельном слое поверх текстуры: ластик возвращает исходный пиксель.</p>${matUI}`;
+        <p class="hint small">Рисуешь на отдельном слое поверх текстуры: ластик возвращает исходный пиксель.</p>${matHTML}`;
     }
     h += `<h3>Правки</h3><div class="row">${btn('resetall', 'Сбросить все правки')}</div>`;
     el.innerHTML = h;
+    bindMat(el, mats);
     ui.color = el.querySelector('[data-k=color]') || { value: '' };
     el.oninput = (e) => {
-      const k = e.target.dataset.k, mi = e.target.dataset.mat;
-      if (mi !== undefined) {
-        const m = mats[+mi], before = matColorHex(m);
-        setMatColor(m, e.target.value);
-        clearTimeout(el._t); el._t = setTimeout(() => { push({ type: 'color', mat: m, before, after: e.target.value }); scheduleSave(); }, 300);
-        return;
-      }
+      const k = e.target.dataset.k;
       if (!k) return;
       st[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.type === 'color' ? e.target.value : +e.target.value;
       const b = el.querySelector(`[data-v="${k}"]`);
@@ -951,8 +1098,10 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
       edit: 'Клик — вершина · Shift+клик — добавить · тяни — рамка · A — все · L — связанное · O — пропорц. · X — удалить грани · G/R/S',
       sculpt: 'Води по модели · [ ] — радиус · правая кнопка/2 пальца — камера',
       paint: 'Рисуй по модели · пипетка берёт цвет · правая кнопка/2 пальца — камера',
+      equip: 'Клик — выбрать предмет (ещё клик — деталь своего предмета) · G/R/S — гизмо · числа в панели · ▶ — проверить в движении',
     };
     const md = st.mesh && MD.get(st.mesh);
+    if (st.mode === 'equip') { const s = eqPanel.sel; ui.status.textContent = `${MODES.equip} · ${s ? (s.kind === 'socket' ? 'гнездо' : s.kind === 'part' ? 'деталь' : s.obj.userData.equip.name) : 'ничего не выбрано'} · отмен: ${undo.length} — ${hints.equip}`; return; }
     ui.status.textContent = `${MODES[st.mode]} · ${st.mesh ? (st.mesh.name || 'деталь') + (md ? ` · вершин ${md.members.length}` : '') : 'деталь не выбрана'}${st.mode === 'edit' ? ' · выделено ' + st.sel.size : ''} · отмен: ${undo.length} — ${hints[st.mode]}`;
   }
 
@@ -969,25 +1118,29 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     else if (k === 'a' && e.altKey) selectAll(false);
     else if (k === 'a') selectAll(true);
     else if (k === 'i' && mod) invertSel();
-    else if (k === 'l') selectLinked();
+    else if (k === 'l' && st.mode !== 'equip') selectLinked();
     else if (k === 'o') { st.prop = !st.prop; refreshProps(); toast('Пропорциональное: ' + (st.prop ? 'вкл' : 'выкл')); }
     else if (k === 'z' && e.altKey) { st.xray = !st.xray; refreshProps(); refreshOverlay(); }
     else if ((k === 'x' || k === 'delete') && st.mode === 'edit') deleteFaces();
+    else if (k === 'l' && st.mode === 'equip') { st.local = !st.local; syncSpace(); updateGizmo(); toast('Оси гизмо: ' + (st.local ? 'предмета' : 'мира')); }
     else if (k === 'h' && e.altKey) showAll();
-    else if (k === 'h') hideMesh(st.mesh);
-    else if (k === 'f') frameSel();
+    else if (k === 'h' && st.mode !== 'equip') hideMesh(st.mesh);
+    else if (k === 'f') { if (st.mode === 'equip') { if (eqPanel.sel) frameObj(eqPanel.sel.obj); } else frameSel(); }
     else if (k === '[') { st.brushR = Math.max(0.01, st.brushR / 1.2); refreshProps(); }
     else if (k === ']') { st.brushR = Math.min(0.4, st.brushR * 1.2); refreshProps(); }
-    else if (k === '1') setMode('object'); else if (k === '2') setMode('edit'); else if (k === '3') setMode('sculpt'); else if (k === '4') setMode('paint');
-    else if (k === 'escape') { if (st.sel.size) selectAll(false); else setTool(TOOLS[st.mode][0][0]); }
+    else if (k === '1') setMode('object'); else if (k === '2') setMode('edit'); else if (k === '3') setMode('sculpt'); else if (k === '4') setMode('paint'); else if (k === '5') setMode('equip');
+    else if (k === 'escape') { if (st.mode === 'equip' && eqPanel.sel) eqPanel.select(null); else if (st.sel.size) selectAll(false); else setTool(TOOLS[st.mode][0][0]); }
     else return;
     e.preventDefault();
   });
 
   /* ======================= вход/выход ======================= */
   let savedControls = null;
-  function enter(r, k) {
+  function enter(r, k, opts = {}) {
     root = r; key = k;
+    if (opts.mode && MODES[opts.mode]) st.mode = opts.mode;
+    if (st.mode === 'equip' && st.pose === 'rest') st.pose = 'frame';
+    eqPanel.reset();
     st.active = true;
     document.body.classList.add('editing');
     [ui.top, ui.tools, ui.side, ui.status].forEach((el) => { el.hidden = false; });
@@ -1004,7 +1157,8 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     }, 30);
   }
   function exit() {
-    st.active = false;
+    st.active = false; st.playing = false;
+    eqPanel.leave();
     save();
     document.body.classList.remove('editing');
     [ui.top, ui.tools, ui.side, ui.status].forEach((el) => { el.hidden = true; });
@@ -1015,5 +1169,5 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
   }
   function update() { if (st.active && st.mode === 'edit' && st.mesh && !drag && !ptr && st.pose === 'frame') { /* поза статична — ничего */ } }
 
-  return { enter, exit, afterLook, update, get active() { return st.active; }, refreshOverlay, isApplied: (a) => APPLIED.has(a) };
+  return { enter, exit, afterLook, update, get active() { return st.active; }, get playing() { return st.active && st.playing; }, refreshOverlay, isApplied: (a) => APPLIED.has(a) };
 }

@@ -1,12 +1,10 @@
-import * as THREE from 'three';
-import { lambert, basic } from './ps1.js';
 
 /*
  * Редактор внешности «Странника».
  * Текстура перерисовывается в браузере из карт, запечённых tools/make_human.py:
  *   region.png — id региона (кожа/глаза/волосы/рубаха/штаны/обувь), pos.png — координаты точки на теле,
  *   shade.png — грязь/шум/AO. Цвет = цвет_региона(+узор) × shade.
- * Шапки, причёски, плащи, предметы — low-poly меши, прикреплённые к костям.
+ * Шапки, причёски, плащи, предметы — встроенные предметы снаряжения (items.js) в гнёздах на костях (equip.js).
  */
 
 const BASE = './models/human/';
@@ -23,7 +21,7 @@ export const SCHEMA = [
   { group: 'Внешность', items: [
     { k: 'skin', label: 'Кожа', type: 'color', pal: 'skin' },
     { k: 'hair', label: 'Цвет волос', type: 'color', pal: 'hair' },
-    { k: 'hairStyle', label: 'Причёска', type: 'select', options: { short: 'Короткая', long: 'Длинная', ponytail: 'Хвост', bun: 'Пучок', bald: 'Лысый' } },
+    { k: 'hairStyle', label: 'Причёска', type: 'select', options: { short: 'Короткая', mid: 'До плеч', long: 'Длинная', ponytail: 'Хвост', bun: 'Пучок', braids: 'Две косы', bald: 'Лысый' } },
     { k: 'beard', label: 'Борода', type: 'select', options: { none: 'Нет', stubble: 'Щетина', goatee: 'Бородка', full: 'Густая' } },
     { k: 'height', label: 'Рост', type: 'range', min: 0.88, max: 1.12, step: 0.01 },
     { k: 'build', label: 'Телосложение', type: 'range', min: 0.82, max: 1.25, step: 0.01 },
@@ -70,7 +68,7 @@ const rnd = (a, b) => +(a + Math.random() * (b - a)).toFixed(2);
 export function randomLook() {
   const c = {
     skin: pick(PAL.skin), hair: pick(PAL.hair),
-    hairStyle: wpick({ short: 4, long: 3, ponytail: 2, bun: 1, bald: 1 }),
+    hairStyle: wpick({ short: 4, mid: 2, long: 2, ponytail: 2, bun: 1, braids: 1, bald: 1 }),
     beard: wpick({ none: 4, stubble: 3, goatee: 1, full: 2 }),
     height: rnd(0.92, 1.08), build: rnd(0.88, 1.18), head: rnd(0.94, 1.08),
     shirtStyle: wpick({ plain: 3, stripes: 1, plaid: 1, vest: 2, tunic: 2, robe: 1 }),
@@ -107,7 +105,7 @@ async function pixels(url) {
 }
 
 /* ---------- основной объект ---------- */
-export async function createLook(root, { version = '', clips = [] } = {}) {
+export async function createLook(root, { version = '', equip = null } = {}) {
   const q = version ? '?t=' + version : '';
   const [meta, reg, pos, shd] = await Promise.all([
     fetch(BASE + 'meta.json' + q).then((r) => r.json()),
@@ -131,227 +129,26 @@ export async function createLook(root, { version = '', clips = [] } = {}) {
   const g2 = canvas.getContext('2d');
   const img = g2.createImageData(N, N);
 
-  // кости и «покойная» поза (до начала анимации)
-  root.updateMatrixWorld(true);
-  const inv = root.matrixWorld.clone().invert();
   const bone = (n) => root.getObjectByName(n);
-  const restInRoot = (n) => new THREE.Matrix4().multiplyMatrices(inv, bone(n).matrixWorld);
-  const restCache = {};
-  const rest = (n) => (restCache[n] ??= restInRoot(n)); // матрицы кости в покое (снимаются один раз, до анимации)
-  const P = (n) => new THREE.Vector3().setFromMatrixPosition(rest(n));
-  const headP = P('Head'), topP = P('HeadTop_End');
-  const hu = headP.distanceTo(topP); // «единица головы»
-  const up = topP.clone().sub(headP).normalize();
-  const fwd = P('LeftToe_End').sub(P('LeftFoot'));
-  fwd.sub(up.clone().multiplyScalar(fwd.dot(up))).normalize();
-  const left = new THREE.Vector3().crossVectors(up, fwd).normalize();
-  up.crossVectors(fwd, left).normalize();
-  const basisQ = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(left, up, fwd));
-  ['Head', 'Spine2', 'RightHand', 'Neck', 'LeftArm', 'RightArm', 'LeftFoot', 'LeftToe_End', 'HeadTop_End'].forEach(rest);
 
-  // поза кисти в Idle: предметы в руке ориентируем так, чтобы в обычной стойке они смотрели как надо
-  const handIdle = (() => {
-    const clip = clips.find((c) => /idle/i.test(c.name));
-    const saved = [];
-    root.traverse((o) => { if (o.isBone) saved.push([o, o.quaternion.clone(), o.position.clone(), o.scale.clone()]); });
-    const mx = new THREE.AnimationMixer(root);
-    if (clip) { mx.clipAction(clip).play(); mx.update(0.4); }
-    root.updateMatrixWorld(true);
-    const H = new THREE.Matrix4().multiplyMatrices(inv, bone('RightHand').matrixWorld);
-    const fingers = bone('RightHandIndex1') || bone('RightHandMiddle1');
-    const W = (o) => new THREE.Vector3().setFromMatrixPosition(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
-    const tip = fingers ? W(fingers) : null;
-    // оси тела в этой позе: вбок (по плечам), вверх, вперёд
-    const iLeft = W(bone('LeftArm')).sub(W(bone('RightArm'))).normalize();
-    const iUp = up.clone();
-    const iFwd = new THREE.Vector3().crossVectors(iLeft, iUp).normalize();
-    mx.stopAllAction(); mx.uncacheRoot(root);
-    saved.forEach(([o, q, p, sc]) => { o.quaternion.copy(q); o.position.copy(p); o.scale.copy(sc); });
-    root.updateMatrixWorld(true);
-    const handPos = new THREE.Vector3().setFromMatrixPosition(H);
-    const palm = tip ? handPos.clone().lerp(tip, 0.75) : handPos;
-    return { H, palm, fwd: iFwd, up: iUp };
-  })();
-
-  // крепление группы (построенной в единицах головы: X — влево, Y — вверх, Z — вперёд) к кости
-  const accessories = [];
-  function attach(boneName, origin, group) {
-    const m = new THREE.Matrix4().compose(origin, basisQ, new THREE.Vector3(hu, hu, hu));
-    group.matrixAutoUpdate = false;
-    group.matrix.copy(rest(boneName)).invert().multiply(m);
-    group.traverse((o) => { o.userData.noConvert = true; });
-    bone(boneName).add(group);
-    accessories.push(group);
-  }
-  const at = (p, l = 0, u = 0, f = 0) => p.clone().addScaledVector(left, l * hu).addScaledVector(up, u * hu).addScaledVector(fwd, f * hu);
-  const headC = at(headP, 0, 0.47, 0.0);
-
-  const mesh = (geo, mat, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) => {
-    const m = new THREE.Mesh(geo, mat);
-    m.position.set(x, y, z); m.rotation.set(rx, ry, rz);
-    return m;
-  };
-  const M = (c) => lambert({ color: new THREE.Color(c), side: THREE.DoubleSide });
-  const IRON = 0x4a4a4e, WOOD = 0x5a4026, GOLD = 0xc8a040;
-
-  /* ---------- геометрия аксессуаров ---------- */
-  function buildHat(c) {
-    const g = new THREE.Group(), col = M(c.hatColor);
-    switch (c.hat) {
-      case 'hood': {
-        const m = M(c.cloakColor), w = 1.25;
-        g.add(mesh(new THREE.SphereGeometry(0.62, 10, 8, Math.PI / 2 + w / 2, Math.PI * 2 - w, 0, Math.PI * 0.72), m, 0, 0.02, -0.04));
-        g.add(mesh(new THREE.CylinderGeometry(0.5, 0.95, 0.75, 10, 1, true), m, 0, -0.62, -0.12));
-        g.add(mesh(new THREE.ConeGeometry(0.28, 0.5, 6), m, 0, 0.12, -0.62, -1.2));
-        break;
-      }
-      case 'hat':
-        g.add(mesh(new THREE.CylinderGeometry(0.98, 1.0, 0.05, 14), col, 0, 0.36, 0));
-        g.add(mesh(new THREE.CylinderGeometry(0.4, 0.5, 0.48, 10), col, 0, 0.6, 0));
-        g.add(mesh(new THREE.CylinderGeometry(0.505, 0.505, 0.09, 10), M(c.leather), 0, 0.42, 0));
-        break;
-      case 'helmet':
-        g.add(mesh(new THREE.SphereGeometry(0.58, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), M(IRON), 0, 0.08, 0));
-        g.add(mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.1, 12, 1, true), M(0x333336), 0, 0.1, 0));
-        g.add(mesh(new THREE.BoxGeometry(0.08, 0.42, 0.06), M(IRON), 0, -0.06, 0.6));
-        g.add(mesh(new THREE.BoxGeometry(0.06, 0.06, 1.1), M(0x333336), 0, 0.62, 0));
-        break;
-      case 'wizard': {
-        g.add(mesh(new THREE.CylinderGeometry(0.9, 0.92, 0.04, 12), col, 0, 0.34, 0));
-        const cone = mesh(new THREE.ConeGeometry(0.5, 1.5, 8), col, 0, 1.05, -0.12, -0.18);
-        g.add(cone);
-        g.add(mesh(new THREE.CylinderGeometry(0.505, 0.505, 0.1, 8), M(GOLD), 0, 0.4, 0));
-        break;
-      }
-      case 'bandana':
-        g.add(mesh(new THREE.CylinderGeometry(0.47, 0.47, 0.14, 12, 1, true), col, 0, 0.22, -0.02));
-        g.add(mesh(new THREE.BoxGeometry(0.14, 0.34, 0.04), col, 0.08, 0.05, -0.52, 0.3, 0, 0.3));
-        g.add(mesh(new THREE.BoxGeometry(0.14, 0.3, 0.04), col, -0.06, 0.07, -0.52, 0.3, 0, -0.4));
-        break;
-      case 'circlet':
-        g.add(mesh(new THREE.CylinderGeometry(0.46, 0.46, 0.06, 12, 1, true), M(GOLD), 0, 0.2, -0.02));
-        g.add(mesh(new THREE.OctahedronGeometry(0.07), basic({ color: 0x6ad0ff }), 0, 0.22, 0.46));
-        break;
-      default: return null;
-    }
-    return g;
-  }
-  function buildHair(c) {
-    const g = new THREE.Group(), m = M(c.hair);
-    if (c.hairStyle === 'long' && c.hat !== 'hood') {
-      g.add(mesh(new THREE.BoxGeometry(0.78, 0.9, 0.16), m, 0, -0.32, -0.42, 0.12));
-      g.add(mesh(new THREE.BoxGeometry(0.14, 0.7, 0.3), m, 0.4, -0.18, -0.12));
-      g.add(mesh(new THREE.BoxGeometry(0.14, 0.7, 0.3), m, -0.4, -0.18, -0.12));
-    } else if (c.hairStyle === 'ponytail') {
-      g.add(mesh(new THREE.SphereGeometry(0.12, 6, 4), m, 0, 0.12, -0.5));
-      g.add(mesh(new THREE.CylinderGeometry(0.1, 0.04, 0.7, 6), m, 0, -0.22, -0.58, 0.35));
-    } else if (c.hairStyle === 'bun' && c.hat !== 'hood' && c.hat !== 'helmet') {
-      g.add(mesh(new THREE.SphereGeometry(0.2, 7, 5), m, 0, 0.42, -0.4));
-    } else return null;
-    return g;
-  }
-  function buildCloak(c) {
-    if (c.cloak === 'none') return null;
-    const len = c.cloak === 'long' ? 4.0 : 2.1;
-    const geo = new THREE.PlaneGeometry(1.7, len, 4, 6);
-    const p = geo.attributes.position;
-    for (let i = 0; i < p.count; i++) {
-      const t = (len / 2 - p.getY(i)) / len; // 0 сверху → 1 снизу
-      const x = p.getX(i) * (0.85 + 0.45 * t);
-      const z = -Math.sin(t * Math.PI * 0.5) * 0.35 - Math.cos((x / 1.1) * Math.PI * 0.5) * 0.12 * t;
-      p.setXYZ(i, x, -t * len, z);
-    }
-    geo.computeVertexNormals();
-    const g = new THREE.Group();
-    g.add(mesh(geo, M(c.cloakColor)));
-    g.add(mesh(new THREE.CylinderGeometry(0.48, 0.62, 0.22, 10, 1, true), M(c.cloakColor), 0, -0.02, 0.38));
-    g.add(mesh(new THREE.OctahedronGeometry(0.07), M(GOLD), 0.3, -0.08, 0.86));
-    return g;
-  }
-  function buildHand(c) {
-    const g = new THREE.Group();
-    switch (c.hand) {
-      case 'sword':
-        g.add(mesh(new THREE.BoxGeometry(0.1, 2.1, 0.035), M(0xb8bcc4), 0, 1.3, 0));
-        g.add(mesh(new THREE.BoxGeometry(0.55, 0.08, 0.08), M(GOLD), 0, 0.24, 0));
-        g.add(mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.42, 6), M(c.leather), 0, 0, 0));
-        g.add(mesh(new THREE.OctahedronGeometry(0.08), M(GOLD), 0, -0.25, 0));
-        break;
-      case 'axe':
-        g.add(mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.7, 6), M(WOOD), 0, 0.55, 0));
-        g.add(mesh(new THREE.BoxGeometry(0.05, 0.36, 0.5), M(0x8a8e96), 0, 1.2, 0.22));
-        break;
-      case 'torch': {
-        g.add(mesh(new THREE.CylinderGeometry(0.05, 0.07, 1.0, 6), M(WOOD), 0, 0.25, 0));
-        g.add(mesh(new THREE.CylinderGeometry(0.1, 0.08, 0.16, 6), M(0x2a2018), 0, 0.82, 0));
-        const f = mesh(new THREE.OctahedronGeometry(0.16), basic({ color: 0xffa83a }), 0, 1.02, 0);
-        f.userData.flame = true; g.add(f);
-        const f2 = mesh(new THREE.OctahedronGeometry(0.09), basic({ color: 0xfff0a0 }), 0, 0.98, 0);
-        f2.userData.flame = true; g.add(f2);
-        break;
-      }
-      case 'staff':
-        g.add(mesh(new THREE.CylinderGeometry(0.05, 0.06, 3.6, 6), M(WOOD), 0, 0.7, 0));
-        g.add(mesh(new THREE.OctahedronGeometry(0.17), basic({ color: 0x7ad8ff }), 0, 2.5, 0));
-        g.add(mesh(new THREE.TorusGeometry(0.17, 0.04, 4, 8), M(WOOD), 0, 2.5, 0));
-        break;
-      case 'lantern': {
-        g.add(mesh(new THREE.BoxGeometry(0.03, 0.4, 0.03), M(0x222222), 0, -0.2, 0));
-        g.add(mesh(new THREE.CylinderGeometry(0.16, 0.12, 0.36, 6), basic({ color: 0xffa040, transparent: true, opacity: 0.85 }), 0, -0.6, 0));
-        g.add(mesh(new THREE.ConeGeometry(0.2, 0.16, 6), M(0x222222), 0, -0.36, 0));
-        g.add(mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.05, 6), M(0x222222), 0, -0.8, 0));
-        break;
-      }
-      default: return null;
-    }
-    return g;
-  }
-  function buildBack(c) {
-    const g = new THREE.Group();
-    switch (c.back) {
-      case 'bag':
-        g.add(mesh(new THREE.BoxGeometry(0.8, 0.9, 0.4), M(c.leather), 0, 0, 0));
-        g.add(mesh(new THREE.BoxGeometry(0.82, 0.35, 0.42), M(mulHex(c.leather, 0.75)), 0, 0.3, 0.02));
-        g.add(mesh(new THREE.BoxGeometry(0.1, 1.3, 0.06), M(mulHex(c.leather, 0.6)), 0.28, 0.3, 0.22));
-        g.add(mesh(new THREE.BoxGeometry(0.1, 1.3, 0.06), M(mulHex(c.leather, 0.6)), -0.28, 0.3, 0.22));
-        break;
-      case 'shield':
-        g.add(mesh(new THREE.CylinderGeometry(0.85, 0.85, 0.08, 12), M(c.cloakColor), 0, 0, 0, Math.PI / 2));
-        g.add(mesh(new THREE.TorusGeometry(0.85, 0.06, 4, 12), M(IRON), 0, 0, 0));
-        g.add(mesh(new THREE.SphereGeometry(0.16, 6, 4), M(IRON), 0, 0, -0.08));
-        break;
-      case 'quiver':
-        g.add(mesh(new THREE.CylinderGeometry(0.17, 0.14, 1.5, 7), M(c.leather), 0, 0.1, 0, 0, 0, 0.5));
-        for (let i = 0; i < 5; i++) g.add(mesh(new THREE.BoxGeometry(0.03, 0.5, 0.03), M(0xd8d0c0), -0.38 + i * 0.05, 0.98 + (i % 2) * 0.05, -0.04 + (i % 3) * 0.04, 0, 0, 0.5));
-        break;
-      default: return null;
-    }
-    return g;
-  }
-  function mulHex(h, k) { const c = hex(h); return new THREE.Color(c[0] * k / 255, c[1] * k / 255, c[2] * k / 255).convertSRGBToLinear(); }
-
+  /* ---------- аксессуары: встроенные предметы в гнёздах снаряжения (equip.js) ----------
+   * Их положение/размер/форму можно править в Мастерской (режим «Снаряжение») — правки хранятся по id 'look:<предмет>'. */
+  const HAIR = { mid: 'hair_mid', long: 'hair_long', ponytail: 'ponytail', bun: 'bun', braids: 'braids' };
+  const HAND = { sword: 'sword', torch: 'torch', staff: 'staff', lantern: 'lantern', axe: 'axe' };
+  const BACK = { bag: 'bag', shield: 'back_shield', quiver: 'quiver' };
   function rebuildAccessories(c) {
-    accessories.splice(0).forEach((a) => { a.parent?.remove(a); a.traverse((o) => { o.geometry?.dispose(); o.material?.dispose?.(); }); });
-    const hat = buildHat(c); if (hat) attach('Head', headC, hat);
-    const hair = buildHair(c); if (hair) attach('Head', headC, hair);
-    const cloak = buildCloak(c); if (cloak) attach('Spine2', at(P('Neck'), 0, -0.12, -0.42), cloak);
-    const hand = buildHand(c);
-    if (hand) {
-      // ось предмета +Y: посох/факел — вверх, меч/топор — вперёд
-      const F = handIdle.fwd, U = handIdle.up;
-      const D = (c.hand === 'sword' || c.hand === 'axe') ? F.clone().addScaledVector(U, 0.3).normalize() : U.clone().addScaledVector(F, 0.12).normalize();
-      const ref = Math.abs(D.dot(F)) > 0.9 ? U : F;
-      const Z = ref.clone().addScaledVector(D, -D.dot(ref)).normalize();
-      const X = new THREE.Vector3().crossVectors(D, Z);
-      const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, D, Z));
-      const m = new THREE.Matrix4().compose(handIdle.palm, q, new THREE.Vector3(hu, hu, hu));
-      hand.matrixAutoUpdate = false;
-      hand.matrix.copy(handIdle.H).invert().multiply(m);
-      hand.traverse((o) => { o.userData.noConvert = true; });
-      bone('RightHand').add(hand);
-      accessories.push(hand);
-    }
-    const back = buildBack(c); if (back) attach('Spine2', at(P('Spine2'), 0, 0.15, -0.62), back);
+    if (!equip) return;
+    const ids = [];
+    if (c.hat !== 'none') ids.push(c.hat);
+    const hair = HAIR[c.hairStyle];
+    const underHood = c.hat === 'hood' && /hair_long|hair_mid|bun/.test(hair || '');
+    const underHelmet = c.hat === 'helmet' && hair === 'bun';
+    if (hair && !underHood && !underHelmet) ids.push(hair);
+    if (c.cloak !== 'none') ids.push(c.cloak === 'long' ? 'cloak_long' : 'cloak_short');
+    if (HAND[c.hand]) ids.push(HAND[c.hand]);
+    if (BACK[c.back]) ids.push(BACK[c.back]);
+    const colors = { hair: c.hair, hat: c.hatColor, cloak: c.cloakColor, leather: c.leather };
+    equip.setBuiltins(ids.map((item) => ({ id: 'look:' + item, item, colors })));
   }
 
   /* ---------- текстура ---------- */
@@ -434,14 +231,13 @@ export async function createLook(root, { version = '', clips = [] } = {}) {
   };
   let cfg = { ...DEFAULT };
   let baseScale = null;
-  function update(t) {
+  function update() {
     if (!baseScale) baseScale = root.scale.clone();
     root.scale.copy(baseScale).multiplyScalar(cfg.height);
     const b = cfg.build;
     B.spine.scale.set(b, 1, b);
     B.kids.forEach((k) => k.scale.set(1 / b, 1, 1 / b));
-    B.head.scale.setScalar(cfg.head / Math.sqrt(1)); // голова не наследует ширину: шея уже компенсирует
-    for (const a of accessories) a.traverse((o) => { if (o.userData.flame) o.scale.setScalar(0.85 + Math.sin(t * 17 + o.id) * 0.12); });
+    B.head.scale.setScalar(cfg.head); // голова не наследует ширину: шея уже компенсирует
   }
 
   function apply(c) {

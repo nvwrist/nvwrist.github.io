@@ -1,0 +1,242 @@
+[
+ {
+  "id": "q_sword",
+  "name": "Меч",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/sword.glb",
+  "unit": "m",
+  "tris": 872,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_sword_2",
+  "name": "Меч с широкой гардой",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/sword_2.glb",
+  "unit": "m",
+  "tris": 942,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_sword_big",
+  "name": "Длинный меч",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/sword_big.glb",
+  "unit": "m",
+  "tris": 830,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_sword_golden",
+  "name": "Золотой меч",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/sword_golden.glb",
+  "unit": "m",
+  "tris": 1006,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_claymore",
+  "name": "Клеймор",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/claymore.glb",
+  "unit": "m",
+  "tris": 1033,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_dagger",
+  "name": "Кинжал",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/dagger.glb",
+  "unit": "m",
+  "tris": 726,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_dagger_2",
+  "name": "Кинжал с гардой",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/dagger_2.glb",
+  "unit": "m",
+  "tris": 736,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_axe",
+  "name": "Топор",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/axe.glb",
+  "unit": "m",
+  "tris": 1130,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_axe_small",
+  "name": "Топорик",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/axe_small.glb",
+  "unit": "m",
+  "tris": 966,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_axe_double",
+  "name": "Двуручная секира",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/axe_double.glb",
+  "unit": "m",
+  "tris": 1892,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_hammer_small",
+  "name": "Молот",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/hammer_small.glb",
+  "unit": "m",
+  "tris": 1474,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_hammer_double",
+  "name": "Боевой молот",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/hammer_double.glb",
+  "unit": "m",
+  "tris": 1918,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_spear",
+  "name": "Копьё",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/spear.glb",
+  "unit": "m",
+  "tris": 1202,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_scythe",
+  "name": "Коса",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/scythe.glb",
+  "unit": "m",
+  "tris": 1310,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_bow_wooden",
+  "name": "Лук",
+  "cat": "bow",
+  "socket": "hand_l",
+  "file": "items/bow_wooden.glb",
+  "unit": "m",
+  "tris": 728,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_bow_wooden2",
+  "name": "Лук простой",
+  "cat": "bow",
+  "socket": "hand_l",
+  "file": "items/bow_wooden2.glb",
+  "unit": "m",
+  "tris": 664,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_bow_golden",
+  "name": "Золотой лук",
+  "cat": "bow",
+  "socket": "hand_l",
+  "file": "items/bow_golden.glb",
+  "unit": "m",
+  "tris": 776,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_bow_evil",
+  "name": "Тёмный лук",
+  "cat": "bow",
+  "socket": "hand_l",
+  "file": "items/bow_evil.glb",
+  "unit": "m",
+  "tris": 772,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_shield_round",
+  "name": "Круглый щит",
+  "cat": "shield",
+  "socket": "hand_l",
+  "file": "items/shield_round.glb",
+  "unit": "m",
+  "tris": 1056,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_shield_round_2",
+  "name": "Круглый щит с умбоном",
+  "cat": "shield",
+  "socket": "hand_l",
+  "file": "items/shield_round_2.glb",
+  "unit": "m",
+  "tris": 1204,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_shield_heater",
+  "name": "Щит-капля",
+  "cat": "shield",
+  "socket": "hand_l",
+  "file": "items/shield_heater.glb",
+  "unit": "m",
+  "tris": 1968,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_shield_heater_2",
+  "name": "Щит-капля простой",
+  "cat": "shield",
+  "socket": "hand_l",
+  "file": "items/shield_heater_2.glb",
+  "unit": "m",
+  "tris": 1292,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_shield_celtic_golden",
+  "name": "Кельтский щит",
+  "cat": "shield",
+  "socket": "hand_l",
+  "file": "items/shield_celtic_golden.glb",
+  "unit": "m",
+  "tris": 832,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ },
+ {
+  "id": "q_arrow",
+  "name": "Стрела",
+  "cat": "weapon",
+  "socket": "hand_r",
+  "file": "items/arrow.glb",
+  "unit": "m",
+  "tris": 224,
+  "src": "Quaternius Medieval Weapons (CC0)"
+ }
+]
