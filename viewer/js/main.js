@@ -15,6 +15,7 @@ import { createEquip, catalog, CATS, SOCKETS } from './equip.js';
 import { db } from './db.js';
 import { libCatalog, spawn as libSpawn, libHooks } from './library.js';
 import { createBrowser } from './ui/browser.js';
+import { createRetargeter } from './retarget.js';
 import { createMapEditor } from './map/mapeditor.js';
 import { createGame } from './map/game.js';
 
@@ -192,14 +193,83 @@ const idb = { all: () => db.all('models'), put: (r) => db.put('models', r), del:
 const customModels = {};
 const CUSTOM_LOOK = { schema: [], pal: {}, defaults: {}, random: () => ({}), apply: async () => ({}), cfg: {}, update() {} };
 function refreshHeroSelect() {
-  $('heroType').innerHTML = Object.entries(HERO_TYPES).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+  const opt = ([k, l]) => `<option value="${k}">${l}</option>`;
+  const all = Object.entries(HERO_TYPES), own = all.filter(([k]) => !k.startsWith('lib:')), lib = all.filter(([k]) => k.startsWith('lib:'));
+  $('heroType').innerHTML = own.map(opt).join('') + (lib.length ? `<optgroup label="Из библиотеки CC0">${lib.map(opt).join('')}</optgroup>` : '');
   $('heroType').value = heroType;
 }
 async function loadCustomList() {
   try {
     for (const r of await idb.all()) { customModels[r.id] = r; HERO_TYPES['custom:' + r.id] = '✎ ' + r.name; }
   } catch (e) { console.warn('IndexedDB недоступна', e); }
+  try { // персонажи из библиотеки: люди, нежить, монстры, животные со скелетом
+    const c = await libCatalog();
+    for (const it of c.items) if (it.r && ['char', 'monster', 'animal'].includes(it.c)) HERO_TYPES['lib:' + it.id] = ({ char: '🧍 ', monster: '💀 ', animal: '🐎 ' })[it.c] + it.n;
+  } catch (e) { console.warn('библиотека недоступна', e); }
   refreshHeroSelect();
+}
+
+/* ---------- наборы анимаций: UAL (86) и KayKit (131) — для любого персонажа (перенос на его скелет) ---------- */
+const ANIMSETS = {
+  ual: { name: 'Universal Animation Library', note: '86: ходьба, бег, бой, магия, эмоции', files: ['./models/q/anims_ual1.glb', './models/q/anims_ual2.glb'], rig: 'ue' },
+  kaykit: { name: 'KayKit', note: '131: мечи, луки, магия, инструменты, рыбалка, сидеть', files: ['./models/lib/anims/kaykit.glb'], rig: 'kaykit' },
+};
+const setCache = {};
+function loadSet(id) {
+  return (setCache[id] ??= (async () => {
+    const gs = await Promise.all(ANIMSETS[id].files.map((f) => libGltf(f)));
+    const root = gs[0].scene, clips = [], seen = new Set();
+    for (const g of gs) for (const c of g.animations) if (!seen.has(c.name) && !/^t-?pose$/i.test(c.name)) { seen.add(c.name); clips.push(c); }
+    const rest = snapshotBones(root);
+    return { root, clips, rest };
+  })().catch((e) => { delete setCache[id]; throw e; }));
+}
+async function libGltf(url) { const { gltfLoader } = await import('./library.js'); return gltfLoader.loadAsync(url); }
+const setsKey = (t) => 'ps1.animsets.' + t;
+async function addAnimSet(entry, id) {
+  entry.sets ??= {};
+  if (entry.sets[id]) return;
+  const set = await loadSet(id);
+  let clips;
+  if (entry.rig === ANIMSETS[id].rig) clips = set.clips; // родной скелет — как есть
+  else {
+    toast(`Переношу ${set.clips.length} анимаций ${ANIMSETS[id].name} на «${entry.name}»…`);
+    await new Promise((r) => setTimeout(r, 30));
+    restoreBones(set.rest);
+    const rt = withRest(entry.obj, entry.rest, () => createRetargeter(set.root, entry.obj));
+    if (!rt) { toast('Скелет не распознан — перенос невозможен'); return; }
+    clips = [];
+    for (let i = 0; i < set.clips.length; i++) {
+      clips.push(rt(set.clips[i]));
+      if (i % 8 === 7) await new Promise((r) => setTimeout(r, 0));
+    }
+    restoreBones(set.rest);
+  }
+  clips.forEach((c) => { c.userData = { ...(c.userData || {}), set: id === 'ual' ? 'UAL' : 'KayKit' }; });
+  entry.sets[id] = clips;
+  entry.clips = [...entry.baseClips, ...Object.values(entry.sets).flat(), ...(entry === hero && animator ? animator.savedClips() : [])];
+  if (current === entry && !animator?.active) fillPoseSelect();
+  toast(`Добавлено анимаций: ${clips.length}`);
+}
+function removeAnimSet(entry, id) {
+  if (!entry.sets?.[id]) return;
+  delete entry.sets[id];
+  entry.clips = [...entry.baseClips, ...Object.values(entry.sets).flat(), ...(entry === hero && animator ? animator.savedClips() : [])];
+  if (current === entry) fillPoseSelect();
+}
+function buildAnimSetsUI() {
+  const el = $('animSets'); if (!el || !hero) return;
+  const on = lsGet(setsKey(heroType)) || [];
+  el.innerHTML = Object.entries(ANIMSETS).map(([id, a]) => {
+    const native = hero.rig === a.rig;
+    return `<label class="check"><input type="checkbox" data-set="${id}" ${native || on.includes(id) ? 'checked' : ''} ${native ? 'disabled' : ''}> ${a.name} <i class="hint small">(${native ? 'родные' : a.note})</i></label>`;
+  }).join('') + '<p class="hint small">Чужие анимации переносятся на скелет этого персонажа автоматически. Их можно править в Аниматоре и использовать в игре.</p>';
+  el.onchange = async (e) => {
+    const id = e.target.dataset.set; if (!id) return;
+    const list = new Set(lsGet(setsKey(heroType)) || []);
+    if (e.target.checked) { list.add(id); lsSet(setsKey(heroType), [...list]); try { await addAnimSet(hero, id); } catch (err) { toast('Не загрузилось: ' + err.message); } }
+    else { list.delete(id); lsSet(setsKey(heroType), [...list]); removeAnimSet(hero, id); }
+  };
 }
 async function saveCustomModel(buffer, name) {
   const id = Date.now().toString(36);
@@ -240,6 +310,17 @@ async function makeHero(type) {
     return { obj: holder, kind: 'loaded', keep: true, name: rec.name, type, rig: type, rest, idle: /idle|стоит/i,
       baseClips: gltf.animations, clips: gltf.animations, look: CUSTOM_LOOK, equip: makeEquip(holder, rest, type) };
   }
+  if (type.startsWith('lib:')) {
+    const id = type.slice(4), it = (await libCatalog()).byId.get(id);
+    const o = await libSpawn(id);
+    const holder = new THREE.Group(); holder.add(o);
+    fitModel(holder);
+    const rest = snapshotBones(holder);
+    const entry = { obj: holder, kind: 'loaded', keep: true, name: it.n, type, rig: it.r || id, rest, idle: /idle/i,
+      baseClips: o.animations || [], clips: o.animations || [], look: { ...CUSTOM_LOOK, lib: it }, equip: makeEquip(holder, rest, type) };
+    if (it.r === 'kaykit') await addAnimSet(entry, 'kaykit'); // у KayKit анимации лежат отдельно — подключаем родные сразу
+    return entry;
+  }
   if (type === 'strannik') {
     const gltf = await new GLTFLoader().loadAsync('./models/human.glb?t=' + v);
     const holder = new THREE.Group();
@@ -262,7 +343,7 @@ async function makeHero(type) {
   toast('Загрузка анимаций…');
   m.loadClips().then((clips) => {
     entry.baseClips = clips;
-    entry.clips = [...clips, ...(entry === hero && animator ? animator.savedClips() : [])];
+    entry.clips = [...clips, ...Object.values(entry.sets || {}).flat(), ...(entry === hero && animator ? animator.savedClips() : [])];
     if (current === entry && !animator?.active) fillPoseSelect();
     toast(`Анимаций: ${clips.length}`);
   }).catch((e) => toast('Анимации не загрузились: ' + (e.message || e)));
@@ -297,26 +378,35 @@ async function showHero(type = heroType) {
 }
 
 function setupAnimator(h) {
+  setTimeout(() => { // включённые наборы анимаций этого персонажа
+    buildAnimSetsUI();
+    for (const id of lsGet(setsKey(h.type)) || []) if (h.rig !== ANIMSETS[id]?.rig) addAnimSet(h, id).catch(() => {});
+  }, 0);
   animator = createAnimator({
     root: h.obj, scene, camera, canvas, el: $('animator'), toast, rig: h.rig,
     onEnter: () => { mixer?.stopAllAction(); action = null; animator.prevRotate = controls.autoRotate; controls.autoRotate = false; $('pose').disabled = true; },
     onExit: () => { controls.autoRotate = animator.prevRotate ?? S.rotate; if (current === h) fillPoseSelect(); },
     onClipsChanged: (clips, play) => {
-      h.clips = [...h.baseClips, ...clips];
+      h.clips = [...h.baseClips, ...Object.values(h.sets || {}).flat(), ...clips];
       if (current !== h) return;
       fillPoseSelect();
       const i = play ? h.clips.findIndex((c) => c.name === play) : -1;
       if (i >= 0) { $('pose').value = String(i + 1); playClip(i); }
     },
   });
-  h.clips = [...h.baseClips, ...animator.savedClips()];
+  h.clips = [...h.baseClips, ...Object.values(h.sets || {}).flat(), ...animator.savedClips()];
 }
 
 function buildLookUI() {
   const root = $('editor');
   root.innerHTML = '';
+  if (look.lib) {
+    root.innerHTML = `<p class="hint">Персонаж из библиотеки CC0 (${mapEd.catalog?.packs[look.lib.p]?.author || ''}). Форму, цвета и материалы правь в 🛠 Мастерской, анимации — во вкладке «Анимация».</p><section id="equipUI"></section>`;
+    buildEquipUI();
+    return;
+  }
   if (!look.schema.length) {
-    root.innerHTML = `<p class="hint">Это твоя модель, сохранённая из three.js Editor. Её форму и цвета меняй в 🛠 Мастерской или снова в three.js Editor.</p>
+    root.innerHTML = `<p class="hint">Это твоя сохранённая модель. Её форму и цвета меняй в 🛠 Мастерской.</p>
       <button class="btn" id="btnDelCustom">Удалить эту модель</button><section id="equipUI"></section>`;
     $('btnDelCustom').onclick = () => deleteCustom(heroType);
     buildEquipUI();
@@ -489,7 +579,7 @@ function fitModel(obj) {
 function fillPoseSelect() {
   const sel = $('pose');
   sel.innerHTML = '';
-  const names = ['— без анимации —', ...current.clips.map((c, i) => c.userData?.custom ? '✎ ' + c.name : CLIP_RU[c.name] || `${i + 1}. ${c.name || 'clip'}`)];
+  const names = ['— без анимации —', ...current.clips.map((c, i) => c.userData?.custom ? '✎ ' + c.name : (c.userData?.set ? `[${c.userData.set}] ` : '') + (CLIP_RU[c.name] || `${i + 1}. ${c.name || 'clip'}`))];
   names.forEach((n, i) => sel.add(new Option(n, i)));
   sel.disabled = names.length < 2;
   if (current.kind === 'loaded' && current.clips.length) {

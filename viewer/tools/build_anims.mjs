@@ -22,6 +22,15 @@ for (const f of files) {
   for (const a of r.listAnimations()) { if (/^t-?pose$/i.test(a.getName()) || seen.has(a.getName())) a.dispose(); else seen.add(a.getName()); }
   mergeDocuments(out, d);
 }
+// один скелет на все клипы: каналы всех копий → узлы первой копии (по имени), остальные сцены/узлы удаляем
+{
+  const r = out.getRoot(), scenes = r.listScenes(), keep = scenes[0];
+  const byName = new Map();
+  keep.traverse((n) => { if (!byName.has(n.getName())) byName.set(n.getName(), n); });
+  for (const a of r.listAnimations()) for (const ch of a.listChannels()) { const n = byName.get(ch.getTargetNode()?.getName()); if (n) ch.setTargetNode(n); else ch.dispose(); }
+  for (const sc of scenes.slice(1)) { sc.traverse((n) => n.dispose()); sc.dispose(); }
+  r.setDefaultScene(keep);
+}
 await out.transform(unpartition(), prune(), dedup(), resample({ tolerance: 2e-3 }), quantize(), meshopt({ encoder: MeshoptEncoder, level: 'medium' }));
 const buf = await io.writeBinary(out);
 fs.writeFileSync(path.join(OUT, 'kaykit.glb'), buf);
