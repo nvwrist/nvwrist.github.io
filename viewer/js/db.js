@@ -1,11 +1,12 @@
-// IndexedDB вьюера: models — свои персонажи (из three.js Editor), items — свои предметы снаряжения.
+// IndexedDB вьюера: models — свои персонажи, items — свои предметы снаряжения, maps — карты редактора карт.
 let p = null;
 const open = () => (p ??= new Promise((res, rej) => {
-  const r = indexedDB.open('ps1-viewer', 2);
+  const r = indexedDB.open('ps1-viewer', 3);
   r.onupgradeneeded = () => {
     const db = r.result;
     if (!db.objectStoreNames.contains('models')) db.createObjectStore('models', { keyPath: 'id' });
     if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' });
+    if (!db.objectStoreNames.contains('maps')) db.createObjectStore('maps', { keyPath: 'id' });
   };
   r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
 }));

@@ -10,6 +10,8 @@ export const PRESETS = {
   none: 'Без текстуры', fabric: 'Ткань', wool: 'Шерсть', leather: 'Кожа', metal: 'Металл', rust: 'Ржавый металл',
   gold: 'Золото', wood: 'Дерево', planks: 'Доски', stone: 'Камень', brick: 'Кирпич', chain: 'Кольчуга',
   scales: 'Чешуя', fur: 'Мех', hair: 'Волосы', plaid: 'Клетка', marble: 'Мрамор', moss: 'Мох', bone: 'Кость', glow: 'Свечение',
+  grass: 'Трава', dirt: 'Земля', mud: 'Грязь', gravel: 'Гравий', cobble: 'Булыжник', flagstone: 'Плиты', sand: 'Песок', snow: 'Снег',
+  leaves: 'Опавшие листья', ash: 'Пепел',
 };
 // цвета по умолчанию для пресета (основной, второй)
 export const PRESET_COLORS = {
@@ -18,6 +20,9 @@ export const PRESET_COLORS = {
   stone: ['#6a6660', '#3e3a36'], brick: ['#7a3e2e', '#4a4440'], chain: ['#7a7e86', '#2a2c30'], scales: ['#3e5a3a', '#1e2e1c'],
   fur: ['#6a5440', '#3a2c20'], hair: ['#3a2a1e', '#1a120c'], plaid: ['#6a2a24', '#2a3428'], marble: ['#d8d4cc', '#7a7672'],
   moss: ['#3e5a2a', '#24341a'], bone: ['#d8ceb4', '#8a8270'], glow: ['#60ffa0', '#e0fff0'], none: ['#a0a0a0', '#606060'],
+  grass: ['#4a5e2c', '#2c3a1a'], dirt: ['#5e4a34', '#3a2c20'], mud: ['#3a3024', '#221c16'], gravel: ['#7a746a', '#4a4640'],
+  cobble: ['#6e6a64', '#3a3632'], flagstone: ['#7a7468', '#46423c'], sand: ['#b8a47a', '#8a7a58'], snow: ['#e0e4ea', '#a8b0bc'],
+  leaves: ['#7a4a22', '#4a3a1a'], ash: ['#3a3836', '#1e1c1c'],
 };
 
 /* ---------- шум ---------- */
@@ -63,6 +68,17 @@ function pattern(preset, N, r) {
     case 'moss': return (x, y) => ({ v: n2(x, y) > 0.55 ? 1 : n3(x, y) * 0.3, k: 0.8 + n3(x, y) * 0.35 });
     case 'bone': return (x, y) => { const c = Math.abs(n1(x, y) - 0.5) < 0.02; return { v: c ? 1 : n3(x, y) * 0.3, k: c ? 0.7 : 0.9 + n3(x, y) * 0.15 }; };
     case 'glow': return (x, y) => ({ v: n2(x, y), k: 0.9 + n3(x, y) * 0.25 });
+    // земля для рельефа карт
+    case 'grass': return (x, y) => { const blade = valueNoise(N, N, 1, r)(x, y * 0.5); return { v: n1(x, y) * 0.5 + (blade > 0.62 ? 0.5 : 0), k: 0.82 + n3(x, y) * 0.3 + (blade > 0.8 ? 0.12 : 0) }; };
+    case 'dirt': return (x, y) => ({ v: n1(x, y) * 0.6 + n3(x, y) * 0.4, k: (r() < 0.04 ? 0.7 : 0.88) + n3(x, y) * 0.22 });
+    case 'mud': return (x, y) => { const w = n1(x, y); return { v: w * 0.7, k: w > 0.6 ? 1.15 : 0.85 + n3(x, y) * 0.15 }; };
+    case 'gravel': return (x, y) => { const g = valueNoise(N, N, 1.5, r)(x, y); return { v: g, k: g > 0.7 ? 1.12 : g < 0.25 ? 0.7 : 0.92 }; };
+    case 'cobble': return (x, y) => { const [a, b] = cellD(x * 2.2 % N, y * 2.2 % N); const edge = b - a < 1.4 * s; return { v: edge ? 1 : n3(x, y) * 0.35, k: edge ? 0.55 : 0.9 + n2(x, y) * 0.2 }; };
+    case 'flagstone': return (x, y) => { const st = Math.round(16 * s), row = Math.floor(y / st); const xo = (x + (row % 2) * st / 2) % st; const seam = y % st === 0 || xo < 1; return { v: seam ? 1 : n2(x, y) * 0.4 + n3(x, y) * 0.2, k: seam ? 0.55 : 0.88 + n3(x, y) * 0.2 }; };
+    case 'sand': return (x, y) => ({ v: Math.sin((x + n1(x, y) * 20) / (5 * s)) * 0.25 + 0.3 + n3(x, y) * 0.3, k: 0.93 + n3(x, y) * 0.12 });
+    case 'snow': return (x, y) => ({ v: n1(x, y) * 0.5 + (r() < 0.02 ? 0.4 : 0), k: 0.95 + n3(x, y) * 0.08 });
+    case 'leaves': return (x, y) => { const l = valueNoise(N, N, 2, r)(x, y); return { v: l, k: l > 0.65 ? 1.15 : 0.75 + n2(x, y) * 0.3 }; };
+    case 'ash': return (x, y) => ({ v: n1(x, y) * 0.7 + (r() < 0.015 ? 0.6 : 0), k: 0.85 + n3(x, y) * 0.25 });
     default: return (x, y) => ({ v: 0, k: 0.92 + n3(x, y) * 0.14 });
   }
 }
