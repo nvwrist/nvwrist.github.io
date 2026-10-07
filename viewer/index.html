@@ -15,8 +15,13 @@
 
   <header class="top">
     <div class="logo">PS1<span>·</span>VIEWER</div>
+    <nav class="modes" id="modes">
+      <button data-mode="char" class="on" title="Персонаж: внешность, снаряжение, анимации">👤<span>Персонаж</span></button>
+      <button data-mode="workshop" title="Мастерская: выбрал модель → правь (форма, покраска, материалы, снаряжение)">🛠<span>Мастерская</span></button>
+      <button data-mode="map" title="Редактор карт: рельеф, 2500+ объектов, атмосфера">🗺<span>Карта</span></button>
+      <button data-mode="game" title="Пройтись персонажем по карте">▶<span>Игра</span></button>
+    </nav>
     <div class="stats" id="stats">—</div>
-    <button class="icon" id="btnEditor" aria-label="Редактор модели" title="Мастерская — ручная правка модели">🛠</button>
     <button class="icon" id="btnRandom2" aria-label="Случайный персонаж" title="Рандом">🎲</button>
     <button class="icon" id="toggle" aria-label="Панель">☰</button>
   </header>
@@ -34,7 +39,7 @@
         <button id="btnRandom" class="btn primary">🎲 Рандом</button>
         <button id="btnLookReset" class="btn">Сброс</button>
       </div>
-      <button id="btnEditor2" class="btn">🛠 Мастерская: править модель вручную</button>
+      <button id="btnEditor2" class="btn">🛠 Править в Мастерской</button>
       <div id="editor"><p class="hint">Загрузка…</p></div>
       <div class="row">
         <button id="btnExport" class="btn">Экспорт .glb</button>

@@ -222,6 +222,7 @@ export function createGame(ctx) {
     for (const k of Object.keys(CLIPS)) { const c = findClip(hero.clips || [], k); if (c) acts[k] = mixer.clipAction(c); }
     cur = null;
     setupRoles(); resetRoles();
+    ctx.mapEd.helpers.visible = false; ctx.mapEd.applyEnv();
     respawn();
     play('idle', 0);
     hud.root.hidden = false; hud.title.textContent = map.name;
@@ -279,7 +280,7 @@ export function createGame(ctx) {
     const speed = walk ? 1.9 : 4.6;
     const move = new THREE.Vector3();
     if (mag > 0.05) {
-      const a = Math.atan2(ix, iz) + st.yaw + Math.PI; // от камеры
+      const a = Math.atan2(ix, iz) + st.yaw; // от камеры: W — туда, куда смотрит камера
       move.set(Math.sin(a), 0, Math.cos(a)).multiplyScalar(speed * mag);
       st.face += angDiff(a, st.face) * Math.min(1, dt * 10);
     }

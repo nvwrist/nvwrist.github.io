@@ -61,8 +61,10 @@ export function createMapEditor(ctx) {
   function applyEnv() {
     const e = { ...ATMOS[map.env.preset] || ATMOS.night, ...map.env.custom };
     scene.background = new THREE.Color(e.bg);
-    scene.fog = new THREE.FogExp2(e.fog, e.fogD * (map.env.fogK ?? 1));
-    L.amb.color.set(e.amb); L.amb.intensity = e.ambI;
+    // в редакторе светлее и туман реже — чтобы видеть, что строишь; в игре — как задумано
+    const edit = st.active && !ctx.isPlaying?.();
+    scene.fog = new THREE.FogExp2(e.fog, e.fogD * (map.env.fogK ?? 1) * (edit ? 0.3 : 1));
+    L.amb.color.set(e.amb); L.amb.intensity = e.ambI * (edit ? 1.7 : 1);
     L.dir.color.set(e.sun); L.dir.intensity = e.sunI; L.dir.position.set(30, 50, 20);
     L.p1.intensity = 0; L.p2.intensity = 0;
     if (sky) { root.remove(sky); sky.geometry.dispose(); }
@@ -676,6 +678,7 @@ export function createMapEditor(ctx) {
       }
       camera.position.set(22, 20, 26); controls.target.set(0, 0, 0); controls.update();
     } else { applyEnv(); }
+    helpers.visible = true;
     tc.enabled = true;
     showTab(st.sideTab);
     setTool(st.tool === 'place' ? 'select' : st.tool);

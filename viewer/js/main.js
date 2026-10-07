@@ -13,6 +13,10 @@ import { createEditor } from './editor.js';
 import { createUniversal, createWomen, CLIP_RU as CLIP_RU_Q, ONCE as ONCE_Q } from './modular.js';
 import { createEquip, catalog, CATS, SOCKETS } from './equip.js';
 import { db } from './db.js';
+import { libCatalog, spawn as libSpawn, libHooks } from './library.js';
+import { createBrowser } from './ui/browser.js';
+import { createMapEditor } from './map/mapeditor.js';
+import { createGame } from './map/game.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('c');
@@ -458,7 +462,7 @@ function refreshModelStyle() {
 
 function stats() {
   let tri = 0, vert = 0;
-  current.obj.traverse((o) => {
+  (mode === 'map' || mode === 'game' ? mapEd.root : current.obj).traverse((o) => {
     if (!o.isMesh || !o.visible || (o.parent && !o.parent.visible)) return;
     const g = o.geometry;
     vert += g.attributes.position.count;
@@ -604,8 +608,7 @@ bind('animSpeed', 'speed');
 $('env').addEventListener('change', (e) => setEnv(e.target.value));
 $('btnRandom').onclick = randomize;
 $('btnRandom2').onclick = randomize;
-$('btnEditor').onclick = () => openEditor();
-$('btnEditor2').onclick = () => openEditor();
+$('btnEditor2').onclick = () => setMode('workshop');
 $('btnLookReset').onclick = async () => { if (!look) return; lsSet(lookKey(heroType), look.defaults); await look.apply(look.defaults); editor.afterLook(hero.obj, heroType); syncLookUI(); refreshModelStyle(); buildEquipUI(); };
 document.querySelector('.tabs').onclick = (e) => {
   const t = e.target.dataset.tab;
@@ -650,12 +653,20 @@ addEventListener('dragover', (e) => e.preventDefault());
 addEventListener('drop', (e) => { e.preventDefault(); dragN = 0; drop.classList.remove('on'); if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files); });
 
 /* ---------- Мастерская (ручной редактор модели) ---------- */
-const editKey = () => (current === hero ? heroType : 'file:' + current.name);
+const editKey = () => current.editKey || (current === hero ? heroType : 'file:' + current.name);
 let edState = null;
 const editor = createEditor({
   scene, camera, renderer, controls, canvas, toast, getKey: editKey,
-  exportGlb: () => exportClean(current.obj, { binary: true, animations: current.clips || [] }).then((buffer) => ({ buffer, name: current.name || 'Модель' })),
   onGlb: (msg) => saveCustomModel(msg.buffer, msg.name),
+  modelOptions: () => [
+    ...Object.entries(HERO_TYPES).map(([k, l]) => ['hero:' + k, '👤 ' + l, current === heroes[k]]),
+    ...(current !== hero ? [['cur', '📦 ' + current.name, true]] : []),
+    ['lib', '＋ Модель из библиотеки (2500+)…', false],
+  ],
+  onPickModel: (v) => {
+    if (v === 'lib') return pickLibModel();
+    if (v.startsWith('hero:')) showHero(v.slice(5)).then(() => openEditor());
+  },
   getEquip: () => current?.equip || null,
   onModelChanged: () => { refreshModelStyle(); },
   onEnter: ({ pose, ps1: preview, start }) => {
@@ -669,15 +680,102 @@ const editor = createEditor({
   },
   onExit: () => {
     if (edState) { S.ps1 = edState.ps1; $('ps1').checked = S.ps1; applyStyle(); refreshModelStyle(); controls.autoRotate = S.rotate; }
-    $('panel').classList.remove('closed');
     if (current === hero) buildEquipUI();
   },
 });
-function openEditor(mode) {
+function openEditor(m) {
   if (!current?.obj) return;
   $('panel').classList.add('closed');
-  editor.enter(current.obj, editKey(), { mode });
+  if (mode !== 'workshop') { mode = 'workshop'; syncModes(); }
+  editor.enter(current.obj, editKey(), { mode: m });
 }
+// правки моделей библиотеки (сделанные в Мастерской) накладываются при каждой загрузке модели
+libHooks.onMaster = (sceneObj, id) => editor.applyEdits(sceneObj, 'asset:' + id);
+
+/* ---------- модель из библиотеки — открыть в Мастерской ---------- */
+async function showLibAsset(it) {
+  toast('Загрузка: ' + it.n);
+  const o = await libSpawn(it.id);
+  const holder = new THREE.Group(); holder.add(o);
+  fitModel(holder);
+  const rest = snapshotBones(holder);
+  const entry = { obj: holder, kind: 'loaded', name: it.n, clips: o.animations || [], rest, editKey: 'asset:' + it.id, idle: /idle/i };
+  entry.equip = it.r ? makeEquip(holder, rest, 'asset:' + it.id) : null;
+  if (editor.active) editor.exit();
+  showModel(entry);
+  return entry;
+}
+function pickLibModel() {
+  const box = document.createElement('div');
+  box.className = 'lib-modal';
+  box.innerHTML = '<div class="lib-modal-in"><div class="row"><b>Выбери модель для правки</b><button class="ed-b" data-x>✕</button></div><div class="lib-host"></div><p class="hint small">Правки модели из библиотеки сохраняются в браузере и видны везде, где она стоит на картах.</p></div>';
+  document.body.appendChild(box);
+  const close = () => box.remove();
+  box.querySelector('[data-x]').onclick = close;
+  createBrowser(box.querySelector('.lib-host'), { onPick: async (it) => { close(); await showLibAsset(it); openEditor('object'); } });
+}
+
+/* ---------- режимы приложения: Персонаж · Мастерская · Карта · Игра ---------- */
+let mode = 'char';
+const viewCam = { pos: new THREE.Vector3(), target: new THREE.Vector3() };
+const mapEd = createMapEditor({
+  scene, camera, controls, canvas, toast, L,
+  packName: (p) => mapEd.catalog?.packs[p]?.name,
+  focusPoint: () => (game.active ? game.playerPos : controls.target),
+  isPlaying: () => game.active,
+  onPlay: () => setMode('game'),
+});
+const game = createGame({
+  scene, camera, canvas, toast, mapEd,
+  onExit: () => setMode('map'),
+  goMap: async (id) => { const m = (await db.all('maps')).find((x) => x.id === id); if (!m) return toast('Карта не найдена'); game.stop(); await mapEd.load(m); startGame(); },
+});
+function syncModes() {
+  document.querySelectorAll('#modes [data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
+  document.body.dataset.mode = mode;
+}
+function viewerVisible(on) {
+  modelRoot.visible = on; shadow.visible = on;
+  if (env) env.group.visible = on;
+}
+async function startGame() {
+  if (!hero) return toast('Персонаж ещё загружается');
+  mixer?.stopAllAction(); action = null;
+  restoreBones(hero.rest);
+  controls.enabled = false;
+  game.start(mapEd.map, hero);
+}
+async function setMode(m) {
+  if (m === mode) return;
+  const prev = mode;
+  if (m === 'game' && prev !== 'map') { await setMode('map'); if (mode === 'map') await setMode('game'); return; }
+  // выход из прежнего режима
+  if (prev === 'workshop') editor.exit();
+  if (prev === 'game') { game.stop(); controls.enabled = true; }
+  if (prev === 'map' || prev === 'game') {
+    if (m !== 'game' && m !== 'map') {
+      mapEd.exit(); mapEd.detachScene();
+      viewerVisible(true); setEnv(S.env);
+      camera.position.copy(viewCam.pos); controls.target.copy(viewCam.target);
+      controls.minDistance = 1.2; controls.maxPolarAngle = Math.PI * 0.52; controls.autoRotate = S.rotate;
+      if (current === hero && !mixer?._actions?.length) fillPoseSelect();
+    } else if (m === 'game') mapEd.exit();
+  }
+  mode = m; syncModes();
+  // вход в новый
+  if (m === 'char') { $('panel').classList.toggle('closed', innerWidth < 700); if (current === hero) { fillPoseSelect(); buildEquipUI(); } }
+  else if (m === 'workshop') { openEditor(); }
+  else if (m === 'map') {
+    if (prev === 'char' || prev === 'workshop') { viewCam.pos.copy(camera.position); viewCam.target.copy(controls.target); }
+    $('panel').classList.add('closed');
+    viewerVisible(false);
+    if (prev === 'game') { /* карта уже в сцене */ }
+    await mapEd.enter();
+    if (current === hero) fillPoseSelect();
+  } else if (m === 'game') { $('panel').classList.add('closed'); await startGame(); }
+}
+document.getElementById('modes').onclick = (e) => { const b = e.target.closest('[data-mode]'); if (b) setMode(b.dataset.mode); };
+libCatalog().then((c) => { mapEd.catalog = c; }).catch(() => {});
 
 /* ---------- запуск ---------- */
 addEventListener('resize', resize);
@@ -691,13 +789,15 @@ let fpsN = 0, fps = 0;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1) * S.speed;
   const t = clock.elapsedTime;
-  if (editor.active && !editor.playing) { /* анимация на паузе, пока правим модель */ }
+  if (mode === 'game') { game.update(dt); mapEd.update(dt, t); }
+  else if (mode === 'map') mapEd.update(dt, t);
+  else if (editor.active && !editor.playing) { /* анимация на паузе, пока правим модель */ }
   else if (animator?.active && current === hero) animator.update(dt);
   else mixer?.update(dt);
-  if (look && current === hero) { look.update(t); hero.equip?.update(t); }
+  if (look && (current === hero || mode === 'game')) { look.update(t); hero.equip?.update(t); }
   else current.equip?.update(t);
-  env.update(t, dt);
-  controls.update();
+  if (mode === 'char' || mode === 'workshop') env.update(t, dt);
+  if (mode !== 'game') controls.update();
   render();
   fpsN++;
   const now = performance.now();
@@ -711,4 +811,4 @@ function frame() {
   requestAnimationFrame(frame);
 }
 frame();
-window.__ps1 = { S, scene, camera, renderer, controls, setEnv, get look() { return look; }, get animator() { return animator; }, get hero() { return hero; }, showHero, randomize, editor, refreshModelStyle };
+window.__ps1 = { S, scene, camera, renderer, controls, setEnv, get look() { return look; }, get animator() { return animator; }, get hero() { return hero; }, showHero, randomize, editor, refreshModelStyle, mapEd, game, setMode, get mode() { return mode; } };

@@ -31,7 +31,7 @@ const TOOLS = {
 };
 const PAINT_PAL = ['#000000', '#ffffff', '#2a1e18', '#5a3a22', '#8a5a2c', '#c99a7a', '#a83228', '#d8b048', '#3a5a2a', '#2a3a5a', '#5a2a5a', '#7a7a7a'];
 
-export function createEditor({ scene, camera, renderer, controls, canvas, toast, onEnter, onExit, getKey, exportGlb, onGlb, getEquip = () => null, onModelChanged = () => {} }) {
+export function createEditor({ scene, camera, renderer, controls, canvas, toast, onEnter, onExit, getKey, onGlb, getEquip = () => null, onModelChanged = () => {}, modelOptions = () => [], onPickModel = null }) {
   const st = {
     active: false, mode: 'object', tool: 'select', mesh: null, sel: new Set(), cam: false, xray: false,
     prop: false, propR: 0.12, brushR: 0.08, brushS: 0.5, sym: true,
@@ -264,6 +264,13 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
       }
     }
     if (st.active) { refreshOutliner(); refreshOverlay(); }
+  }
+
+  // правки модели библиотеки (ключ asset:<id>) — накладываются на общий «мастер» при загрузке, не трогая текущий корень Мастерской
+  function applyEdits(r, k) {
+    const pr = root, pk = key;
+    afterLook(r, k);
+    if (pr && st.active) { root = pr; key = pk; } else if (pr) { root = pr; key = pk; }
   }
 
   /* ======================= покраска ======================= */
@@ -887,12 +894,6 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
       },
     };
   }
-  function openThree() {
-    const w = window.open('./vendor/threejs-editor/editor/index.html', '_blank'); // открываем сразу — иначе iOS заблокирует окно
-    if (!w) return toast('Браузер заблокировал новую вкладку — разреши всплывающие окна');
-    bridge('glb', exportGlb());
-    toast('Модель открыта в three.js Editor. Когда закончишь — нажми там «↩ Вернуть в PS1 Viewer»');
-  }
   function openSculpt() {
     if (!st.mesh) return toast('Сначала выбери деталь (режим «Объект» или список деталей)');
     const w = window.open('./vendor/sculptgl/index.html', '_blank');
@@ -936,7 +937,7 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
   function buildUI() {
     const top = document.createElement('div'); top.id = 'ed-top';
     top.innerHTML = `
-      <button class="ed-b" data-a="exit" title="Выйти из редактора">⟵ Выйти</button>
+      <label class="ed-b ed-model" title="Какую модель править">Модель <select data-a="model"></select></label>
       <div class="ed-seg">${Object.entries(MODES).map(([k, l]) => `<button data-mode="${k}">${l}</button>`).join('')}</div>
       <button class="ed-b" data-a="undo" title="Отменить (Ctrl+Z)">↶</button>
       <button class="ed-b" data-a="redo" title="Повторить (Ctrl+Shift+Z)">↷</button>
@@ -944,8 +945,6 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
       <button class="ed-b" data-a="pose" title="Поза для правки">Т-поза</button>
       <button class="ed-b" data-a="ps1" title="Показывать в стиле PS1">PS1</button>
       <button class="ed-b" data-a="play" title="Проиграть анимацию — проверить, как сидит снаряжение">▶ Анимация</button>
-      <button class="ed-b ed-ext" data-a="three" title="Открыть всю модель в three.js Editor (официальный редактор three.js)">three.js Editor ↗</button>
-      <button class="ed-b ed-ext" data-a="sculptgl" title="Скульптить выбранную деталь в SculptGL">SculptGL ↗</button>
       <span class="ed-saved"></span>`;
     const tools = document.createElement('div'); tools.id = 'ed-tools';
     const side = document.createElement('div'); side.id = 'ed-side';
@@ -955,6 +954,7 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
       <section class="ed-props"></section>`;
     const status = document.createElement('div'); status.id = 'ed-status';
     [top, tools, side, status].forEach((el) => { el.hidden = true; document.body.appendChild(el); });
+    top.addEventListener('change', (e) => { if (e.target.dataset.a === 'model') onPickModel?.(e.target.value); });
     top.addEventListener('click', (e) => {
       const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.mode) return setMode(b.dataset.mode);
@@ -964,7 +964,6 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
       else if (a === 'redo') doRedo();
       else if (a === 'cam') { st.cam = !st.cam; applyCamMode(); }
       else if (a === 'pose') { st.pose = st.pose === 'rest' ? 'frame' : 'rest'; onEnter?.({ pose: st.pose }); setTimeout(refreshOverlay, 50); syncTop(); }
-      else if (a === 'three') openThree();
       else if (a === 'sculptgl') openSculpt();
       else if (a === 'ps1') { st.ps1Preview = !st.ps1Preview; onEnter?.({ ps1: st.ps1Preview }); syncTop(); }
       else if (a === 'play') { st.playing = !st.playing; syncTop(); if (!st.playing) setTimeout(refreshOverlay, 30); }
@@ -1062,7 +1061,8 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
         <div class="row">${btn('delete', 'Удалить грани (X)')}</div>${matHTML}`;
     } else if (st.mode === 'sculpt') {
       h = `<h3>Кисть</h3>${rng('brushR', 'Радиус ([ ])', 0.01, 0.4, 0.005, (v) => Math.round(v * 100) + ' см')}${rng('brushS', 'Сила', 0.05, 1, 0.05)}
-        ${chk('sym', 'Симметрия по X')}<p class="hint small">Кисть работает по детали, на которой начат мазок. Камера — правой кнопкой, двумя пальцами или кнопкой 🎥.</p>`;
+        ${chk('sym', 'Симметрия по X')}<p class="hint small">Кисть работает по детали, на которой начат мазок. Камера — правой кнопкой, двумя пальцами или кнопкой 🎥.</p>
+        <button class="btn" data-op="sculptgl">Лепить деталь во внешнем SculptGL ↗ (англ.)</button>`;
     } else {
       h = `<h3>Краска</h3><div class="swatches">${PAINT_PAL.map((c) => `<button style="background:${c}" data-c="${c}"></button>`).join('')}<input type="color" data-k="color" value="${st.color}"></div>
         ${rng('px', 'Размер кисти, пикс.', 1, 16, 1)}${rng('alpha', 'Непрозрачность', 0.1, 1, 0.05)}
@@ -1087,7 +1087,7 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
       const ops = {
         hide: () => hideMesh(st.mesh), showall: showAll, revertmesh: () => revertSel(true), frame: frameSel,
         all: () => selectAll(true), none: () => selectAll(false), inv: invertSel, linked: selectLinked,
-        smooth: () => smoothSel(), revert: () => revertSel(false), delete: deleteFaces, resetall: resetAll,
+        smooth: () => smoothSel(), revert: () => revertSel(false), delete: deleteFaces, resetall: resetAll, sculptgl: openSculpt,
       };
       ops[op]?.();
     };
@@ -1139,6 +1139,8 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
   function enter(r, k, opts = {}) {
     root = r; key = k;
     if (opts.mode && MODES[opts.mode]) st.mode = opts.mode;
+    const ms = ui.top.querySelector('[data-a=model]');
+    ms.innerHTML = modelOptions().map(([v, l, on]) => `<option value="${v}"${on ? ' selected' : ''}>${l}</option>`).join('');
     if (st.mode === 'equip' && st.pose === 'rest') st.pose = 'frame';
     eqPanel.reset();
     st.active = true;
@@ -1169,5 +1171,5 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
   }
   function update() { if (st.active && st.mode === 'edit' && st.mesh && !drag && !ptr && st.pose === 'frame') { /* поза статична — ничего */ } }
 
-  return { enter, exit, afterLook, update, get active() { return st.active; }, get playing() { return st.active && st.playing; }, refreshOverlay, isApplied: (a) => APPLIED.has(a) };
+  return { enter, exit, afterLook, applyEdits, update, get active() { return st.active; }, get playing() { return st.active && st.playing; }, refreshOverlay, isApplied: (a) => APPLIED.has(a) };
 }

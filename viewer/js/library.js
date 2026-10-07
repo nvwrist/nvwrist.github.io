@@ -57,6 +57,7 @@ export function ps1ify(root) {
   return root;
 }
 
+export const libHooks = { onMaster: null }; // main: наложить правки Мастерской (ключ asset:<id>) на загруженный «мастер»
 const masters = new Map();
 export function loadMaster(id) {
   if (!masters.has(id)) {
@@ -67,6 +68,7 @@ export function loadMaster(id) {
       const g = await gltfLoader.loadAsync(BASE + it.f + (c.build ? '?v=' + c.build : ''));
       ps1ify(g.scene);
       g.scene.updateMatrixWorld(true);
+      try { libHooks.onMaster?.(g.scene, id); } catch (e) { console.warn('правки модели', id, e); }
       return { scene: g.scene, animations: g.animations || [], item: it };
     })().catch((e) => { masters.delete(id); throw e; }));
   }
