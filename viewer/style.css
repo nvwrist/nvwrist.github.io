@@ -198,3 +198,6 @@ body[data-mode=game] .top{display:none}
 .g-mobile[hidden]{display:none}
 .g-mobile button{width:76px;height:56px;background:var(--panel);border:1px solid var(--pink);color:var(--txt);font:inherit;border-radius:10px}
 #game-hud.hit{background:#a0101040}
+
+#ed-help{position:fixed;left:50%;top:calc(var(--navh) + 60px);transform:translateX(-50%);z-index:30;width:min(520px,94vw);background:var(--panel);border:1px solid var(--pink);padding:12px 14px;font-size:13px}
+#ed-help ol{margin:8px 0;padding-left:20px}#ed-help li{margin:4px 0}#ed-help p{color:var(--mut)}

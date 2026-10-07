@@ -853,7 +853,11 @@ async function setMode(m) {
   }
   mode = m; syncModes();
   // вход в новый
-  if (m === 'char') { $('panel').classList.toggle('closed', innerWidth < 700); if (current === hero) { fillPoseSelect(); buildEquipUI(); } }
+  if (m === 'char') {
+    $('panel').classList.toggle('closed', innerWidth < 700);
+    if (hero && current !== hero && current.editKey?.startsWith('asset:')) await showHero(heroType); // модель из библиотеки была только для правки
+    else if (current === hero) { fillPoseSelect(); buildEquipUI(); }
+  }
   else if (m === 'workshop') { openEditor(); }
   else if (m === 'map') {
     if (prev === 'char' || prev === 'workshop') { viewCam.pos.copy(camera.position); viewCam.target.copy(controls.target); }

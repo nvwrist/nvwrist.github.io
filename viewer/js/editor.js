@@ -945,6 +945,7 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
       <button class="ed-b" data-a="pose" title="Поза для правки">Т-поза</button>
       <button class="ed-b" data-a="ps1" title="Показывать в стиле PS1">PS1</button>
       <button class="ed-b" data-a="play" title="Проиграть анимацию — проверить, как сидит снаряжение">▶ Анимация</button>
+      <button class="ed-b" data-a="help" title="Как пользоваться">?</button>
       <span class="ed-saved"></span>`;
     const tools = document.createElement('div'); tools.id = 'ed-tools';
     const side = document.createElement('div'); side.id = 'ed-side';
@@ -966,6 +967,7 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
       else if (a === 'pose') { st.pose = st.pose === 'rest' ? 'frame' : 'rest'; onEnter?.({ pose: st.pose }); setTimeout(refreshOverlay, 50); syncTop(); }
       else if (a === 'sculptgl') openSculpt();
       else if (a === 'ps1') { st.ps1Preview = !st.ps1Preview; onEnter?.({ ps1: st.ps1Preview }); syncTop(); }
+      else if (a === 'help') showHelp(true);
       else if (a === 'play') { st.playing = !st.playing; syncTop(); if (!st.playing) setTimeout(refreshOverlay, 30); }
     });
     tools.addEventListener('click', (e) => {
@@ -979,6 +981,24 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
     });
     const saved = top.querySelector('.ed-saved');
     return { top, tools, side, status, saved, color: null };
+  }
+  // памятка: показывается при первом входе и по кнопке «?»
+  function showHelp(force) {
+    let h = document.getElementById('ed-help');
+    if (h) { h.remove(); if (force) return; }
+    try { if (!force && localStorage.getItem('ps1.edhelp')) return; localStorage.setItem('ps1.edhelp', '1'); } catch { /* */ }
+    h = document.createElement('div'); h.id = 'ed-help';
+    h.innerHTML = `<b>Мастерская — как править</b>
+      <ol><li><b>Модель</b> (слева вверху) — выбери, что править: персонажа или любую из 2500+ моделей библиотеки.</li>
+      <li><b>Объект</b> — нажми на деталь модели (или выбери в списке справа): скрыть, двигать, цвет и материал.</li>
+      <li><b>Правка</b> — точки-вершины: нажми/обведи рамкой и тяни стрелки. «Связанное» выделит всю деталь.</li>
+      <li><b>Скульпт</b> — води по модели кистями: надуть, вытянуть, вдавить, сгладить (симметрия включена).</li>
+      <li><b>Покраска</b> — рисуй пикселями прямо по текстуре; ластик возвращает исходный цвет.</li>
+      <li><b>Снаряжение</b> — оружие, шапки, волосы, плащи: двигать, менять хват, делать одеждой.</li></ol>
+      <p>Камера: правая кнопка мыши / два пальца или кнопка 🎥. Отмена — ↶. Всё сохраняется само.</p>
+      <button class="btn primary">Понятно</button>`;
+    h.querySelector('button').onclick = () => h.remove();
+    document.body.appendChild(h);
   }
   function syncTop() {
     ui.top.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === st.mode));
@@ -1156,10 +1176,12 @@ export function createEditor({ scene, camera, renderer, controls, canvas, toast,
         st.sel.clear();
       }
       setMode(st.mode); refreshOutliner(); refreshProps();
+      showHelp(false);
     }, 30);
   }
   function exit() {
     st.active = false; st.playing = false;
+    document.getElementById('ed-help')?.remove();
     eqPanel.leave();
     save();
     document.body.classList.remove('editing');
