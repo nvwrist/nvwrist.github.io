@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FridgeScope</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+  /* Layout: heading, interactive 3D scene with scenario switch, then a sensor reference table. */
+  :root {
+    --bg: #f3f6f9;
+    --fg: #14202b;
+    --muted: #5b6b7a;
+    --line: #d5dee7;
+    --panel: #ffffff;
+    --accent: #0b7a75;
+    --accent-fg: #ffffff;
+    --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-data: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b131b; --fg: #e4edf5; --muted: #8fa3b5; --line: #24343f; --panel: #121e29;
+      --accent: #3fd0c4; --accent-fg: #06201e; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b131b; --fg: #e4edf5; --muted: #8fa3b5; --line: #24343f; --panel: #121e29;
+    --accent: #3fd0c4; --accent-fg: #06201e; color-scheme: dark;
+  }
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); line-height: 1.5; }
+  .wrap { max-width: 1200px; margin-inline: auto; padding-inline: 16px; padding-block: 24px 40px; display: flex; flex-direction: column; gap: 20px; }
+  h1 { font-size: clamp(1.6rem, 4vw, 2.2rem); margin: 0; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
+  .lead { margin: 6px 0 0; color: var(--muted); max-width: 68ch; }
+  .stage { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #0e1621; }
+  #view { width: 100%; display: block; touch-action: none; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .bar span { color: var(--muted); font-size: 0.85rem; margin-right: 4px; }
+  .bar button {
+    font: inherit; font-size: 0.9rem; padding: 7px 14px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+  }
+  .bar button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  .bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hint { color: var(--muted); font-size: 0.85rem; margin: 0; }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  td:first-child { font-family: var(--font-data); white-space: nowrap; }
+  h2 { font-size: 1.1rem; margin: 0 0 10px; font-weight: 600; }
+</style>
+<style>html,body{margin:0}</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <h1>FridgeScope</h1>
+    <p class="lead">Модель прибора для диагностики холодильников: ESP32 снимает температуры, ток и давление, а приложение показывает причину неисправности. Сцену можно вращать мышью и приближать колёсиком.</p>
+  </header>
+
+  <div class="bar" role="group" aria-label="Сценарий">
+    <span>Сценарий:</span>
+    <button type="button" data-mode="-1" aria-pressed="true">Авто</button>
+    <button type="button" data-mode="0" aria-pressed="false">Норма</button>
+    <button type="button" data-mode="1" aria-pressed="false">Засор капилляра</button>
+    <button type="button" data-mode="2" aria-pressed="false">Утечка фреона</button>
+  </div>
+
+  <div class="stage"><canvas id="view"></canvas></div>
+  <p class="hint">На телефоне удобнее смотреть в горизонтальном положении. Значения на схеме примерные и показывают принцип работы.</p>
+
+  <section>
+    <h2>Датчики на схеме</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Канал</th><th>Где стоит</th><th>Что показывает</th></tr></thead>
+        <tbody>
+          <tr><td>T1</td><td>Всасывающая трубка у компрессора</td><td>Температура возврата, нужна для расчёта перегрева</td></tr>
+          <tr><td>T2</td><td>Нагнетание компрессора</td><td>Перегрев компрессора, слабый или перегруженный контур</td></tr>
+          <tr><td>T3</td><td>Выход конденсатора</td><td>Эффективность отвода тепла, переохлаждение</td></tr>
+          <tr><td>T4</td><td>Вход в испаритель</td><td>Температура после капилляра, при засоре не падает</td></tr>
+          <tr><td>T5</td><td>Выход испарителя</td><td>Вместе с давлением даёт перегрев</td></tr>
+          <tr><td>I</td><td>Токовые клещи на кабеле компрессора</td><td>Ток и цикл работы, при утечке и засоре ниже нормы</td></tr>
+          <tr><td>P</td><td>Сервисный порт на всасывании</td><td>Давление, при засоре уходит в вакуум</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function () {
+  var canvas = document.getElementById('view');
+  var stage = canvas.parentElement;
+  var width = stage.clientWidth || 900;
+  var height = Math.max(360, Math.min(720, Math.round(width * 0.52)));
+
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0e1621);
+  var camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 200);
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(width, height, false);
+  canvas.style.height = height + 'px';
+  var controls = new THREE.OrbitControls(camera, renderer.domElement);
+  var target = new THREE.Vector3(0.9, 0.3, 0);
+  controls.target.copy(target);
+  controls.enableDamping = true;
+
+  function fitDist(aspect) {
+    return Math.max(16, 11.2 / (aspect * Math.tan(THREE.MathUtils.degToRad(22.5))));
+  }
+  camera.position.set(0.9, 2.0, fitDist(width / height));
+
+  function onResize() {
+    var w = stage.clientWidth;
+    if (!w) return;
+    var h = Math.max(360, Math.min(720, Math.round(w * 0.52)));
+    renderer.setSize(w, h, false);
+    canvas.style.height = h + 'px';
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    var off = camera.position.clone().sub(controls.target).normalize().multiplyScalar(fitDist(w / h));
+    camera.position.copy(controls.target).add(off);
+  }
+  if (window.ResizeObserver) new ResizeObserver(onResize).observe(stage);
+  else window.addEventListener('resize', onResize);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+  var dl = new THREE.DirectionalLight(0xffffff, 1.2);
+  dl.position.set(5, 8, 10);
+  scene.add(dl);
+
+  var V3 = function (x, y, z) { return new THREE.Vector3(x, y, z || 0); };
+
+  function label(text, color, sc) {
+    color = color || '#ffffff'; sc = sc || 1;
+    var c = document.createElement('canvas'); c.width = 512; c.height = 128;
+    var g = c.getContext('2d');
+    g.font = 'bold 50px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    var w = Math.min(500, g.measureText(text).width + 50);
+    g.fillStyle = 'rgba(10,16,24,0.78)';
+    g.beginPath(); g.roundRect ? g.roundRect((512 - w) / 2, 14, w, 100, 24) : g.rect((512 - w) / 2, 14, w, 100); g.fill();
+    g.fillStyle = color; g.fillText(text, 256, 66);
+    var t = new THREE.CanvasTexture(c);
+    var s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false }));
+    s.scale.set(2.4 * sc, 0.6 * sc, 1); s.renderOrder = 10;
+    return s;
+  }
+  function addLabel(text, x, y, sc, color, z) {
+    var l = label(text, color || '#cfe3f5', sc == null ? 0.6 : sc);
+    l.position.set(x, y, z == null ? 0.5 : z); scene.add(l); return l;
+  }
+  function pipe(pts, r, color) {
+    var grp = new THREE.Group();
+    var mat = new THREE.MeshStandardMaterial({ color: color, metalness: 0.6, roughness: 0.35 });
+    for (var i = 0; i < pts.length - 1; i++) {
+      var a = pts[i], b = pts[i + 1];
+      var d = new THREE.Vector3().subVectors(b, a);
+      var len = d.length();
+      var m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 10), mat);
+      m.position.copy(a).addScaledVector(d, 0.5);
+      m.quaternion.setFromUnitVectors(V3(0, 1, 0), d.clone().normalize());
+      grp.add(m);
+      var j = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), mat);
+      j.position.copy(a); grp.add(j);
+    }
+    var jl = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), mat);
+    jl.position.copy(pts[pts.length - 1]); grp.add(jl);
+    scene.add(grp); return grp;
+  }
+
+  // ---------- Холодильник ----------
+  var fridgeEdges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(8.4, 7.5, 2)),
+    new THREE.LineBasicMaterial({ color: 0x4a6a8a }));
+  fridgeEdges.position.set(-4.4, 0.55, 0); scene.add(fridgeEdges);
+  var fridgeGlass = new THREE.Mesh(new THREE.BoxGeometry(8.4, 7.5, 2),
+    new THREE.MeshBasicMaterial({ color: 0x2a4560, transparent: true, opacity: 0.12, depthWrite: false }));
+  fridgeGlass.position.copy(fridgeEdges.position); scene.add(fridgeGlass);
+
+  // ---------- Контур ----------
+  var highPts = [V3(-7.4, -1.3), V3(-7.4, 3.3), V3(-3.8, 3.3), V3(-3.8, 2.9), V3(-7.0, 2.9), V3(-7.0, 2.5), V3(-3.8, 2.5)];
+  var capPts = [V3(-3.1, 2.5), V3(-1.2, 2.5), V3(-1.2, 0.8)];
+  var evapPts = [V3(-1.2, 0.8), V3(-4.5, 0.8), V3(-4.5, 0.4), V3(-1.2, 0.4), V3(-1.2, 0.0), V3(-4.5, 0.0)];
+  var sucPts = [V3(-4.5, 0.0), V3(-4.5, -1.3), V3(-6.4, -1.3)];
+  pipe(highPts, 0.07, 0xd9772b);
+  pipe(capPts, 0.03, 0xd9772b);
+  pipe(evapPts, 0.07, 0x5aa9d6);
+  pipe(sucPts, 0.07, 0x5aa9d6);
+
+  var comp = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 1.3, 24),
+    new THREE.MeshStandardMaterial({ color: 0x2b2f36, metalness: 0.5, roughness: 0.5 }));
+  comp.position.set(-6.9, -2.0, 0); scene.add(comp);
+  var drier = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.7, 16),
+    new THREE.MeshStandardMaterial({ color: 0xc9ced6, metalness: 0.7, roughness: 0.3 }));
+  drier.rotation.z = Math.PI / 2; drier.position.set(-3.45, 2.5, 0); scene.add(drier);
+
+  var frostGeo = new THREE.BoxGeometry(3.9, 1.3, 0.4); frostGeo.translate(-1.95, 0, 0);
+  var frost = new THREE.Mesh(frostGeo, new THREE.MeshBasicMaterial({ color: 0xe8f6ff, transparent: true, opacity: 0.4, depthWrite: false }));
+  frost.position.set(-0.8, 0.4, 0); scene.add(frost);
+
+  addLabel('Холодильник', -4.4, 4.75, 0.7, '#9fc4e8');
+  addLabel('Компрессор', -6.9, -3.2);
+  addLabel('Конденсатор', -5.6, 4.0);
+  addLabel('Фильтр-осушитель', -3.0, 1.8, 0.5);
+  addLabel('Капилляр', -0.35, 1.65, 0.5);
+  addLabel('Испаритель', -2.9, -0.7);
+
+  // ---------- Датчики ----------
+  var S = [
+    { k: 't1', n: 'T1', pos: V3(-4.9, -1.3), col: 0x4fc3f7 },
+    { k: 't2', n: 'T2', pos: V3(-7.4, 0.6), col: 0xff7043 },
+    { k: 't3', n: 'T3', pos: V3(-4.4, 2.5), col: 0xffb74d },
+    { k: 't4', n: 'T4', pos: V3(-1.2, 1.5), col: 0x80deea },
+    { k: 't5', n: 'T5', pos: V3(-4.5, -0.4), col: 0xa5d6a7 },
+    { k: 'i', n: 'I', pos: V3(-8.3, -2.0), col: 0xffee58 },
+    { k: 'p', n: 'P', pos: V3(-5.7, -2.55), col: 0xce93d8 }
+  ];
+  pipe([V3(-7.6, -2.0), V3(-9.6, -2.0)], 0.05, 0x111111);
+  pipe([V3(-5.7, -1.3), V3(-5.7, -2.3)], 0.035, 0xb0b0b0);
+  var OK = new THREE.Color(0x2ee59d), WARN = new THREE.Color(0xffc400), BAD = new THREE.Color(0xff4d4d);
+  S.forEach(function (s) {
+    var mesh;
+    var mat = new THREE.MeshStandardMaterial({ color: OK.clone(), emissive: OK.clone(), emissiveIntensity: 0.6 });
+    if (s.k === 'i') {
+      var tg = new THREE.TorusGeometry(0.3, 0.1, 12, 28); tg.rotateY(Math.PI / 2); mesh = new THREE.Mesh(tg, mat);
+    } else if (s.k === 'p') {
+      mesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), mat);
+    } else {
+      mesh = new THREE.Mesh(new THREE.SphereGeometry(0.17, 16, 12), mat);
+    }
+    mesh.position.copy(s.pos); scene.add(mesh); s.mesh = mesh; s.mat = mat;
+    addLabel(s.n, s.pos.x, s.pos.y + (s.k === 'p' ? -0.6 : 0.5), 0.4, '#ffffff', 0.8);
+  });
+
+  // ---------- ESP32 ----------
+  var esp = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.0, 0.12), new THREE.MeshStandardMaterial({ color: 0x0b5d3b, roughness: 0.6 }));
+  esp.position.set(2.6, -2.0, 0.5); scene.add(esp);
+  var chip = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.0, 0.08), new THREE.MeshStandardMaterial({ color: 0x20242a, metalness: 0.5 }));
+  chip.position.set(2.9, -1.9, 0.6); scene.add(chip);
+  var ant = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.35, 0.04), new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.8, roughness: 0.3 }));
+  ant.position.set(3.5, -1.2, 0.58); scene.add(ant);
+  var led = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), new THREE.MeshBasicMaterial({ color: 0x2ee59d }));
+  led.position.set(1.5, -2.8, 0.6); scene.add(led);
+  addLabel('ESP32 + АЦП', 2.6, -0.55, 0.65, '#7fe3b5');
+
+  var wires = [];
+  S.forEach(function (s, i) {
+    var pin = V3(0.95, -1.25 - i * 0.25, 0.62);
+    var pm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.05), new THREE.MeshStandardMaterial({ color: 0xd4af37 }));
+    pm.position.set(1.0, pin.y, 0.58); scene.add(pm);
+    var z = 1.3 + i * 0.08;
+    var pts = [s.pos.clone(), V3(s.pos.x, s.pos.y, z),
+      V3(THREE.MathUtils.lerp(s.pos.x, pin.x, 0.6), THREE.MathUtils.lerp(s.pos.y, pin.y, 0.6), z),
+      V3(pin.x - 0.3, pin.y, z), pin];
+    var curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.3);
+    var tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 80, 0.022, 6, false),
+      new THREE.MeshBasicMaterial({ color: s.col, transparent: true, opacity: 0.85 }));
+    scene.add(tube);
+    var pulses = [];
+    for (var j = 0; j < 2; j++) {
+      var p = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      scene.add(p); pulses.push({ m: p, t: (j / 2 + i * 0.13) % 1 });
+    }
+    wires.push({ curve: curve, pulses: pulses });
+  });
+
+  var wifi = [];
+  for (var r = 0; r < 3; r++) {
+    var wm = new THREE.Mesh(new THREE.TorusGeometry(0.3 + r * 0.25, 0.03, 8, 24, Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0x4fc3f7, transparent: true }));
+    wm.position.set(4.4, -1.0, 0.6); wm.rotation.z = -Math.PI / 4; scene.add(wm); wifi.push(wm);
+  }
+  addLabel('Wi-Fi / BLE', 4.7, 0.15, 0.5, '#4fc3f7');
+
+  // ---------- Панель ----------
+  var frame = new THREE.Mesh(new THREE.BoxGeometry(6.0, 5.4, 0.2), new THREE.MeshStandardMaterial({ color: 0x1b2733, metalness: 0.4, roughness: 0.4 }));
+  frame.position.set(8.3, 1.0, 0); scene.add(frame);
+  var pc = document.createElement('canvas'); pc.width = 1140; pc.height = 1020;
+  var pg = pc.getContext('2d');
+  var ptex = new THREE.CanvasTexture(pc);
+  var screen = new THREE.Mesh(new THREE.PlaneGeometry(5.7, 5.1), new THREE.MeshBasicMaterial({ map: ptex }));
+  screen.position.set(8.3, 1.0, 0.11); scene.add(screen);
+
+  function rr(g, x, y, w, h, rad) { g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, h, rad); else g.rect(x, y, w, h); }
+
+  // ---------- Сценарии ----------
+  var SC = [
+    { tab: 'Норма', st: 0, title: 'Контур исправен',
+      v: { t1: 5, t2: 62, t3: 38, t4: -22, t5: -18, i: 0.85, p: 0.65, sh: 7 },
+      f: { t1: 0, t2: 0, t3: 0, t4: 0, t5: 0, i: 0, p: 0, sh: 0 },
+      lines: ['• Перегрев 7 K, давление всасывания 0.65 бар', '• Ток компрессора 0.85 А — в норме', '• Иней равномерно по всему испарителю', '→ Неисправностей не найдено'], frost: 1 },
+    { tab: 'Засор', st: 2, title: 'Засор капилляра / фильтра-осушителя',
+      v: { t1: 24, t2: 78, t3: 36, t4: 8, t5: -2, i: 0.55, p: 0.15, sh: 32 },
+      f: { t1: 1, t2: 2, t3: 0, t4: 2, t5: 2, i: 1, p: 2, sh: 2 },
+      lines: ['• Вакуум на всасывании: 0.15 бар (норма 0.65)', '• Ток упал до 0.55 А, нагнетание 78 °C', '• Испаритель не остывает: вход +8 °C, иней нет', '→ Проверить ΔT на осушителе, продуть капилляр N₂'], frost: 0.12 },
+    { tab: 'Утечка', st: 2, title: 'Недостаток хладагента — вероятна утечка',
+      v: { t1: 18, t2: 52, t3: 30, t4: -6, t5: -6, i: 0.6, p: 0.35, sh: 22 },
+      f: { t1: 1, t2: 0, t3: 1, t4: 1, t5: 2, i: 1, p: 2, sh: 2 },
+      lines: ['• Перегрев 22 K (норма 5–8 K), давление 0.35 бар', '• Ток 0.60 А ниже нормы, компрессор не отключается', '• Иней только на входе испарителя', '→ Тест падением давления азота 30 мин, затем поиск'], frost: 0.45 }
+  ];
+  var cur = {}; for (var kk in SC[0].v) cur[kk] = SC[0].v[kk];
+  var hist = [];
+  var stCol = ['#2ee59d', '#ffc400', '#ff4d4d'];
+  var sIdx = 0, histTimer = 0, drawTimer = 0, mode = -1;
+
+  function drawPanel(T, sc) {
+    var g = pg;
+    g.fillStyle = '#0f1923'; g.fillRect(0, 0, 1140, 1020);
+    g.textBaseline = 'alphabetic'; g.textAlign = 'left';
+    g.fillStyle = '#ffffff'; g.font = 'bold 42px sans-serif'; g.fillText('FridgeScope', 36, 58);
+    g.textAlign = 'right'; g.fillStyle = '#2ee59d'; g.font = '24px sans-serif'; g.fillText('● Wi-Fi онлайн · 5 Гц', 1104, 56);
+    for (var i = 0; i < 3; i++) {
+      var x = 36 + i * 356, active = i === sIdx;
+      g.fillStyle = active ? (i === 0 ? '#14513d' : '#5a1f24') : '#1a2733';
+      rr(g, x, 84, 340, 50, 12); g.fill();
+      g.fillStyle = active ? '#ffffff' : '#7f93a6'; g.font = (active ? 'bold ' : '') + '26px sans-serif';
+      g.textAlign = 'center'; g.fillText(SC[i].tab, x + 170, 119);
+    }
+    var cards = [['T1 всасывание', 't1', '°C', 0], ['T2 нагнетание', 't2', '°C', 0], ['T3 выход конд.', 't3', '°C', 0], ['T4 вход исп.', 't4', '°C', 0],
+      ['T5 выход исп.', 't5', '°C', 0], ['I ток компр.', 'i', 'А', 2], ['P всасывание', 'p', 'бар', 2], ['SH перегрев', 'sh', 'K', 0]];
+    cards.forEach(function (c, n) {
+      var col = n % 4, row = Math.floor(n / 4);
+      var x = 36 + col * 268, y = 160 + row * 136;
+      var fl = sc.f[c[1]] == null ? sc.f.sh : sc.f[c[1]];
+      if (c[1] === 'sh') fl = 0 + (sc.st === 2 ? 2 : 0);
+      g.fillStyle = '#1a2733'; rr(g, x, y, 252, 120, 14); g.fill();
+      g.strokeStyle = stCol[fl]; g.lineWidth = 3; rr(g, x, y, 252, 120, 14); g.stroke();
+      g.textAlign = 'left'; g.fillStyle = '#8fa3b5'; g.font = '22px sans-serif'; g.fillText(c[0], x + 16, y + 34);
+      g.fillStyle = stCol[fl]; g.font = 'bold 48px sans-serif';
+      var val = cur[c[1]] + (c[1] === 'i' ? Math.sin(T * 5) * 0.02 : c[1] === 'p' ? Math.sin(T * 3) * 0.01 : Math.sin(T * 2 + n) * 0.3);
+      var txt = val.toFixed(c[3]);
+      g.fillText(txt, x + 16, y + 92);
+      var w2 = g.measureText(txt).width;
+      g.fillStyle = '#8fa3b5'; g.font = '24px sans-serif'; g.fillText(c[2], x + 16 + w2 + 8, y + 92);
+    });
+    g.fillStyle = '#1a2733'; rr(g, 36, 440, 1068, 290, 14); g.fill();
+    g.fillStyle = '#8fa3b5'; g.font = '22px sans-serif'; g.textAlign = 'left'; g.fillText('Последние 18 секунд', 56, 474);
+    var series = [['T5 вых. испарителя', 't5', -25, 25, '#a5d6a7'], ['I ток', 'i', 0.3, 1.0, '#ffee58'], ['P давление', 'p', 0, 0.8, '#ce93d8']];
+    series.forEach(function (s, i) { g.fillStyle = s[4]; g.fillRect(380 + i * 250, 460, 22, 6); g.fillStyle = '#cfe3f5'; g.font = '20px sans-serif'; g.fillText(s[0], 410 + i * 250, 470); });
+    var gx = 56, gy = 490, gw = 1028, gh = 220;
+    g.strokeStyle = '#2a3b4b'; g.lineWidth = 1;
+    for (var k = 0; k <= 4; k++) { g.beginPath(); g.moveTo(gx, gy + gh * k / 4); g.lineTo(gx + gw, gy + gh * k / 4); g.stroke(); }
+    series.forEach(function (s) {
+      g.strokeStyle = s[4]; g.lineWidth = 3; g.beginPath();
+      hist.forEach(function (h, idx) {
+        var x = gx + gw * idx / 89;
+        var v = Math.min(1, Math.max(0, (h[s[1]] - s[2]) / (s[3] - s[2])));
+        var y = gy + gh * (1 - v);
+        if (idx) g.lineTo(x, y); else g.moveTo(x, y);
+      });
+      g.stroke();
+    });
+    g.fillStyle = '#1a2733'; rr(g, 36, 750, 1068, 250, 14); g.fill();
+    g.fillStyle = stCol[sc.st]; rr(g, 36, 750, 14, 250, 7); g.fill();
+    g.fillStyle = '#8fa3b5'; g.font = '20px sans-serif'; g.fillText('АВТОДИАГНОЗ', 72, 782);
+    g.fillStyle = stCol[sc.st]; g.font = 'bold 34px sans-serif'; g.fillText(sc.title, 72, 824);
+    g.font = '25px sans-serif';
+    sc.lines.forEach(function (l, i) { g.fillStyle = l.indexOf('→') === 0 ? '#7fe3b5' : '#dbe7f3'; g.fillText(l, 72, 868 + i * 36); });
+    ptex.needsUpdate = true;
+  }
+
+  // ---------- Частицы хладагента ----------
+  var loop = [].concat(highPts, [V3(-3.1, 2.5)], capPts.slice(1), evapPts.slice(1), sucPts.slice(1), [V3(-6.9, -1.3), V3(-7.4, -1.3)]);
+  var cum = [0];
+  for (var q = 1; q < loop.length; q++) cum.push(cum[q - 1] + loop[q].distanceTo(loop[q - 1]));
+  var L = cum[cum.length - 1];
+  var hh = highPts.length;
+  var uClog = cum[hh], uEvap = cum[hh + 2], uSucEnd = cum[loop.length - 3];
+  var parts = [];
+  for (var pi = 0; pi < 64; pi++) {
+    var pm2 = new THREE.Mesh(new THREE.SphereGeometry(0.075, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff7043 }));
+    scene.add(pm2); parts.push({ m: pm2, u: L * pi / 64, i: pi });
+  }
+  function place(p) {
+    var lo = 0; while (lo < cum.length - 2 && cum[lo + 1] < p.u) lo++;
+    var f = (p.u - cum[lo]) / (cum[lo + 1] - cum[lo]);
+    p.m.position.lerpVectors(loop[lo], loop[lo + 1], f);
+  }
+  var clogM = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 12), new THREE.MeshBasicMaterial({ color: 0xff4d4d, transparent: true, opacity: 0.7 }));
+  clogM.position.set(-3.1, 2.5, 0.2); scene.add(clogM);
+  var clogL = addLabel('⚠ засор', -2.2, 3.15, 0.6, '#ff6b6b');
+  var leakL = addLabel('⚠ утечка', -5.5, 1.9, 0.6, '#ff6b6b');
+  var leakP = [];
+  for (var li = 0; li < 16; li++) {
+    var lm = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), new THREE.MeshBasicMaterial({ color: 0xbfe9ff, transparent: true }));
+    scene.add(lm); leakP.push({ m: lm, life: -Math.random(), v: V3(0, 0, 0) });
+  }
+
+  // кнопки сценариев
+  var btns = Array.prototype.slice.call(document.querySelectorAll('.bar button'));
+  btns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      mode = parseInt(b.getAttribute('data-mode'), 10);
+      btns.forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+    });
+  });
+
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var t0 = performance.now(), last = t0;
+  function animate() {
+    requestAnimationFrame(animate);
+    var now = performance.now(); var dt = Math.min(0.05, (now - last) / 1000); last = now;
+    var T = (now - t0) / 1000;
+    sIdx = mode >= 0 ? mode : Math.floor(T / 9) % 3;
+    var sc = SC[sIdx];
+    var k = 1 - Math.exp(-dt * 2.5);
+    for (var key in sc.v) cur[key] += (sc.v[key] - cur[key]) * k;
+
+    S.forEach(function (s) {
+      var f = sc.f[s.k];
+      var tgt = f === 2 ? BAD : f === 1 ? WARN : OK;
+      s.mat.color.lerp(tgt, 0.1); s.mat.emissive.lerp(tgt, 0.1);
+      s.mesh.scale.setScalar(1 + (f === 2 ? 0.25 * Math.sin(T * 8) : 0.05 * Math.sin(T * 3)));
+    });
+    frost.scale.x += (sc.frost - frost.scale.x) * k;
+
+    var clog = sIdx === 1, leak = sIdx === 2;
+    parts.forEach(function (p) {
+      var sp = 2.2;
+      if (clog) sp = p.u < uClog ? 0.9 : 5;
+      p.u = (p.u + sp * dt) % L;
+      place(p);
+      var vis = true;
+      if (clog && p.u > uClog && p.u < uSucEnd) vis = false;
+      if (leak && p.i % 2) vis = false;
+      p.m.visible = vis;
+      p.m.material.color.setHex(p.u < uEvap || p.u > L - 1 ? 0xff7043 : 0x4fc3f7);
+    });
+    clogM.visible = clog; clogM.scale.setScalar(1 + 0.2 * Math.sin(T * 8)); clogL.visible = clog;
+    leakL.visible = leak;
+    leakP.forEach(function (p) {
+      if (!leak) { p.m.visible = false; return; }
+      p.life += dt;
+      if (p.life > 1.3) {
+        p.life = -Math.random() * 0.5; p.m.position.set(-5.5, 2.5, 0.05);
+        p.v.set((Math.random() - 0.5) * 0.8, 0.2 + Math.random() * 0.8, 0.4 + Math.random());
+      }
+      if (p.life >= 0) { p.m.visible = true; p.m.position.addScaledVector(p.v, dt); p.m.material.opacity = 1 - p.life / 1.3; }
+      else p.m.visible = false;
+    });
+
+    wires.forEach(function (w) {
+      w.pulses.forEach(function (p) {
+        p.t = (p.t + dt * 0.35) % 1; p.m.position.copy(w.curve.getPoint(p.t));
+      });
+    });
+    led.material.color.setHex(Math.sin(T * 10) > 0 ? 0x2ee59d : 0x0b5d3b);
+    wifi.forEach(function (m, r2) { m.material.opacity = 0.15 + 0.85 * Math.max(0, Math.sin(T * 4 - r2 * 1.1)); });
+
+    histTimer += dt;
+    if (histTimer > 0.2) {
+      histTimer = 0;
+      hist.push({ t5: cur.t5 + Math.sin(T * 2) * 0.4, i: cur.i + Math.sin(T * 5) * 0.02, p: cur.p + Math.sin(T * 3) * 0.01 });
+      if (hist.length > 90) hist.shift();
+    }
+    drawTimer += dt;
+    if (drawTimer > 0.1) { drawTimer = 0; drawPanel(T, sc); }
+
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  for (var w0 = 0; w0 < 90; w0++) hist.push({ t5: cur.t5, i: cur.i, p: cur.p });
+  drawPanel(0, SC[0]);
+  animate();
+})();
+</script>
+</body>
+</html>
