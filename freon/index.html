@@ -2,474 +2,1802 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>FridgeScope</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<meta name="description" content="Интерактивная 3D-модель холодильника и прибора FridgeScope на ESP32 для диагностики утечек фреона и засоров капилляра.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <style>
-  /* Layout: heading, interactive 3D scene with scenario switch, then a sensor reference table. */
+  /* Layout: 3D-стенд слева, панель слоёв справа; ниже — приложение прибора (мониторинг и опрессовка) и комплектация. */
   :root {
-    --bg: #f3f6f9;
-    --fg: #14202b;
-    --muted: #5b6b7a;
-    --line: #d5dee7;
-    --panel: #ffffff;
-    --accent: #0b7a75;
+    --bg: #edf1f3;
+    --surface: #ffffff;
+    --surface-2: #f4f7f8;
+    --fg: #111a20;
+    --muted: #5a6975;
+    --line: #d5dde3;
+    --accent: #0a6c7c;
     --accent-fg: #ffffff;
-    --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-    --font-data: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+    --accent-soft: #d8edf0;
+    --ok: #12804f;
+    --warn: #a86d10;
+    --bad: #c2342a;
+    --ok-soft: #dcf2e7;
+    --warn-soft: #f9eedb;
+    --bad-soft: #fae2df;
+    --stage-a: #f6f8f9;
+    --stage-b: #cfd8de;
+    --chip-bg: rgba(12, 18, 24, 0.86);
+    --chip-fg: #f2f6f8;
+    --chart-grid: #e3e9ed;
+    --chart-band: rgba(18, 128, 79, 0.10);
+    --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #0b131b; --fg: #e4edf5; --muted: #8fa3b5; --line: #24343f; --panel: #121e29;
-      --accent: #3fd0c4; --accent-fg: #06201e; color-scheme: dark;
+      --bg: #0b1116; --surface: #131b21; --surface-2: #19232a; --fg: #e2e9ee; --muted: #8b9aa6; --line: #25313a;
+      --accent: #48c0d0; --accent-fg: #052127; --accent-soft: #14333a;
+      --ok: #3ccb8b; --warn: #eeb049; --bad: #ff6b5f; --ok-soft: #10301f; --warn-soft: #362a10; --bad-soft: #3a1916;
+      --stage-a: #1d2832; --stage-b: #090e13; --chart-grid: #222d35; --chart-band: rgba(60, 203, 139, 0.12);
+      color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
-    --bg: #0b131b; --fg: #e4edf5; --muted: #8fa3b5; --line: #24343f; --panel: #121e29;
-    --accent: #3fd0c4; --accent-fg: #06201e; color-scheme: dark;
+    --bg: #0b1116; --surface: #131b21; --surface-2: #19232a; --fg: #e2e9ee; --muted: #8b9aa6; --line: #25313a;
+    --accent: #48c0d0; --accent-fg: #052127; --accent-soft: #14333a;
+    --ok: #3ccb8b; --warn: #eeb049; --bad: #ff6b5f; --ok-soft: #10301f; --warn-soft: #362a10; --bad-soft: #3a1916;
+    --stage-a: #1d2832; --stage-b: #090e13; --chart-grid: #222d35; --chart-band: rgba(60, 203, 139, 0.12);
+    color-scheme: dark;
   }
-  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); line-height: 1.5; }
-  .wrap { max-width: 1200px; margin-inline: auto; padding-inline: 16px; padding-block: 24px 40px; display: flex; flex-direction: column; gap: 20px; }
-  h1 { font-size: clamp(1.6rem, 4vw, 2.2rem); margin: 0; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
-  .lead { margin: 6px 0 0; color: var(--muted); max-width: 68ch; }
-  .stage { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #0e1621; }
-  #view { width: 100%; display: block; touch-action: none; }
-  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .bar span { color: var(--muted); font-size: 0.85rem; margin-right: 4px; }
-  .bar button {
-    font: inherit; font-size: 0.9rem; padding: 7px 14px; border-radius: 6px; cursor: pointer;
-    border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.5; }
+  .page { max-width: 1440px; margin-inline: auto; padding-inline: 16px; padding-block: 20px 48px; display: flex; flex-direction: column; gap: 20px; }
+
+  .head { display: flex; flex-wrap: wrap; gap: 12px 32px; align-items: end; justify-content: space-between; }
+  .eyebrow { margin: 0; font: 600 12px/1 var(--font-data); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+  h1 { margin: 6px 0 0; font-size: clamp(1.8rem, 4vw, 2.6rem); line-height: 1.05; font-weight: 700; letter-spacing: -0.02em; }
+  .lead { margin: 8px 0 0; color: var(--muted); max-width: 70ch; text-wrap: pretty; }
+  h2 { margin: 0; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; align-items: start; }
+  @media (max-width: 980px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+  .viewer { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .seg button { border: 0; border-right: 1px solid var(--line); }
+  .seg button:last-child { border-right: 0; }
+  button { font: inherit; color: var(--fg); }
+  .btn, .seg button {
+    font-size: 13px; padding: 7px 12px; background: var(--surface); cursor: pointer; line-height: 1.2;
   }
-  .bar button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
-  .bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .hint { color: var(--muted); font-size: 0.85rem; margin: 0; }
-  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
-  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 0.9rem; }
-  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+  .btn { border: 1px solid var(--line); border-radius: 8px; }
+  .btn:hover, .seg button:hover { background: var(--surface-2); }
+  .btn[aria-pressed="true"], .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  #stage {
+    position: relative; width: 100%; height: clamp(440px, 72vh, 860px); border-radius: 12px; overflow: hidden;
+    background: radial-gradient(120% 90% at 50% 30%, var(--stage-a), var(--stage-b));
+    border: 1px solid var(--line); touch-action: none;
+  }
+  #stage canvas { display: block; }
+  .labels { position: absolute; inset: 0; pointer-events: none; }
+  .tag {
+    pointer-events: auto; cursor: pointer; border: 0; font: 500 12px/1.2 var(--font-body); color: var(--chip-fg);
+    background: var(--chip-bg); padding: 4px 8px; border-radius: 4px; white-space: nowrap;
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+  .tag:hover { filter: brightness(1.25); }
+  .chip {
+    pointer-events: auto; cursor: pointer; border: 0; font: 600 11px/1.1 var(--font-data); color: var(--chip-fg); background: var(--chip-bg);
+    padding: 3px 7px 3px 6px; border-radius: 10px; white-space: nowrap; display: inline-flex; gap: 5px; align-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .chip i { width: 7px; height: 7px; border-radius: 50%; background: #3ccb8b; display: inline-block; }
+  .chip.s1 i { background: #eeb049; } .chip.s2 i { background: #ff6b5f; } .chip.s9 i { background: #8b9aa6; }
+  .fault { pointer-events: none; font: 700 12px/1 var(--font-body); color: #fff; background: #c2342a; padding: 5px 9px; border-radius: 4px; white-space: nowrap; }
+
+  .stage-hint { position: absolute; left: 12px; bottom: 10px; margin: 0; font-size: 12px; color: var(--chip-fg); background: var(--chip-bg); padding: 5px 9px; border-radius: 6px; pointer-events: none; max-width: calc(100% - 24px); }
+  .legend { position: absolute; right: 12px; bottom: 10px; background: var(--chip-bg); color: var(--chip-fg); padding: 8px 10px; border-radius: 6px; font: 11px/1.2 var(--font-data); width: 220px; max-width: calc(100% - 24px); }
+  .legend .bar { height: 8px; border-radius: 3px; margin: 6px 0 4px; background: linear-gradient(90deg, #2b59c3, #3fa7d6 17%, #e8f1f2 33%, #f6c85f 54%, #f08a24 75%, #d1301f); }
+  .legend .scale { display: flex; justify-content: space-between; }
+
+  .info {
+    position: absolute; top: 12px; left: 12px; width: min(340px, calc(100% - 24px)); max-height: calc(100% - 60px); overflow: auto;
+    background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+  }
+  .info h3 { margin: 0 32px 6px 0; font-size: 1.05rem; line-height: 1.25; }
+  .info p { margin: 0 0 10px; color: var(--muted); font-size: 13.5px; }
+  .info ul { margin: 0 0 12px; padding-left: 18px; font-size: 13.5px; }
+  .info li + li { margin-top: 3px; }
+  .info .k { font: 600 11px/1 var(--font-data); text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); margin: 0 0 6px; }
+  .info .x { position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-2); cursor: pointer; }
+  .info .row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .scen { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .scen button { text-align: left; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 8px 10px; cursor: pointer; font-size: 13px; line-height: 1.25; }
+  .scen button small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+  .scen button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .layers { display: flex; flex-direction: column; }
+  .lrow { display: grid; grid-template-columns: minmax(0, 1fr) 96px 34px; gap: 8px; align-items: center; padding: 5px 0; border-top: 1px solid var(--line); }
+  .lrow:first-child { border-top: 0; }
+  .lrow label { display: flex; gap: 8px; align-items: center; font-size: 13px; cursor: pointer; min-width: 0; }
+  .lrow label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lrow output { font: 11px var(--font-data); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+  .lrow input[type="range"] { width: 100%; accent-color: var(--accent); }
+  input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; flex: none; }
+  .extra { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+  .extra label { display: flex; gap: 8px; align-items: center; font-size: 13px; cursor: pointer; }
+
+  .app { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .app-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; justify-content: space-between; }
+  .app-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .app-title strong { font-size: 1.15rem; }
+  .live { font: 12px var(--font-data); color: var(--ok); }
+
+  .diag { border-radius: 10px; padding: 14px 16px; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 8px 24px; background: var(--surface-2); border: 1px solid var(--line); }
+  @media (max-width: 760px) { .diag { grid-template-columns: minmax(0, 1fr); } }
+  .diag.l0 { background: var(--ok-soft); border-color: transparent; }
+  .diag.l1 { background: var(--warn-soft); border-color: transparent; }
+  .diag.l2 { background: var(--bad-soft); border-color: transparent; }
+  .pill { display: inline-block; font: 600 11px/1 var(--font-data); text-transform: uppercase; letter-spacing: 0.06em; padding: 5px 8px; border-radius: 4px; color: #fff; background: var(--ok); }
+  .l1 .pill { background: var(--warn); } .l2 .pill { background: var(--bad); }
+  .diag h3 { margin: 8px 0 6px; font-size: 1.25rem; line-height: 1.2; text-wrap: balance; }
+  .diag ul { margin: 0; padding-left: 18px; font-size: 14px; }
+  .diag li + li { margin-top: 3px; }
+  .diag .k { font: 600 11px/1 var(--font-data); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 4px 0 8px; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface); position: relative; overflow: hidden; }
+  .card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--ok); }
+  .card.s1::before { background: var(--warn); } .card.s2::before { background: var(--bad); } .card.s9::before { background: var(--line); }
+  .card .lab { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .val { font: 600 1.45rem/1.2 var(--font-data); font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .card.s1 .val { color: var(--warn); } .card.s2 .val { color: var(--bad); }
+  .card .val small { font: 500 12px var(--font-body); color: var(--muted); margin-left: 4px; }
+  .card .sub { font: 11px var(--font-data); color: var(--muted); margin-top: 2px; }
+
+  .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 760px) { .charts { grid-template-columns: minmax(0, 1fr); } }
+  figure { margin: 0; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px 8px; background: var(--surface); min-width: 0; }
+  figcaption { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); }
+  figcaption b { color: var(--fg); font-weight: 600; }
+  .lg { display: inline-flex; gap: 10px; font: 11px var(--font-data); }
+  .lg span::before { content: ""; display: inline-block; width: 10px; height: 3px; margin-right: 4px; vertical-align: middle; background: var(--c); }
+  figure canvas { width: 100%; height: 150px; display: block; margin-top: 6px; }
+
+  .test { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; align-items: start; }
+  @media (max-width: 860px) { .test { grid-template-columns: minmax(0, 1fr); } }
+  .test canvas { width: 100%; height: 240px; display: block; }
+  .stats { display: grid; gap: 8px; }
+  .stat { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+  .stat .lab { font-size: 12px; color: var(--muted); }
+  .stat .val { font: 600 1.2rem/1.3 var(--font-data); font-variant-numeric: tabular-nums; }
+  .result { border-radius: 8px; padding: 10px 12px; font-size: 14px; background: var(--surface-2); }
+  .result.ok { background: var(--ok-soft); } .result.bad { background: var(--bad-soft); }
+  .muted { color: var(--muted); font-size: 13.5px; margin: 0; max-width: 75ch; }
+
+  .kit { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 980px) { .kit { grid-template-columns: minmax(0, 1fr); } }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
   tr:last-child td { border-bottom: 0; }
-  td:first-child { font-family: var(--font-data); white-space: nowrap; }
-  h2 { font-size: 1.1rem; margin: 0 0 10px; font-weight: 600; }
+  td:first-child { font-family: var(--font-data); font-weight: 600; white-space: nowrap; }
+  .bom { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .bom ul { margin: 10px 0 0; padding-left: 18px; font-size: 14px; }
+  .bom li + li { margin-top: 4px; }
+  .bom li span { color: var(--muted); }
+  .err { padding: 24px; color: var(--chip-fg); }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 </style>
-<style>html,body{margin:0}</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
 </head>
 <body>
-
-<div class="wrap">
-  <header>
-    <h1>FridgeScope</h1>
-    <p class="lead">Модель прибора для диагностики холодильников: ESP32 снимает температуры, ток и давление, а приложение показывает причину неисправности. Сцену можно вращать мышью и приближать колёсиком.</p>
+<div class="page">
+  <header class="head">
+    <div>
+      <p class="eyebrow">Прототип прибора · ESP32 · R600a</p>
+      <h1>FridgeScope</h1>
+      <p class="lead">Двухкамерный холодильник с подключённым диагностическим прибором. Девять датчиков снимают температуры контура, ток компрессора и давление всасывания, а приложение по этим данным называет вероятную причину: утечку, засор капилляра или фильтра, перезаправку.</p>
+    </div>
   </header>
 
-  <div class="bar" role="group" aria-label="Сценарий">
-    <span>Сценарий:</span>
-    <button type="button" data-mode="-1" aria-pressed="true">Авто</button>
-    <button type="button" data-mode="0" aria-pressed="false">Норма</button>
-    <button type="button" data-mode="1" aria-pressed="false">Засор капилляра</button>
-    <button type="button" data-mode="2" aria-pressed="false">Утечка фреона</button>
+  <div class="layout">
+    <section class="viewer" aria-label="3D-модель">
+      <div class="toolbar">
+        <div class="seg" role="group" aria-label="Ракурс" id="views">
+          <button type="button" data-view="overview">Общий</button>
+          <button type="button" data-view="front">Спереди</button>
+          <button type="button" data-view="back">Сзади</button>
+          <button type="button" data-view="comp">Компрессор</button>
+          <button type="button" data-view="freezer">Морозилка</button>
+          <button type="button" data-view="device">Прибор</button>
+        </div>
+        <button type="button" class="btn" id="tDoors" aria-pressed="true">Двери открыты</button>
+        <button type="button" class="btn" id="tRun" aria-pressed="true">Компрессор работает</button>
+        <button type="button" class="btn" id="tHeat" aria-pressed="false">Термокарта</button>
+        <button type="button" class="btn" id="tRotate" aria-pressed="true">Автоповорот</button>
+      </div>
+      <div id="stage">
+        <div class="legend" id="heatLegend" hidden>
+          Температура трубок, °C
+          <div class="bar"></div>
+          <div class="scale"><span>−40</span><span>0</span><span>+25</span><span>+80</span></div>
+        </div>
+        <div class="info" id="info" hidden>
+          <button type="button" class="x" id="infoClose" aria-label="Закрыть">✕</button>
+          <p class="k" id="infoKind">Деталь</p>
+          <h3 id="infoTitle"></h3>
+          <p id="infoText"></p>
+          <p class="k">Что проверить</p>
+          <ul id="infoChecks"></ul>
+          <div class="row"><button type="button" class="btn" id="infoFly">Приблизить</button><button type="button" class="btn" id="infoSolo">Показать отдельно</button></div>
+        </div>
+        <p class="stage-hint" id="hint">Перетаскивание — вращение, колесо — масштаб, правая кнопка — сдвиг. Нажмите на деталь или подпись.</p>
+      </div>
+    </section>
+
+    <aside class="side">
+      <section class="panel">
+        <h2>Неисправность для демонстрации</h2>
+        <div class="scen" id="scen"></div>
+      </section>
+      <section class="panel">
+        <h2>Слои и прозрачность</h2>
+        <div class="presets" id="presets">
+          <button type="button" class="btn" data-preset="real">Как в жизни</button>
+          <button type="button" class="btn" data-preset="xray">Рентген</button>
+          <button type="button" class="btn" data-preset="circuit">Только контур</button>
+        </div>
+        <div class="layers" id="layers"></div>
+        <div class="extra">
+          <label><input type="checkbox" id="cCut"> Разрез корпуса компрессора</label>
+          <label><input type="checkbox" id="cTags" checked> Подписи деталей</label>
+          <label><input type="checkbox" id="cChips" checked> Показания на датчиках</label>
+        </div>
+      </section>
+    </aside>
   </div>
 
-  <div class="stage"><canvas id="view"></canvas></div>
-  <p class="hint">На телефоне удобнее смотреть в горизонтальном положении. Значения на схеме примерные и показывают принцип работы.</p>
+  <section class="app" aria-label="Приложение прибора">
+    <div class="app-head">
+      <div class="app-title"><strong>Приложение FridgeScope</strong><span class="live" id="live">● Wi-Fi · 5 Гц · 9 каналов</span></div>
+      <div class="seg" role="tablist" aria-label="Режим">
+        <button type="button" role="tab" id="tabMonBtn" aria-pressed="true" aria-selected="true">Мониторинг</button>
+        <button type="button" role="tab" id="tabTestBtn" aria-pressed="false" aria-selected="false">Опрессовка азотом</button>
+      </div>
+    </div>
 
-  <section>
-    <h2>Датчики на схеме</h2>
+    <div id="tabMon" style="display:flex;flex-direction:column;gap:14px">
+      <div class="diag l0" id="diag">
+        <div>
+          <span class="pill" id="diagPill">Норма</span>
+          <h3 id="diagTitle">Контур исправен</h3>
+          <ul id="diagWhy"></ul>
+        </div>
+        <div>
+          <p class="k">Что делать</p>
+          <ul id="diagTodo"></ul>
+        </div>
+      </div>
+      <div class="cards" id="cards"></div>
+      <div class="charts">
+        <figure><figcaption><b>Давление всасывания, бар</b><span class="lg"><span style="--c:#7b61ff">P</span></span></figcaption><canvas id="ch1"></canvas></figure>
+        <figure><figcaption><b>Испаритель, °C</b><span class="lg"><span style="--c:#2f9bd6">T5 вход</span><span style="--c:#e0702a">T6 выход</span></span></figcaption><canvas id="ch2"></canvas></figure>
+        <figure><figcaption><b>Ток компрессора, А</b><span class="lg"><span style="--c:#c99a00">I</span></span></figcaption><canvas id="ch3"></canvas></figure>
+        <figure><figcaption><b>Нагнетание и фильтр, °C</b><span class="lg"><span style="--c:#d1301f">T2</span><span style="--c:#12804f">ΔT фильтра</span></span></figcaption><canvas id="ch4"></canvas></figure>
+      </div>
+      <p class="muted">Зелёная полоса на графиках — диапазон нормы для R600a при +25 °C в помещении. Шкала времени — последние 60 секунд.</p>
+    </div>
+
+    <div id="tabTest" hidden>
+      <div class="test">
+        <div>
+          <p class="muted" style="margin-bottom:10px">Хладагент стравлен, в контур через сервисный вентиль подан азот 10 бар. Прибор 30 минут пишет давление и температуру воздуха и пересчитывает падение к 20 °C, чтобы суточный нагрев не выдавал себя за утечку. Здесь 30 минут ускорены до 15 секунд.</p>
+          <canvas id="ptChart"></canvas>
+        </div>
+        <div class="stats">
+          <button type="button" class="btn" id="ptStart" style="padding:10px 14px">Начать опрессовку</button>
+          <div class="stat"><div class="lab">Время</div><div class="val" id="ptTime">0:00 / 30:00</div></div>
+          <div class="stat"><div class="lab">Давление (приведённое к 20 °C)</div><div class="val" id="ptP">10.00 бар</div></div>
+          <div class="stat"><div class="lab">Падение</div><div class="val" id="ptDrop">0.00 бар</div></div>
+          <div class="result" id="ptRes">Порог герметичности — падение не больше 0.10 бар за 30 минут. Результат зависит от выбранной неисправности.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="kit">
     <div class="tablewrap">
       <table>
-        <thead><tr><th>Канал</th><th>Где стоит</th><th>Что показывает</th></tr></thead>
+        <thead><tr><th>Канал</th><th>Где стоит</th><th>Норма</th><th>Что выдаёт</th></tr></thead>
         <tbody>
-          <tr><td>T1</td><td>Всасывающая трубка у компрессора</td><td>Температура возврата, нужна для расчёта перегрева</td></tr>
-          <tr><td>T2</td><td>Нагнетание компрессора</td><td>Перегрев компрессора, слабый или перегруженный контур</td></tr>
-          <tr><td>T3</td><td>Выход конденсатора</td><td>Эффективность отвода тепла, переохлаждение</td></tr>
-          <tr><td>T4</td><td>Вход в испаритель</td><td>Температура после капилляра, при засоре не падает</td></tr>
-          <tr><td>T5</td><td>Выход испарителя</td><td>Вместе с давлением даёт перегрев</td></tr>
-          <tr><td>I</td><td>Токовые клещи на кабеле компрессора</td><td>Ток и цикл работы, при утечке и засоре ниже нормы</td></tr>
-          <tr><td>P</td><td>Сервисный порт на всасывании</td><td>Давление, при засоре уходит в вакуум</td></tr>
+          <tr><td>T1</td><td>Всасывающая трубка у компрессора</td><td>+12…+32 °C</td><td>Холодная и в инее — перезаправка, жидкость идёт в компрессор</td></tr>
+          <tr><td>T2</td><td>Нагнетательная трубка</td><td>+50…+82 °C</td><td>Высокая при засоре и малом расходе</td></tr>
+          <tr><td>T3 / T4</td><td>До и после фильтра-осушителя</td><td>ΔT до 2.5 °C</td><td>Большой перепад — засор фильтра</td></tr>
+          <tr><td>T5</td><td>Вход в испаритель морозилки</td><td>−32…−22 °C</td><td>Тёплый вход — засор, очень холодный — недозаправка</td></tr>
+          <tr><td>T6</td><td>Выход испарителя</td><td>−26…−12 °C</td><td>Вместе с давлением даёт перегрев</td></tr>
+          <tr><td>Tкам</td><td>Воздух в морозильной камере</td><td>−22…−15 °C</td><td>Итоговая холодопроизводительность</td></tr>
+          <tr><td>I</td><td>Токовые клещи на сетевом шнуре</td><td>0.65…0.90 А</td><td>Нагрузка компрессора, циклы включения</td></tr>
+          <tr><td>P</td><td>Сервисный вентиль компрессора</td><td>0.45…0.72 бар</td><td>Давление и температура кипения</td></tr>
         </tbody>
       </table>
+    </div>
+    <div class="bom">
+      <h2>Комплектация прибора</h2>
+      <ul>
+        <li>ESP32-S3 с Wi-Fi и BLE <span>— сбор данных, веб-интерфейс</span></li>
+        <li>7 × DS18B20 в алюминиевых зажимах <span>— одна шина 1-Wire</span></li>
+        <li>Датчик давления 0–30 бар, 0.5–4.5 В <span>— через АЦП ADS1115</span></li>
+        <li>Токовые клещи SCT-013 или модуль PZEM-004T <span>— ток и мощность без разрыва цепи</span></li>
+        <li>OLED 1.3″ и три кнопки <span>— показания без телефона</span></li>
+        <li>Аккумулятор 18650 и запись на microSD <span>— автономная запись на выезде</span></li>
+      </ul>
     </div>
   </section>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
-<script>
-(function () {
-  var canvas = document.getElementById('view');
-  var stage = canvas.parentElement;
-  var width = stage.clientWidth || 900;
-  var height = Math.max(360, Math.min(720, Math.round(width * 0.52)));
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
-  var scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0e1621);
-  var camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 200);
-  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+const $ = (s) => document.querySelector(s);
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// ============ Рендерер ============
+const stage = $('#stage');
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+} catch (e) {
+  stage.insertAdjacentHTML('beforeend', '<p class="err">Браузер не поддерживает WebGL, 3D-модель недоступна. Приложение ниже работает.</p>');
+}
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 400);
+let controls, labelRenderer;
+if (renderer) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setSize(width, height, false);
-  canvas.style.height = height + 'px';
-  var controls = new THREE.OrbitControls(camera, renderer.domElement);
-  var target = new THREE.Vector3(0.9, 0.3, 0);
-  controls.target.copy(target);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.localClippingEnabled = true;
+  stage.prepend(renderer.domElement);
+  labelRenderer = new CSS2DRenderer();
+  labelRenderer.domElement.className = 'labels';
+  stage.insertBefore(labelRenderer.domElement, renderer.domElement.nextSibling);
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+  controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
+  controls.minDistance = 2;
+  controls.maxDistance = 70;
+  controls.maxPolarAngle = Math.PI * 0.495;
+}
 
-  function fitDist(aspect) {
-    return Math.max(16, 11.2 / (aspect * Math.tan(THREE.MathUtils.degToRad(22.5))));
+scene.add(new THREE.HemisphereLight(0xf2f6ff, 0x404650, 0.7));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(14, 28, 16);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -16; sun.shadow.camera.right = 16; sun.shadow.camera.top = 22; sun.shadow.camera.bottom = -10;
+sun.shadow.camera.near = 5; sun.shadow.camera.far = 70;
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02;
+scene.add(sun);
+const rim = new THREE.DirectionalLight(0xcfe3ff, 0.8);
+rim.position.set(-12, 14, -18);
+scene.add(rim);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), new THREE.ShadowMaterial({ opacity: 0.22 }));
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+
+// ============ Слои ============
+const LAYERS = [
+  { id: 'shell', name: 'Корпус' },
+  { id: 'doors', name: 'Двери' },
+  { id: 'foam', name: 'Теплоизоляция (ППУ)' },
+  { id: 'liner', name: 'Камеры и полки' },
+  { id: 'food', name: 'Продукты' },
+  { id: 'cond', name: 'Конденсатор' },
+  { id: 'evap', name: 'Испарители' },
+  { id: 'pipes', name: 'Трубки, фильтр, капилляр' },
+  { id: 'compShell', name: 'Компрессор: корпус' },
+  { id: 'compMech', name: 'Компрессор: механизм' },
+  { id: 'electric', name: 'Электрика' },
+  { id: 'sensors', name: 'Датчики и кабели' },
+  { id: 'device', name: 'Прибор FridgeScope' },
+  { id: 'flow', name: 'Поток хладагента', noSlider: true },
+];
+const LY = {};
+LAYERS.forEach((l) => {
+  l.group = new THREE.Group(); l.group.name = l.id; scene.add(l.group);
+  l.groups = [l.group]; l.mats = []; l.labels = []; l.on = true; l.op = 1;
+  LY[l.id] = l;
+});
+
+function mat(layerId, p, type) {
+  const C = type === 'phys' ? THREE.MeshPhysicalMaterial : type === 'basic' ? THREE.MeshBasicMaterial : THREE.MeshStandardMaterial;
+  const m = new C(p);
+  m.userData.baseOp = p.opacity ?? 1;
+  m.userData.baseTransparent = !!p.transparent;
+  LY[layerId].mats.push(m);
+  return m;
+}
+function add(layerId, geo, m, x = 0, y = 0, z = 0, parent) {
+  const o = new THREE.Mesh(geo, m);
+  o.position.set(x, y, z);
+  o.castShadow = true; o.receiveShadow = true;
+  (parent || LY[layerId].group).add(o);
+  return o;
+}
+function box(layerId, m, x0, x1, y0, y1, z0, z1, parent) {
+  return add(layerId, new THREE.BoxGeometry(Math.abs(x1 - x0), Math.abs(y1 - y0), Math.abs(z1 - z0)), m, (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, parent);
+}
+
+// ============ Текстуры ============
+function canvasTex(w, h, draw, repeat) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  if (repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat[0], repeat[1]); }
+  t.userData.canvas = c;
+  return t;
+}
+const foamTex = canvasTex(256, 256, (g, w, h) => {
+  g.fillStyle = '#e6c25a'; g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 2600; i++) {
+    const r = Math.random() * 3 + 0.5;
+    g.fillStyle = Math.random() < 0.5 ? 'rgba(160,120,30,0.25)' : 'rgba(255,240,180,0.35)';
+    g.beginPath(); g.arc(Math.random() * w, Math.random() * h, r, 0, 7); g.fill();
   }
-  camera.position.set(0.9, 2.0, fitDist(width / height));
+}, [3, 3]);
+const grilleTex = canvasTex(256, 64, (g, w, h) => {
+  g.fillStyle = '#2b3036'; g.fillRect(0, 0, w, h);
+  g.fillStyle = '#121518';
+  for (let x = 8; x < w - 8; x += 12) g.fillRect(x, 14, 6, h - 28);
+});
+const lamTex = canvasTex(64, 256, (g, w, h) => {
+  for (let y = 0; y < h; y += 4) { g.fillStyle = y % 8 ? '#8a9198' : '#a9b0b6'; g.fillRect(0, y, w, 4); }
+}, [6, 1]);
+const stickerTex = canvasTex(512, 300, (g, w, h) => {
+  g.fillStyle = '#f1f1ec'; g.fillRect(0, 0, w, h);
+  g.fillStyle = '#1b3f8f'; g.fillRect(0, 0, w, 64);
+  g.fillStyle = '#fff'; g.font = 'bold 38px sans-serif'; g.fillText('ХОЛОДМАШ', 22, 46);
+  g.fillStyle = '#111'; g.font = 'bold 30px sans-serif'; g.fillText('Компрессор герметичный', 22, 112);
+  g.font = '28px monospace';
+  g.fillText('Хладагент: R600a', 22, 160); g.fillText('220–240 В ~ 50 Гц', 22, 200); g.fillText('LBP · 120 Вт · 0.9 А', 22, 240);
+  g.strokeStyle = '#111'; g.lineWidth = 4; g.strokeRect(4, 4, w - 8, h - 8);
+});
+const shelfTag = canvasTex(256, 64, (g, w, h) => { g.fillStyle = '#c7cdd2'; g.fillRect(0, 0, w, h); });
 
-  function onResize() {
-    var w = stage.clientWidth;
-    if (!w) return;
-    var h = Math.max(360, Math.min(720, Math.round(w * 0.52)));
-    renderer.setSize(w, h, false);
-    canvas.style.height = h + 'px';
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-    var off = camera.position.clone().sub(controls.target).normalize().multiplyScalar(fitDist(w / h));
+// ============ Материалы ============
+const M = {
+  shell: mat('shell', { color: 0xf2f4f5, roughness: 0.28, metalness: 0.05, clearcoat: 0.8, clearcoatRoughness: 0.12 }, 'phys'),
+  back: mat('shell', { color: 0xd4d9dd, roughness: 0.65, metalness: 0.1 }),
+  grille: mat('shell', { map: grilleTex, roughness: 0.7 }),
+  feet: mat('shell', { color: 0x2a2e33, roughness: 0.8 }),
+  stain: mat('shell', { color: 0x3a2a12, roughness: 0.4, transparent: true, opacity: 0.55 }),
+  door: mat('doors', { color: 0xf3f5f6, roughness: 0.26, metalness: 0.05, clearcoat: 0.9, clearcoatRoughness: 0.1 }, 'phys'),
+  doorIn: mat('doors', { color: 0xe9edf0, roughness: 0.55 }),
+  gasket: mat('doors', { color: 0x5d636a, roughness: 0.9 }),
+  handle: mat('doors', { color: 0xb9c0c6, roughness: 0.18, metalness: 1 }),
+  bin: mat('doors', { color: 0xdfeaf0, roughness: 0.15, transparent: true, opacity: 0.45 }),
+  foam: mat('foam', { color: 0xffffff, map: foamTex, roughness: 0.95 }),
+  liner: mat('liner', { color: 0xf3f6f8, roughness: 0.5, side: THREE.DoubleSide }),
+  glass: mat('liner', { color: 0xbfe1ea, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.28 }, 'phys'),
+  trim: mat('liner', { color: 0xc5ccd2, roughness: 0.2, metalness: 1 }),
+  drawer: mat('liner', { color: 0xd7e8ee, roughness: 0.1, transparent: true, opacity: 0.38 }, 'phys'),
+  wire: mat('liner', { color: 0xe9eef1, roughness: 0.35, metalness: 0.3 }),
+  condTube: mat('cond', { color: 0x24272b, roughness: 0.45, metalness: 0.6 }),
+  condWire: mat('cond', { color: 0x1d2024, roughness: 0.5, metalness: 0.6 }),
+  alu: mat('evap', { color: 0xc8cdd2, roughness: 0.32, metalness: 0.85 }),
+  aluTube: mat('evap', { color: 0xd6dade, roughness: 0.25, metalness: 0.9 }),
+  frost: mat('evap', { color: 0xf4fbff, roughness: 1, transparent: true, opacity: 0.88 }),
+  copper: mat('pipes', { color: 0xc27a4a, roughness: 0.28, metalness: 0.95 }),
+  copperDark: mat('pipes', { color: 0xa9643a, roughness: 0.35, metalness: 0.9 }),
+  pipeFrost: mat('pipes', { color: 0xf4fbff, roughness: 1, transparent: true, opacity: 0.9 }),
+  compShell: mat('compShell', { color: 0x1f2328, roughness: 0.36, metalness: 0.55, clearcoat: 0.55, clearcoatRoughness: 0.3, side: THREE.DoubleSide }, 'phys'),
+  compSticker: mat('compShell', { map: stickerTex, roughness: 0.6, side: THREE.DoubleSide }),
+  compBase: mat('compShell', { color: 0x3a3f45, roughness: 0.5, metalness: 0.7 }),
+  rubber: mat('compShell', { color: 0x141516, roughness: 0.95 }),
+  plastic: mat('compShell', { color: 0x16181b, roughness: 0.55 }),
+  brass: mat('compShell', { color: 0xc9a227, roughness: 0.3, metalness: 1 }),
+  stubCu: mat('compShell', { color: 0xc27a4a, roughness: 0.28, metalness: 0.95 }),
+  stator: mat('compMech', { map: lamTex, roughness: 0.4, metalness: 0.8 }),
+  winding: mat('compMech', { color: 0xc8682a, roughness: 0.3, metalness: 0.9 }),
+  rotor: mat('compMech', { color: 0x5b6168, roughness: 0.35, metalness: 0.9 }),
+  steel: mat('compMech', { color: 0xa8afb6, roughness: 0.25, metalness: 1 }),
+  cast: mat('compMech', { color: 0x6c7279, roughness: 0.6, metalness: 0.7 }),
+  oil: mat('compMech', { color: 0xc98a14, roughness: 0.1, transparent: true, opacity: 0.55 }),
+  marker: mat('compMech', { color: 0xffc400, roughness: 0.5 }),
+  cord: mat('electric', { color: 0x202225, roughness: 0.7 }),
+  wireBlue: mat('electric', { color: 0x3d6fd1, roughness: 0.6 }),
+  thermo: mat('electric', { color: 0xf5f7f8, roughness: 0.4 }),
+  knob: mat('electric', { color: 0x30353b, roughness: 0.5 }),
+  lamp: mat('electric', { color: 0xfff6dd, emissive: 0xffe9b0, emissiveIntensity: 0, roughness: 0.3, transparent: true, opacity: 0.85 }),
+  strip: mat('electric', { color: 0xf3f3f1, roughness: 0.5 }),
+  sock: mat('electric', { color: 0x3a3d41, roughness: 0.6 }),
+  probe: mat('sensors', { color: 0xc9d0d6, roughness: 0.25, metalness: 0.95 }),
+  ctBody: mat('sensors', { color: 0x262a2f, roughness: 0.6 }),
+  devBody: mat('device', { color: 0x2b3138, roughness: 0.42, metalness: 0.2, clearcoat: 0.4 }, 'phys'),
+  devTop: mat('device', { color: 0x1a1e23, roughness: 0.3 }),
+  devBtn: mat('device', { color: 0x4f5862, roughness: 0.5 }),
+  devPort: mat('device', { color: 0x9aa3ab, roughness: 0.3, metalness: 1 }),
+};
+
+// ============ Детали и подписи ============
+const PARTS = {};
+function part(key, ...objs) {
+  PARTS[key] = PARTS[key] || { objects: [] };
+  objs.forEach((o) => { o.traverse((m) => { m.userData.part = key; }); PARTS[key].objects.push(o); });
+}
+const LABELS = [];
+let showTags = true, showChips = true;
+function addLabel(kind, text, pos, partKey, layerId) {
+  const el = document.createElement(kind === 'fault' ? 'div' : 'button');
+  if (kind !== 'fault') el.type = 'button';
+  el.className = kind;
+  if (kind === 'chip') el.innerHTML = '<i></i><span></span>'; else el.textContent = text;
+  if (partKey) el.addEventListener('click', (e) => { e.stopPropagation(); selectPart(partKey); });
+  el.addEventListener('pointerdown', (e) => e.stopPropagation());
+  const o = new CSS2DObject(el);
+  o.position.copy(pos);
+  o.userData = { kind, layerVisible: true, forced: true };
+  scene.add(o);
+  if (layerId) LY[layerId].labels.push(o);
+  LABELS.push(o);
+  return o;
+}
+function refreshLabels() {
+  LABELS.forEach((o) => {
+    const k = o.userData.kind;
+    const pref = k === 'tag' ? showTags : k === 'chip' ? showChips : true;
+    o.visible = o.userData.layerVisible && o.userData.forced && pref;
+  });
+}
+
+// ============ Геометрия трубок ============
+function roundedPath(pts, r = 0.3) {
+  const path = new THREE.CurvePath();
+  let prev = pts[0].clone();
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1], p = pts[i], b = pts[i + 1];
+    const da = p.clone().sub(a), db = b.clone().sub(p);
+    const la = da.length(), lb = db.length();
+    const rr = Math.min(r, la / 2, lb / 2);
+    const p1 = p.clone().addScaledVector(da.normalize(), -rr);
+    const p2 = p.clone().addScaledVector(db.normalize(), rr);
+    if (prev.distanceTo(p1) > 1e-4) path.add(new THREE.LineCurve3(prev.clone(), p1.clone()));
+    if (rr > 1e-4) path.add(new THREE.QuadraticBezierCurve3(p1, p.clone(), p2));
+    prev = p2;
+  }
+  path.add(new THREE.LineCurve3(prev, pts[pts.length - 1].clone()));
+  return path;
+}
+function tube(layerId, curve, r, m, seg, radial = 10) {
+  const len = curve.getLength();
+  const geo = new THREE.TubeGeometry(curve, seg || Math.max(12, Math.ceil(len * 8)), r, radial, false);
+  return add(layerId, geo, m);
+}
+class Helix extends THREE.Curve {
+  constructor(c, r, turns, len, axis = 'y', a0 = 0) { super(); Object.assign(this, { c, r, turns, len, axis, a0 }); }
+  getPoint(t, target = new THREE.Vector3()) {
+    const a = this.a0 + t * this.turns * Math.PI * 2;
+    const u = Math.cos(a) * this.r, v = Math.sin(a) * this.r, w = t * this.len;
+    if (this.axis === 'y') return target.set(this.c.x + u, this.c.y + w, this.c.z + v);
+    return target.set(this.c.x + u, this.c.y + v, this.c.z + w);
+  }
+}
+
+// ============ Шкаф ============
+const X = 3, Z0 = -3.2, Z1 = 3.2, H = 18.45, YB = 0.3, NY = 3.9, NZ = -0.9;
+{
+  const shellParts = [];
+  for (const s of [-1, 1]) shellParts.push(box('shell', M.shell, s * X - s * 0.06, s * X, YB, H, Z0, Z1));
+  const top = add('shell', new RoundedBoxGeometry(2 * X, 0.12, Z1 - Z0, 3, 0.05), M.shell, 0, H - 0.04, 0);
+  shellParts.push(top);
+  shellParts.push(box('shell', M.back, -X + 0.06, X - 0.06, NY, H - 0.1, Z0, Z0 + 0.04));
+  shellParts.push(box('shell', M.back, -X + 0.06, X - 0.06, NY - 0.04, NY, Z0, NZ));
+  shellParts.push(box('shell', M.back, -X + 0.06, X - 0.06, YB, NY, NZ - 0.04, NZ));
+  shellParts.push(box('shell', M.back, -X + 0.06, X - 0.06, YB, YB + 0.04, NZ, Z1));
+  const gr = box('shell', M.grille, -X + 0.06, X - 0.06, YB + 0.05, 0.92, Z1 - 0.06, Z1 - 0.01);
+  shellParts.push(gr);
+  // передняя рамка проёмов
+  shellParts.push(box('shell', M.shell, -X, -2.5, 0.92, H - 0.06, Z1 - 0.04, Z1));
+  shellParts.push(box('shell', M.shell, 2.5, X, 0.92, H - 0.06, Z1 - 0.04, Z1));
+  shellParts.push(box('shell', M.shell, -2.5, 2.5, 17.9, H - 0.06, Z1 - 0.04, Z1));
+  shellParts.push(box('shell', M.shell, -2.5, 2.5, 12.3, 13.3, Z1 - 0.04, Z1));
+  shellParts.push(box('shell', M.shell, -2.5, 2.5, 0.92, 4.3, Z1 - 0.04, Z1));
+  for (const [x, z] of [[-2.6, -2.8], [2.6, -2.8], [-2.6, 2.8], [2.6, 2.8]]) {
+    shellParts.push(add('shell', new THREE.CylinderGeometry(0.2, 0.24, YB, 20), M.feet, x, YB / 2, z));
+  }
+  part('shell', ...shellParts);
+}
+// Теплоизоляция
+{
+  const f = [];
+  const fb = (...a) => f.push(box('foam', M.foam, ...a));
+  for (const s of [-1, 1]) {
+    fb(s * 2.5, s * 2.94, 0.96, H - 0.08, NZ, Z1 - 0.05);
+    fb(s * 2.5, s * 2.94, NY + 0.02, H - 0.08, Z0 + 0.05, NZ);
+  }
+  fb(-2.5, 2.5, 17.92, H - 0.1, Z0 + 0.05, Z1 - 0.05);
+  fb(-2.5, 2.5, NY + 0.02, 17.92, Z0 + 0.05, -2.72);
+  fb(-2.5, 2.5, 12.32, 13.28, -2.72, Z1 - 0.05);
+  fb(-2.5, 2.5, 0.96, 4.28, NZ + 0.02, Z1 - 0.05);
+  fb(-2.5, 2.5, NY + 0.02, 4.28, -2.72, NZ);
+  part('foam', ...f);
+}
+// Камеры
+function openBox(layerId, m, x0, x1, y0, y1, z0, z1, t = 0.03, parent, top = true) {
+  const o = [];
+  o.push(box(layerId, m, x0, x1, y0, y1, z0 - t / 2, z0 + t / 2, parent));
+  o.push(box(layerId, m, x0 - t / 2, x0 + t / 2, y0, y1, z0, z1, parent));
+  o.push(box(layerId, m, x1 - t / 2, x1 + t / 2, y0, y1, z0, z1, parent));
+  o.push(box(layerId, m, x0, x1, y0 - t / 2, y0 + t / 2, z0, z1, parent));
+  if (top) o.push(box(layerId, m, x0, x1, y1 - t / 2, y1 + t / 2, z0, z1, parent));
+  return o;
+}
+{
+  const lin = [];
+  lin.push(...openBox('liner', M.liner, -2.5, 2.5, 13.3, 17.9, -2.7, Z1 - 0.03));
+  lin.push(...openBox('liner', M.liner, -2.5, 2.5, 4.3, 12.3, -2.7, Z1 - 0.03));
+  for (const y of [6.7, 8.6]) {
+    lin.push(box('liner', M.glass, -2.46, 2.46, y - 0.03, y + 0.03, -2.4, 2.5));
+    lin.push(box('liner', M.trim, -2.46, 2.46, y - 0.05, y + 0.05, 2.45, 2.56));
+  }
+  // полка над испарителем — короче
+  lin.push(box('liner', M.glass, -2.46, 2.46, 9.32, 9.38, -2.0, 2.5));
+  lin.push(box('liner', M.trim, -2.46, 2.46, 9.3, 9.4, 2.45, 2.56));
+  // ящики для овощей
+  for (const [x0, x1] of [[-2.42, -0.06], [0.06, 2.42]]) {
+    lin.push(...openBox('liner', M.drawer, x0, x1, 4.36, 6.4, -2.3, 2.85, 0.04, null, false));
+    lin.push(box('liner', M.trim, x0 + 0.5, x1 - 0.5, 6.05, 6.2, 2.86, 2.92));
+  }
+  // проволочная полка морозилки
+  for (let i = 0; i < 18; i++) {
+    const x = -2.3 + i * (4.6 / 17);
+    const r = add('liner', new THREE.CylinderGeometry(0.022, 0.022, 5.0, 6), M.wire, x, 15.55, 0.1);
+    r.rotation.x = Math.PI / 2; lin.push(r);
+  }
+  for (const z of [-2.4, 2.6]) {
+    const r = add('liner', new THREE.CylinderGeometry(0.03, 0.03, 4.7, 6), M.wire, 0, 15.55, z);
+    r.rotation.z = Math.PI / 2; lin.push(r);
+  }
+  part('liner', ...lin);
+}
+// Двери
+const doors = [];
+function makeDoor(y0, y1, kind) {
+  const pivot = new THREE.Group();
+  pivot.position.set(X, 0, Z1);
+  LY.doors.group.add(pivot);
+  const h = y1 - y0, ym = (y0 + y1) / 2;
+  const objs = [];
+  objs.push(add('doors', new RoundedBoxGeometry(2 * X - 0.04, h, 0.55, 4, 0.07), M.door, -X, ym, 0.3, pivot));
+  objs.push(add('doors', new THREE.BoxGeometry(2 * X - 0.8, h - 0.7, 0.06), M.doorIn, -X, ym, 0.0, pivot));
+  const gw = 0.14, gx0 = -2 * X + 0.12, gx1 = -0.12;
+  objs.push(box('doors', M.gasket, gx0, gx1, y1 - 0.12 - gw, y1 - 0.12, -0.06, 0.03, pivot));
+  objs.push(box('doors', M.gasket, gx0, gx1, y0 + 0.12, y0 + 0.12 + gw, -0.06, 0.03, pivot));
+  objs.push(box('doors', M.gasket, gx0, gx0 + gw, y0 + 0.12, y1 - 0.12, -0.06, 0.03, pivot));
+  objs.push(box('doors', M.gasket, gx1 - gw, gx1, y0 + 0.12, y1 - 0.12, -0.06, 0.03, pivot));
+  // ручка
+  const hl = kind === 'freezer' ? 2.2 : 3.2;
+  const hy = kind === 'freezer' ? y0 + 0.4 + hl / 2 : y1 - 0.4 - hl / 2;
+  objs.push(add('doors', new THREE.CylinderGeometry(0.075, 0.075, hl, 20), M.handle, -2 * X + 0.4, hy, 0.85, pivot));
+  for (const dy of [-hl / 2 + 0.15, hl / 2 - 0.15]) {
+    const p = add('doors', new THREE.CylinderGeometry(0.05, 0.05, 0.3, 12), M.handle, -2 * X + 0.4, hy + dy, 0.68, pivot);
+    p.rotation.x = Math.PI / 2; objs.push(p);
+  }
+  // полки на двери
+  const bins = kind === 'freezer' ? [y0 + 1.0, y0 + 3.0] : [y0 + 1.6, y0 + 5.2, y0 + 8.6];
+  bins.forEach((by) => objs.push(...openBox('doors', M.bin, -2 * X + 0.55, -0.55, by, by + 0.55, -0.62, -0.05, 0.03, pivot, false)));
+  const d = { pivot, kind, y0, y1, bins, objs };
+  doors.push(d);
+  part('door', ...objs);
+  return d;
+}
+const doorFreezer = makeDoor(12.95, H - 0.05, 'freezer');
+const doorFridge = makeDoor(0.95, 12.85, 'fridge');
+// дисплей на двери
+const doorDisp = canvasTex(256, 128, () => {});
+{
+  const p = add('doors', new THREE.PlaneGeometry(1.2, 0.6), new THREE.MeshBasicMaterial({ map: doorDisp, toneMapped: false }), -X + 1.6, 11.5, 0.58, doorFridge.pivot);
+  LY.doors.mats.push(p.material); p.material.userData.baseOp = 1; p.castShadow = false;
+  const bezel = add('doors', new RoundedBoxGeometry(1.36, 0.76, 0.04, 2, 0.015), M.knob, -X + 1.6, 11.5, 0.56, doorFridge.pivot);
+  part('door', p, bezel);
+}
+function drawDoorDisp(tf, tc) {
+  const c = doorDisp.userData.canvas, g = c.getContext('2d');
+  g.fillStyle = '#071015'; g.fillRect(0, 0, 256, 128);
+  g.fillStyle = '#7fd6ff'; g.font = 'bold 46px monospace'; g.textAlign = 'center';
+  g.fillText((tf >= 0 ? '+' : '−') + Math.abs(tf).toFixed(0) + '°', 70, 76);
+  g.fillText((tc >= 0 ? '+' : '−') + Math.abs(tc).toFixed(0) + '°', 186, 76);
+  g.font = '18px sans-serif'; g.fillStyle = '#6a8a99';
+  g.fillText('ХК', 70, 108); g.fillText('МК', 186, 108);
+  doorDisp.needsUpdate = true;
+}
+
+// Продукты
+{
+  const fm = (c, r = 0.5, extra = {}) => mat('food', { color: c, roughness: r, ...extra });
+  const food = [];
+  const milk = fm(0xf6f5ef), blue = fm(0x2f6fd0), jar = fm(0xd8e4d0, 0.1, { transparent: true, opacity: 0.6 });
+  const red = fm(0xc0392b, 0.45), green = fm(0x7cae3e, 0.45), lid = fm(0xd23b2e, 0.4), box1 = fm(0x2e9e8f, 0.5), pack = fm(0xe9edf2, 0.6), pack2 = fm(0x3a7bd5, 0.5);
+  const bottle = fm(0x2f7d4a, 0.08, { transparent: true, opacity: 0.75 }), bottle2 = fm(0xf2efe6, 0.3);
+  food.push(add('food', new THREE.BoxGeometry(0.62, 1.15, 0.62), milk, -1.7, 6.73 + 0.58, 0.2));
+  food.push(add('food', new THREE.BoxGeometry(0.64, 0.25, 0.64), blue, -1.7, 6.73 + 0.85, 0.2));
+  for (const [x, z] of [[0.1, -0.6], [0.9, -0.2]]) {
+    food.push(add('food', new THREE.CylinderGeometry(0.34, 0.34, 0.62, 24), jar, x, 6.73 + 0.31, z));
+    food.push(add('food', new THREE.CylinderGeometry(0.35, 0.35, 0.1, 24), lid, x, 6.73 + 0.66, z));
+  }
+  food.push(add('food', new RoundedBoxGeometry(1.6, 0.5, 1.1, 2, 0.08), box1, 0.6, 8.63 + 0.25, 0.3));
+  food.push(add('food', new RoundedBoxGeometry(1.2, 0.4, 0.9, 2, 0.06), pack, -1.3, 8.63 + 0.2, -0.6));
+  [[-1.8, 0.8, red], [-1.1, 1.4, green], [-1.4, 0.0, red], [1.2, 0.8, green], [1.7, 1.6, red]].forEach(([x, z, m]) => {
+    food.push(add('food', new THREE.SphereGeometry(0.3, 20, 14), m, x, 4.72, z));
+  });
+  food.push(add('food', new RoundedBoxGeometry(2.0, 0.5, 1.6, 2, 0.12), pack2, -0.9, 15.6 + 0.3, 0.6));
+  food.push(add('food', new RoundedBoxGeometry(1.4, 0.7, 1.4, 2, 0.15), pack, 1.1, 13.32 + 0.37, 0.8));
+  food.push(add('food', new RoundedBoxGeometry(1.6, 0.25, 0.8, 2, 0.05), pack, -1.2, 13.32 + 0.14, 1.4));
+  // бутылки в двери
+  const dg = new THREE.Group(); doorFridge.pivot.add(dg); LY.food.groups.push(dg);
+  [[-4.6, bottle], [-3.9, bottle2], [-1.3, bottle]].forEach(([x, m]) => {
+    food.push(add('food', new THREE.CylinderGeometry(0.24, 0.24, 1.0, 20), m, x, doorFridge.y0 + 1.6 + 0.52, -0.33, dg));
+    food.push(add('food', new THREE.CylinderGeometry(0.08, 0.2, 0.35, 16), m, x, doorFridge.y0 + 1.6 + 1.2, -0.33, dg));
+  });
+  part('food', ...food);
+}
+
+// ============ Компрессор ============
+const CX = 0.6, CY = 0.62, CZ = -2.05, SX = 1.12;
+const comp = new THREE.Group(); comp.position.set(CX, CY, CZ); LY.compShell.group.add(comp);
+const clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -CZ);
+{
+  const prof = [[0.001, 0], [0.42, 0.02], [0.66, 0.1], [0.76, 0.3], [0.785, 0.6], [0.79, 0.86], [0.81, 0.88], [0.81, 0.93], [0.79, 0.95], [0.785, 1.25], [0.75, 1.48], [0.62, 1.66], [0.4, 1.76], [0.001, 1.79]]
+    .map(([r, y]) => new THREE.Vector2(r, y));
+  const shell = add('compShell', new THREE.LatheGeometry(prof, 72), M.compShell, 0, 0, 0, comp);
+  shell.scale.x = SX;
+  const seam = add('compShell', new THREE.TorusGeometry(0.815, 0.022, 8, 72), M.compShell, 0, 0.905, 0, comp);
+  seam.rotation.x = Math.PI / 2; seam.scale.x = SX;
+  const st = add('compShell', new THREE.CylinderGeometry(0.792, 0.792, 0.42, 24, 1, true, Math.PI - 0.42, 0.84), M.compSticker, 0, 0.48, 0, comp);
+  st.scale.x = SX;
+  // основание и опоры
+  const base = [];
+  base.push(add('compShell', new THREE.BoxGeometry(2.5, 0.06, 1.7), M.compBase, CX, 0.42, CZ));
+  for (const z of [-0.6, 0.6]) base.push(add('compShell', new THREE.BoxGeometry(5.6, 0.1, 0.25), M.compBase, 0, 0.35, CZ + z));
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const gx = CX + sx * 1.0, gz = CZ + sz * 0.62;
+    base.push(add('compShell', new THREE.CylinderGeometry(0.14, 0.16, 0.18, 18), M.rubber, gx, 0.54, gz));
+    base.push(add('compShell', new THREE.CylinderGeometry(0.07, 0.07, 0.1, 6), M.compBase, gx, 0.67, gz));
+    const tab = add('compShell', new THREE.BoxGeometry(0.62, 0.05, 0.2), M.compBase, CX + sx * 0.72, 0.64, CZ + sz * 0.45);
+    tab.rotation.y = -sx * sz * 0.55; base.push(tab);
+  }
+  // пусковое реле
+  const relay = [];
+  relay.push(add('compShell', new RoundedBoxGeometry(0.36, 0.62, 0.72, 3, 0.05), M.plastic, CX + 0.98, CY + 0.72, CZ));
+  relay.push(add('compShell', new THREE.BoxGeometry(0.04, 0.08, 0.76), M.compBase, CX + 1.17, CY + 0.72, CZ));
+  relay.push(add('compShell', new THREE.CylinderGeometry(0.12, 0.12, 0.08, 20), M.plastic, CX + 1.18, CY + 0.45, CZ - 0.2));
+  relay.at(-1).rotation.z = Math.PI / 2;
+  part('comp', shell, seam, st, ...base);
+  part('relay', ...relay);
+}
+const shellZ = (dx, yWorld) => {
+  const r = 0.785;
+  return CZ - Math.sqrt(Math.max(0.01, r * r - (dx / SX) * (dx / SX))) + 0.03;
+};
+const STUB_Y = CY + 1.08;
+const stubS = V(CX - 0.4, STUB_Y, shellZ(-0.4)), stubD = V(CX + 0.4, STUB_Y, shellZ(0.4)), stubP = V(CX, STUB_Y, shellZ(0));
+// сервисный вентиль
+{
+  const pr = tube('compShell', roundedPath([stubP, V(CX, STUB_Y, -3.12)]), 0.045, M.stubCu, 8);
+  const hex = add('compShell', new THREE.CylinderGeometry(0.085, 0.085, 0.12, 6), M.brass, CX, STUB_Y, -3.18); hex.rotation.x = Math.PI / 2;
+  const nut = add('compShell', new THREE.CylinderGeometry(0.07, 0.07, 0.1, 6), M.brass, CX, STUB_Y, -3.29); nut.rotation.x = Math.PI / 2;
+  part('valve', pr, hex, nut);
+}
+// механизм
+const mech = new THREE.Group(); mech.position.copy(comp.position); LY.compMech.group.add(mech);
+const rotor = new THREE.Group(); mech.add(rotor);
+let piston, rod;
+{
+  const mo = [];
+  const oil = add('compMech', new THREE.CylinderGeometry(0.68, 0.6, 0.14, 48), M.oil, 0, 0.1, 0, mech); oil.scale.x = SX * 0.96; mo.push(oil);
+  for (const [x, z] of [[-0.42, -0.32], [0.42, -0.32], [-0.42, 0.32], [0.42, 0.32]]) {
+    mo.push(tube('compMech', new Helix(V(x, 0.08, z), 0.07, 5, 0.3, 'y'), 0.014, M.steel, 80, 6));
+    mech.add(mo.at(-1));
+  }
+  mo.push(add('compMech', new THREE.BoxGeometry(1.1, 0.06, 0.9), M.cast, 0, 0.42, 0, mech));
+  mo.push(add('compMech', new THREE.CylinderGeometry(0.53, 0.53, 0.4, 48, 1, true), M.stator, 0, 0.7, 0, mech));
+  mo.at(-1).material.side = THREE.DoubleSide;
+  for (const y of [0.47, 0.93]) {
+    const w = add('compMech', new THREE.TorusGeometry(0.41, 0.085, 14, 48), M.winding, 0, y, 0, mech); w.rotation.x = Math.PI / 2; mo.push(w);
+  }
+  const rc = add('compMech', new THREE.CylinderGeometry(0.29, 0.29, 0.4, 32), M.rotor, 0, 0.7, 0, rotor);
+  const mk = add('compMech', new THREE.BoxGeometry(0.52, 0.02, 0.06), M.marker, 0, 0.915, 0, rotor);
+  const shaft = add('compMech', new THREE.CylinderGeometry(0.06, 0.06, 0.78, 16), M.steel, 0, 1.0, 0, rotor);
+  const ecc = add('compMech', new THREE.CylinderGeometry(0.15, 0.15, 0.06, 24), M.steel, 0.05, 1.36, 0, rotor);
+  const pin = add('compMech', new THREE.CylinderGeometry(0.045, 0.045, 0.12, 12), M.steel, 0.12, 1.42, 0, rotor);
+  mo.push(rc, mk, shaft, ecc, pin);
+  mo.push(add('compMech', new THREE.BoxGeometry(0.8, 0.22, 0.62), M.cast, -0.05, 1.12, 0, mech));
+  const bore = add('compMech', new THREE.CylinderGeometry(0.15, 0.15, 0.42, 24, 1, true), M.cast, 0.46, 1.42, 0, mech); bore.rotation.z = Math.PI / 2; bore.material = M.cast; mo.push(bore);
+  const head = add('compMech', new THREE.BoxGeometry(0.1, 0.34, 0.34), M.cast, 0.71, 1.42, 0, mech); mo.push(head);
+  piston = add('compMech', new THREE.CylinderGeometry(0.12, 0.12, 0.16, 24), M.steel, 0.4, 1.42, 0, mech); piston.rotation.z = Math.PI / 2; mo.push(piston);
+  rod = add('compMech', new THREE.BoxGeometry(1, 0.05, 0.05), M.steel, 0.25, 1.42, 0, mech); mo.push(rod);
+  for (const z of [-0.32, 0.32]) mo.push(add('compMech', new THREE.CylinderGeometry(0.12, 0.12, 0.26, 20), M.cast, -0.38, 1.32, z, mech));
+  part('mech', ...mo);
+}
+
+// ============ Контур хладагента ============
+const SECTIONS = [];
+const heatMats = {};
+function section(key, layerId, curve, r, matReal, opts = {}) {
+  const sec = { key, layerId, curve, r, len: curve.getLength(), ...opts };
+  if (!opts.noMesh) {
+    sec.seg = Math.max(12, Math.ceil(sec.len * (opts.spu || 8)));
+    sec.radial = opts.radial || 10;
+    const geo = new THREE.TubeGeometry(curve, sec.seg, r, sec.radial, false);
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(geo.attributes.position.count * 3), 3));
+    heatMats[layerId] = heatMats[layerId] || mat(layerId, { vertexColors: true, roughness: 0.45, metalness: 0.1 });
+    sec.mesh = add(layerId, geo, matReal);
+    sec.matReal = matReal;
+    sec.geo = geo;
+  }
+  SECTIONS.push(sec);
+  return sec;
+}
+// нагнетание
+const secDis = section('discharge', 'pipes', roundedPath([stubD, V(CX + 0.4, STUB_Y, -3.05), V(2.75, STUB_Y, -3.05), V(2.75, STUB_Y, -3.75), V(2.75, 16.6, -3.75)], 0.25), 0.045, M.copper);
+// конденсатор
+const condPts = [V(2.75, 16.6, -3.75)];
+{
+  const rows = 23;
+  for (let k = 0; k < rows; k++) {
+    const y = 16.6 - 0.55 * k, xe = k % 2 === 0 ? -2.45 : 2.45;
+    condPts.push(V(xe, y, -3.75));
+    if (k < rows - 1) condPts.push(V(xe, y - 0.55, -3.75));
+  }
+}
+const secCond = section('cond', 'cond', roundedPath(condPts, 0.27), 0.045, M.condTube, { spu: 6 });
+const secToD = section('toDrier', 'pipes', roundedPath([condPts.at(-1), V(-2.75, 4.5, -3.75), V(-2.75, 3.87, -3.75)], 0.15), 0.045, M.copper);
+const secDrier = section('drier', 'pipes', new THREE.LineCurve3(V(-2.75, 3.87, -3.75), V(-2.75, 2.63, -3.75)), 0.13, null, { noMesh: true });
+// капилляр с витками и теплообменником
+const capPts = [V(-2.75, 2.63, -3.75), V(-2.75, 2.3, -3.8)];
+{
+  const hx = new Helix(V(-2.15, 2.3, -3.82), 0.28, 3, 0.15, 'z', Math.PI);
+  for (let i = 0; i <= 72; i++) capPts.push(hx.getPoint(i / 72));
+  capPts.push(V(-2.43, 2.9, -3.5), V(1.7, 2.9, -3.47), V(1.7, 13.9, -3.47), V(1.7, 13.9, -2.9), V(1.9, 13.9, -2.62));
+}
+const secCap = section('cap', 'pipes', roundedPath(capPts, 0.12), 0.022, M.copperDark, { radial: 8 });
+// испаритель морозилки
+const fePts = [V(1.9, 13.9, -2.6)];
+for (let k = 0; k < 8; k++) {
+  const y = 13.9 + 0.5 * k, xe = k % 2 === 0 ? -1.9 : 1.9;
+  fePts.push(V(xe, y, -2.6));
+  if (k < 7) fePts.push(V(xe, y + 0.5, -2.6));
+}
+const secFE = section('fevap', 'evap', roundedPath(fePts, 0.24), 0.05, M.aluTube, { spu: 6 });
+const secConn = section('conn', 'pipes', roundedPath([fePts.at(-1), V(2.25, 17.4, -2.6), V(2.25, 17.4, -2.95), V(2.25, 11.6, -2.95), V(2.25, 11.6, -2.6), V(1.6, 11.6, -2.6)], 0.15), 0.045, M.copper);
+const rePts = [V(1.6, 11.6, -2.6)];
+for (let k = 0; k < 4; k++) {
+  const y = 11.6 - 0.7 * k, xe = k % 2 === 0 ? -1.6 : 1.6;
+  rePts.push(V(xe, y, -2.6));
+  if (k < 3) rePts.push(V(xe, y - 0.7, -2.6));
+}
+const secRE = section('revap', 'evap', roundedPath(rePts, 0.3), 0.05, M.aluTube, { spu: 6 });
+const secSuc = section('suction', 'pipes', roundedPath([V(1.6, 9.5, -2.6), V(1.6, 9.5, -3.45), V(1.6, 2.55, -3.45), V(CX - 0.4, 2.55, -3.45), V(CX - 0.4, STUB_Y, -3.45), V(CX - 0.4, STUB_Y, -3.05), stubS], 0.25), 0.055, M.copper);
+const secComp = section('comp', 'compMech', new THREE.CatmullRomCurve3([stubS, V(CX - 0.2, CY + 0.5, CZ), V(CX + 0.3, CY + 1.4, CZ), stubD]), 0.03, null, { noMesh: true });
+let totalLen = 0;
+SECTIONS.forEach((s) => { s.s0 = totalLen; totalLen += s.len; s.s1 = totalLen; });
+const evapS0 = secFE.s0, evapLen = secFE.len + secConn.len + secRE.len;
+part('discharge', secDis.mesh);
+part('cond', secCond.mesh);
+part('drier', secToD.mesh);
+part('cap', secCap.mesh);
+part('fevap', secFE.mesh);
+part('conn', secConn.mesh);
+part('revap', secRE.mesh);
+part('suction', secSuc.mesh);
+
+// конденсатор: проволока и кронштейны
+{
+  const n = 36, wireLen = 12.7;
+  const im = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.018, 0.018, wireLen, 6), M.condWire, n * 2);
+  const d = new THREE.Object3D(); let i = 0;
+  for (const dz of [-0.075, 0.075]) for (let k = 0; k < n; k++) {
+    d.position.set(-2.45 + (4.9 * k) / (n - 1), 4.2 + wireLen / 2, -3.75 + dz); d.updateMatrix(); im.setMatrixAt(i++, d.matrix);
+  }
+  im.castShadow = true; LY.cond.group.add(im);
+  const br = [];
+  for (const x of [-2.62, 2.62]) br.push(box('cond', M.condWire, x - 0.04, x + 0.04, 4.15, 16.95, -3.82, -3.68));
+  for (const y of [5.0, 16.2]) for (const x of [-2.62, 2.62]) br.push(box('cond', M.condWire, x - 0.05, x + 0.05, y - 0.06, y + 0.06, -3.68, -3.2));
+  part('cond', im, ...br);
+}
+// фильтр-осушитель
+const drierProf = [[0.025, -0.64], [0.03, -0.52], [0.13, -0.4], [0.13, 0.4], [0.05, 0.52], [0.045, 0.64]].map(([r, y]) => new THREE.Vector2(r, y));
+const drierMesh = add('pipes', new THREE.LatheGeometry(drierProf, 32), M.copper, -2.75, 3.25, -3.75);
+const drierHeatMat = mat('pipes', { color: 0xffffff, roughness: 0.45 });
+const drierFrost = add('pipes', new THREE.CylinderGeometry(0.16, 0.16, 0.9, 24), M.pipeFrost, -2.75, 3.2, -3.75);
+part('drier', drierMesh, drierFrost);
+// испарители: пластины
+{
+  const fp = add('evap', new THREE.BoxGeometry(4.5, 4.0, 0.04), M.alu, 0, 15.65, -2.66);
+  const rp = add('evap', new THREE.BoxGeometry(3.9, 2.7, 0.04), M.alu, 0, 10.55, -2.66);
+  part('fevap', fp); part('revap', rp);
+}
+const feFrostGeo = new THREE.BoxGeometry(4.6, 4.1, 0.16); feFrostGeo.translate(0, 2.05, 0);
+const feFrost = add('evap', feFrostGeo, M.frost, 0, 13.6, -2.6);
+const reFrostGeo = new THREE.BoxGeometry(4.0, 2.8, 0.16); reFrostGeo.translate(0, -1.4, 0);
+const reFrost = add('evap', reFrostGeo, M.frost, 0, 11.95, -2.6);
+part('fevap', feFrost); part('revap', reFrost);
+// иней на трубках
+function frostSleeve(sec, r, m) {
+  const g = new THREE.TubeGeometry(sec.curve, sec.seg, r, 8, false);
+  const o = add(sec.layerId, g, m);
+  o.castShadow = false;
+  o.userData.idxPerSeg = 8 * 6;
+  part(sec.key, o);
+  return o;
+}
+const sleeveFE = frostSleeve(secFE, 0.085, M.frost);
+const sleeveConn = frostSleeve(secConn, 0.075, M.pipeFrost);
+const sleeveRE = frostSleeve(secRE, 0.085, M.frost);
+const sleeveSuc = frostSleeve(secSuc, 0.1, M.pipeFrost);
+const sleeveCap = frostSleeve(secCap, 0.06, M.pipeFrost);
+function setSleeve(o, sec, frac) {
+  const segs = Math.floor(sec.seg * clamp(frac, 0, 1));
+  o.geometry.setDrawRange(0, segs * o.userData.idxPerSeg);
+  o.visible = segs > 0;
+}
+
+// ============ Электрика ============
+let cordCurve;
+{
+  const el = [];
+  cordCurve = new THREE.CatmullRomCurve3([V(CX + 1.17, CY + 0.6, CZ + 0.15), V(2.0, 0.7, -2.0), V(2.1, 0.08, -2.9), V(1.0, 0.07, -4.3), V(-1.8, 0.07, -4.9), V(-3.2, 0.12, -5.1)], false, 'centripetal');
+  el.push(tube('electric', cordCurve, 0.035, M.cord, 120, 8));
+  el.push(add('electric', new RoundedBoxGeometry(0.42, 0.26, 0.55, 2, 0.06), M.cord, -3.4, 0.14, -5.1));
+  el.push(add('electric', new RoundedBoxGeometry(1.9, 0.28, 0.55, 2, 0.08), M.strip, -4.3, 0.14, -5.1));
+  for (const x of [-4.95, -4.3, -3.65]) {
+    const s = add('electric', new THREE.CylinderGeometry(0.17, 0.17, 0.02, 20), M.sock, x, 0.29, -5.1); el.push(s);
+  }
+  part('cord', ...el);
+  const th = [];
+  th.push(add('electric', new RoundedBoxGeometry(1.4, 0.42, 1.0, 3, 0.08), M.thermo, -1.3, 12.05, 1.6));
+  const knob = add('electric', new THREE.CylinderGeometry(0.2, 0.2, 0.12, 24), M.knob, -1.3, 12.05, 2.15); knob.rotation.x = Math.PI / 2; th.push(knob);
+  th.push(add('electric', new THREE.BoxGeometry(0.04, 0.24, 0.02), M.thermo, -1.3, 12.1, 2.22));
+  const lampM = add('electric', new THREE.BoxGeometry(0.8, 0.12, 0.6), M.lamp, -1.3, 11.8, 1.65); th.push(lampM);
+  th.push(tube('electric', roundedPath([V(-1.3, 12.0, 1.1), V(-1.3, 12.0, -2.35), V(-1.3, 11.3, -2.58), V(-1.3, 10.6, -2.58)], 0.2), 0.018, M.probe.clone(), 60, 6));
+  LY.electric.mats.push(th.at(-1).material); th.at(-1).material.userData.baseOp = 1;
+  th.push(tube('electric', roundedPath([V(-1.3, 12.2, 1.2), V(-1.3, 12.7, 0.8), V(-1.3, 12.7, -2.95), V(-2.2, 12.7, -2.95), V(-2.2, 4.1, -2.95), V(-2.2, 4.1, -1.3), V(-1.0, 3.0, -1.3), V(CX + 0.98, CY + 1.05, CZ + 0.1)], 0.3), 0.02, M.wireBlue, 160, 6));
+  part('thermo', ...th);
+}
+const fridgeLight = new THREE.PointLight(0xfff1d6, 0, 14, 1.2);
+fridgeLight.position.set(-1.3, 11.4, 1.6);
+scene.add(fridgeLight);
+
+// ============ Прибор ============
+const dev = new THREE.Group(); dev.position.set(5.2, 0, -1.4); dev.rotation.y = -0.5; LY.device.group.add(dev);
+const oledTex = canvasTex(512, 256, () => {});
+{
+  const o = [];
+  o.push(add('device', new RoundedBoxGeometry(1.9, 0.62, 1.3, 4, 0.12), M.devBody, 0, 0.31, 0, dev));
+  o.push(add('device', new RoundedBoxGeometry(1.5, 0.04, 0.9, 2, 0.02), M.devTop, 0.0, 0.625, 0, dev));
+  const scr = add('device', new THREE.PlaneGeometry(1.15, 0.58), new THREE.MeshBasicMaterial({ map: oledTex, toneMapped: false }), -0.08, 0.648, -0.05, dev);
+  scr.rotation.x = -Math.PI / 2; scr.castShadow = false; LY.device.mats.push(scr.material); scr.material.userData.baseOp = 1; o.push(scr);
+  for (const z of [-0.25, 0, 0.25]) {
+    const b = add('device', new THREE.CylinderGeometry(0.06, 0.06, 0.05, 16), M.devBtn, 0.62, 0.66, z, dev); o.push(b);
+  }
+  const ant = add('device', new THREE.CylinderGeometry(0.045, 0.06, 1.0, 12), M.devTop, 0.75, 1.0, 0.5, dev); ant.rotation.z = -0.15; o.push(ant);
+  part('device', ...o);
+}
+const devLed = add('device', new THREE.SphereGeometry(0.045, 12, 8), new THREE.MeshBasicMaterial({ color: 0x3ccb8b, toneMapped: false }), 0.62, 0.66, 0.42, dev);
+LY.device.mats.push(devLed.material); devLed.material.userData.baseOp = 1;
+part('device', devLed);
+const devPorts = [];
+dev.updateMatrixWorld(true);
+for (let i = 0; i < 9; i++) {
+  const lp = V(-0.96, 0.32, -0.48 + i * 0.12);
+  const pm = add('device', new THREE.CylinderGeometry(0.035, 0.035, 0.06, 10), M.devPort, lp.x, lp.y, lp.z, dev); pm.rotation.z = Math.PI / 2;
+  part('device', pm);
+  devPorts.push(dev.localToWorld(lp.clone().add(V(-0.03, 0, 0))));
+}
+
+// ============ Датчики ============
+const SENS = [
+  { id: 't1', ch: 't1', name: 'T1', sec: secSuc, f: 0.93, title: 'T1 — всасывание у компрессора' },
+  { id: 't2', ch: 't2', name: 'T2', sec: secDis, f: 0.1, title: 'T2 — нагнетание' },
+  { id: 't3', ch: 't3', name: 'T3', sec: secToD, f: 0.45, title: 'T3 — перед фильтром' },
+  { id: 't4', ch: 'dtd', name: 'T4', sec: secCap, f: 0.012, title: 'T4 — после фильтра' },
+  { id: 't5', ch: 't5', name: 'T5', sec: secFE, f: 0.012, title: 'T5 — вход испарителя', inside: true },
+  { id: 't6', ch: 't6', name: 'T6', sec: secSuc, f: 0.2, title: 'T6 — выход испарителя' },
+  { id: 'tc', ch: 'tc', name: 'Tкам', pos: V(-1.2, 14.9, 0.6), title: 'Tкам — воздух в морозилке', inside: true },
+  { id: 'i', ch: 'i', name: 'I', title: 'I — токовые клещи' },
+  { id: 'p', ch: 'p', name: 'P', title: 'P — датчик давления' },
+];
+const ledMats = {};
+const cables = [];
+SENS.forEach((s, idx) => {
+  const objs = [];
+  const led = mat('sensors', { color: 0x3ccb8b, emissive: 0x3ccb8b, emissiveIntensity: 1.6 });
+  ledMats[s.id] = led;
+  let anchor, cableStart, normalOut;
+  if (s.sec) {
+    const p = s.sec.curve.getPointAt(s.f), t = s.sec.curve.getTangentAt(s.f).normalize();
+    const g = new THREE.Group(); g.position.copy(p); g.quaternion.setFromUnitVectors(V(0, 1, 0), t); LY.sensors.group.add(g);
+    const rr = s.sec.r;
+    objs.push(add('sensors', new RoundedBoxGeometry(0.2, 0.28, 0.2, 2, 0.03), M.probe, rr + 0.08, 0, 0, g));
+    const strap = add('sensors', new THREE.TorusGeometry(rr + 0.02, 0.018, 6, 20), M.ctBody, 0, 0.09, 0, g); strap.rotation.x = Math.PI / 2; objs.push(strap);
+    const strap2 = strap.clone(); strap2.position.y = -0.09; g.add(strap2); objs.push(strap2);
+    objs.push(add('sensors', new THREE.SphereGeometry(0.04, 10, 8), led, rr + 0.19, 0.06, 0, g));
+    g.updateMatrixWorld(true);
+    anchor = g.localToWorld(V(rr + 0.3, 0.15, 0));
+    cableStart = g.localToWorld(V(rr + 0.18, -0.12, 0));
+    s.pos = p.clone();
+    objs.push(g);
+  } else if (s.id === 'tc') {
+    const p = s.pos;
+    objs.push(add('sensors', new THREE.CylinderGeometry(0.06, 0.06, 0.6, 14), M.probe, p.x, p.y, p.z));
+    objs.push(add('sensors', new THREE.SphereGeometry(0.045, 10, 8), led, p.x, p.y + 0.34, p.z));
+    anchor = p.clone().add(V(0.3, 0.3, 0));
+    cableStart = p.clone().add(V(0, 0.3, 0));
+  } else if (s.id === 'i') {
+    const f = 0.3, p = cordCurve.getPointAt(f), t = cordCurve.getTangentAt(f).normalize();
+    const g = new THREE.Group(); g.position.copy(p); g.quaternion.setFromUnitVectors(V(0, 0, 1), t); LY.sensors.group.add(g);
+    objs.push(add('sensors', new THREE.TorusGeometry(0.16, 0.07, 10, 28), M.ctBody, 0, 0, 0, g));
+    objs.push(add('sensors', new RoundedBoxGeometry(0.42, 0.22, 0.2, 2, 0.04), M.ctBody, 0, 0.26, 0, g));
+    objs.push(add('sensors', new THREE.SphereGeometry(0.04, 10, 8), led, 0.12, 0.38, 0, g));
+    g.updateMatrixWorld(true);
+    anchor = g.localToWorld(V(0, 0.6, 0)); cableStart = g.localToWorld(V(-0.2, 0.26, 0));
+    s.pos = p.clone(); objs.push(g);
+  } else if (s.id === 'p') {
+    const hoseC = roundedPath([V(CX, STUB_Y, -3.33), V(CX, STUB_Y, -3.6), V(CX, STUB_Y - 0.4, -3.85)], 0.15);
+    objs.push(tube('sensors', hoseC, 0.04, M.ctBody, 30, 8));
+    objs.push(add('sensors', new THREE.CylinderGeometry(0.09, 0.09, 0.12, 6), M.brass.clone(), CX, STUB_Y, -3.36));
+    objs.at(-1).rotation.x = Math.PI / 2; LY.sensors.mats.push(objs.at(-1).material); objs.at(-1).material.userData.baseOp = 1;
+    objs.push(add('sensors', new THREE.CylinderGeometry(0.11, 0.11, 0.5, 20), M.probe, CX, STUB_Y - 0.72, -3.85));
+    objs.push(add('sensors', new THREE.CylinderGeometry(0.12, 0.12, 0.1, 6), M.probe, CX, STUB_Y - 0.44, -3.85));
+    objs.push(add('sensors', new THREE.SphereGeometry(0.04, 10, 8), led, CX + 0.12, STUB_Y - 0.6, -3.85));
+    s.pos = V(CX, STUB_Y - 0.6, -3.85);
+    anchor = V(CX - 0.4, STUB_Y - 0.2, -4.0);
+    cableStart = V(CX, STUB_Y - 0.98, -3.85);
+  }
+  // кабель до прибора
+  const port = devPorts[idx];
+  let pts;
+  if (s.inside) {
+    const y = cableStart.y;
+    pts = [cableStart, V(cableStart.x * 0.5 + 1.2, y - 0.2, 1.8), V(2.5, y - 0.3, 3.0), V(3.08, y - 0.4, 3.28), V(3.12, 0.1, 3.3), V(4.0, 0.06, 1.0), port];
+  } else {
+    const back = V(cableStart.x, cableStart.y, Math.min(cableStart.z - 0.3, -4.0));
+    const fy = 0.06;
+    pts = [cableStart, back, V(back.x, Math.max(fy + 0.3, back.y * 0.4), -4.1 - idx * 0.04), V(back.x * 0.6 + 1.6, fy, -4.2 - idx * 0.04), V(3.6, fy, -3.6 + idx * 0.05), V(port.x - 0.4, fy, port.z), port];
+  }
+  const cc = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+  const cm = add('sensors', new THREE.TubeGeometry(cc, Math.ceil(cc.getLength() * 6), 0.018, 6, false), M.ctBody);
+  objs.push(cm);
+  const pulses = [];
+  for (let k = 0; k < 2; k++) {
+    const pm = mat('sensors', { color: 0x7fe3ff, emissive: 0x7fe3ff, emissiveIntensity: 2.5 });
+    const pu = add('sensors', new THREE.SphereGeometry(0.045, 8, 6), pm); pu.castShadow = false; pu.userData.noShadow = true;
+    pulses.push({ m: pu, t: (k / 2 + idx * 0.11) % 1 });
+  }
+  cables.push({ curve: cc, pulses });
+  s.chip = addLabel('chip', '', anchor, 's_' + s.id, 'sensors');
+  part('s_' + s.id, ...objs);
+});
+
+// ============ Подписи деталей ============
+const TAGS = [
+  ['Компрессор', V(CX - 0.9, CY + 2.0, CZ - 0.4), 'comp', 'compShell'],
+  ['Пусковое реле', V(CX + 1.7, CY + 0.9, CZ + 0.4), 'relay', 'compShell'],
+  ['Сервисный вентиль', V(CX - 0.6, STUB_Y + 0.55, -3.4), 'valve', 'compShell'],
+  ['Механизм компрессора', V(CX + 0.2, CY + 0.2, CZ + 0.9), 'mech', 'compMech'],
+  ['Конденсатор', V(0, 17.25, -3.9), 'cond', 'cond'],
+  ['Фильтр-осушитель', V(-3.35, 3.4, -3.85), 'drier', 'pipes'],
+  ['Капилляр', V(-1.7, 1.75, -3.9), 'cap', 'pipes'],
+  ['Нагнетательная линия', V(2.8, 9.0, -3.85), 'discharge', 'pipes'],
+  ['Всасывающая линия', V(1.2, 6.2, -3.6), 'suction', 'pipes'],
+  ['Испаритель морозилки', V(0, 17.65, -2.3), 'fevap', 'evap'],
+  ['Испаритель холодильной камеры', V(0, 12.0, -2.3), 'revap', 'evap'],
+  ['Терморегулятор и лампа', V(-1.3, 11.55, 2.2), 'thermo', 'electric'],
+  ['Сетевой шнур', V(-2.6, 0.5, -5.0), 'cord', 'electric'],
+  ['Теплоизоляция', V(-2.75, 16.0, 1.5), 'foam', 'foam'],
+  ['Прибор FridgeScope', V(5.0, 1.55, -1.5), 'device', 'device'],
+];
+TAGS.forEach(([t, p, k, l]) => addLabel('tag', t, p, k, l));
+const mechTag = LABELS.find((o) => o.element.textContent === 'Механизм компрессора');
+
+// Метки неисправностей
+const faultFX = new THREE.Group(); scene.add(faultFX);
+const clogRingMat = new THREE.MeshBasicMaterial({ color: 0xff3b2f, transparent: true, opacity: 0.85, toneMapped: false });
+const clogRing = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.04, 10, 28), clogRingMat);
+faultFX.add(clogRing);
+const clogTag = addLabel('fault', '⚠ Засор', V(0, 0, 0));
+const leakTag = addLabel('fault', '⚠ Утечка: пайка на выходе испарителя', V(0, 0, 0));
+const leakPos = secSuc.curve.getPointAt(0.065);
+const stain = add('shell', new THREE.CircleGeometry(0.42, 32), M.stain, leakPos.x, leakPos.y - 0.25, Z0 - 0.002);
+stain.rotation.y = Math.PI; stain.castShadow = false;
+const puffMat = new THREE.MeshBasicMaterial({ color: 0xdff4ff, transparent: true, opacity: 0.6, depthWrite: false });
+const puffs = [];
+for (let i = 0; i < 26; i++) {
+  const p = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), puffMat.clone());
+  faultFX.add(p); puffs.push({ m: p, life: -Math.random() * 1.4, v: V(0, 0, 0) });
+}
+
+// ============ Частицы хладагента ============
+const NP = 340;
+const pGeo = new THREE.SphereGeometry(0.055, 8, 6);
+const pMat = new THREE.MeshBasicMaterial({ toneMapped: false });
+LY.flow.mats.push(pMat); pMat.userData.baseOp = 1;
+const parts3 = new THREE.InstancedMesh(pGeo, pMat, NP);
+parts3.frustumCulled = false;
+LY.flow.group.add(parts3);
+const PS = [];
+const tmpC = new THREE.Color();
+for (let i = 0; i < NP; i++) { PS.push({ s: (totalLen * i) / NP, i }); parts3.setColorAt(i, tmpC.set(0xffffff)); }
+const dummy = new THREE.Object3D();
+const COL = { hot: new THREE.Color(0xff4a2a), liq: new THREE.Color(0xffa73a), mix: new THREE.Color(0x8fd8ff), vap: new THREE.Color(0x2f7fe0) };
+
+function secAt(s) {
+  for (const sec of SECTIONS) if (s < sec.s1) return sec;
+  return SECTIONS[SECTIONS.length - 1];
+}
+
+// ============ Сценарии и симуляция ============
+const SCEN = {
+  normal: { name: 'Норма', sub: 'исправный контур', v: { t1: 22, t2: 68, t3: 33, t4: 32.6, t5: -27, t6: -21, tc: -18, tf: 4, i: 0.78, w: 88, p: 0.56 }, fr: 0.92, flow: 1, clog: null, leak: false, sucFrost: 0, drierFrost: 0 },
+  leak: { name: 'Утечка фреона', sub: 'недозаправка', v: { t1: 26, t2: 62, t3: 29, t4: 28.6, t5: -37, t6: 3, tc: -9, tf: 9, i: 0.58, w: 62, p: 0.32 }, fr: 0.3, flow: 0.5, clog: null, leak: true, sucFrost: 0, drierFrost: 0 },
+  cap: { name: 'Засор капилляра', sub: 'вакуум на всасывании', v: { t1: 25, t2: 84, t3: 27, t4: 26.6, t5: -6, t6: 8, tc: 2, tf: 12, i: 0.52, w: 55, p: 0.12 }, fr: 0.06, flow: 0.12, clog: 'cap', leak: false, sucFrost: 0, drierFrost: 0 },
+  drier: { name: 'Засор фильтра', sub: 'перепад на осушителе', v: { t1: 25, t2: 80, t3: 35, t4: 14, t5: -10, t6: 6, tc: 0, tf: 11, i: 0.54, w: 57, p: 0.15 }, fr: 0.09, flow: 0.15, clog: 'drier', leak: false, sucFrost: 0, drierFrost: 1 },
+  over: { name: 'Перезаправка', sub: 'избыток хладагента', v: { t1: 3, t2: 58, t3: 38, t4: 37.5, t5: -21, t6: -19, tc: -15, tf: 3, i: 0.95, w: 108, p: 0.82 }, fr: 1, flow: 1.15, clog: null, leak: false, sucFrost: 0.45, drierFrost: 0 },
+};
+const OFF = { t1: 22, t2: 36, t3: 26, t4: 26, t5: -12, t6: -12, i: 0, w: 0, p: 1.6 };
+let scenKey = 'normal';
+let running = true;
+const cur = { ...SCEN.normal.v, fr: 0.92, flow: 1, sucFrost: 0, drierFrost: 0 };
+const meas = {};
+const RANGES = { t1: [12, 32], t2: [50, 82], t3: [25, 42], t4: [24, 42], dtd: [-0.5, 2.5], t5: [-32, -22], t6: [-26, -12], tc: [-22, -15], i: [0.65, 0.9], w: [70, 100], p: [0.45, 0.72], sh: [3, 10] };
+const TSAT = [[0.1, -57], [0.17, -50], [0.29, -40], [0.46, -30], [0.72, -20], [1.01, -11.7], [1.47, -1], [2.1, 10], [2.95, 21]];
+function tsat(p) {
+  if (p <= TSAT[0][0]) return TSAT[0][1];
+  for (let i = 1; i < TSAT.length; i++) if (p <= TSAT[i][0]) {
+    const [p0, t0] = TSAT[i - 1], [p1, t1] = TSAT[i];
+    return lerp(t0, t1, (p - p0) / (p1 - p0));
+  }
+  return TSAT.at(-1)[1];
+}
+function status(k, v) {
+  if (!running && ['t1', 't2', 't3', 't4', 'dtd', 't5', 't6', 'i', 'w', 'p', 'sh'].includes(k)) return 9;
+  const r = RANGES[k]; if (!r) return 0;
+  if (v >= r[0] && v <= r[1]) return 0;
+  const d = Math.max(r[0] - v, v - r[1]) / (r[1] - r[0]);
+  return d < 0.35 ? 1 : 2;
+}
+const fmtT = (v) => (v < 0 ? '−' : v > 0 ? '+' : '') + Math.abs(v).toFixed(1);
+const fmt = (v, d = 2) => (v < 0 ? '−' : '') + Math.abs(v).toFixed(d);
+
+function diagnose(m) {
+  const why = [], todo = [];
+  if (m.i < 0.1) return { level: 1, pill: 'Пауза', title: 'Компрессор остановлен', why: ['Ток 0 А: терморегулятор разомкнут или нет питания', `Давление выравнивается: ${fmt(m.p)} бар`], todo: ['Включите компрессор кнопкой «Компрессор работает» над моделью', 'Если не запускается — проверить пусковое реле, обмотки и терморегулятор'] };
+  if (m.p < 0.22) {
+    if (m.dtd > 4) return { level: 2, pill: 'Засор', title: 'Засор фильтра-осушителя', why: [`Перепад на фильтре ${fmt(m.dtd, 1)} °C (норма до 2.5)`, `Вакуум на всасывании: ${fmt(m.p)} бар`, 'Фильтр холодный на выходе, может покрываться инеем', `Испаритель не работает: вход ${fmtT(m.t5)} °C`], todo: ['Заменить фильтр-осушитель', 'Проверить причину: влага или грязь в контуре', 'Вакуумировать не меньше 30 минут, заправить по массе с шильдика'] };
+    return { level: 2, pill: 'Засор', title: 'Засор капилляра', why: [`Давление всасывания ${fmt(m.p)} бар — почти вакуум (норма 0.45–0.72)`, `Перепад на фильтре всего ${fmt(m.dtd, 1)} °C — фильтр проходим`, `Испаритель тёплый: вход ${fmtT(m.t5)} °C, камера ${fmtT(m.tc)} °C`, `Ток снижен до ${fmt(m.i)} А`], todo: ['Отрезать капилляр у фильтра: если давление пошло, засор в капилляре', 'Прочистить капилляр (гидропресс, азот) или заменить', 'Заменить фильтр-осушитель, вакуумировать, заправить по массе'] };
+  }
+  if (m.p < 0.45 && m.sh > 15) return { level: 2, pill: 'Утечка', title: 'Недостаток хладагента — утечка', why: [`Перегрев ${fmt(m.sh, 0)} K (норма 3–10 K)`, `Давление ${fmt(m.p)} бар, кипение при ${fmtT(m.tsat)} °C`, `Иней только в начале испарителя, выход ${fmtT(m.t6)} °C`, `Ток ${fmt(m.i)} А ниже нормы`], todo: ['Опрессовать азотом 10 бар и записать падение за 30 минут (вкладка «Опрессовка азотом»)', 'Искать место: масляные пятна на пайках, мыльный раствор, электронный течеискатель', 'После ремонта — вакуумирование и заправка по массе'] };
+  if (m.p > 0.75 && m.t1 < 10) return { level: 2, pill: 'Перезаправка', title: 'Избыток хладагента', why: [`Перегрев ${fmt(m.sh, 0)} K — жидкость доходит до компрессора`, `Всасывающая трубка холодная: ${fmtT(m.t1)} °C, обмерзает`, `Давление ${fmt(m.p)} бар выше нормы, ток ${fmt(m.i)} А`], todo: ['Откачать хладагент и заправить по массе с шильдика', 'Проверить компрессор на стук (гидроудар)'] };
+  const bad = [];
+  [['p', 'Давление'], ['sh', 'Перегрев'], ['t2', 'Нагнетание'], ['i', 'Ток'], ['t5', 'Вход испарителя'], ['tc', 'Камера']].forEach(([k, n]) => { if (status(k, m[k]) === 2) bad.push(n); });
+  if (bad.length) return { level: 1, pill: 'Внимание', title: 'Параметры выходят из нормы', why: [`Вне нормы: ${bad.join(', ')}`, 'Картина неоднозначная — подождите, пока режим установится'], todo: ['Дать поработать 10–15 минут после включения', 'Сравнить с соседними точками на графиках'] };
+  return { level: 0, pill: 'Норма', title: 'Контур исправен', why: [`Давление ${fmt(m.p)} бар, кипение при ${fmtT(m.tsat)} °C`, `Перегрев ${fmt(m.sh, 0)} K в норме`, `Ток ${fmt(m.i)} А, мощность ${m.w.toFixed(0)} Вт`, `Камера ${fmtT(m.tc)} °C`], todo: ['Неисправностей не найдено', 'Для поиска микроутечек — опрессовка азотом'] };
+}
+
+// ============ UI: сценарии, слои ============
+const scenBox = $('#scen');
+Object.entries(SCEN).forEach(([k, s]) => {
+  const b = document.createElement('button'); b.type = 'button'; b.dataset.k = k;
+  b.innerHTML = `${s.name}<small>${s.sub}</small>`;
+  b.setAttribute('aria-pressed', k === scenKey ? 'true' : 'false');
+  b.addEventListener('click', () => setScenario(k));
+  scenBox.appendChild(b);
+});
+function setScenario(k) {
+  scenKey = k;
+  scenBox.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.k === k ? 'true' : 'false'));
+  ptReset();
+}
+
+const layersBox = $('#layers');
+function applyLayer(l) {
+  const vis = l.on && l.op > 0.01;
+  l.groups.forEach((g) => { g.visible = vis; });
+  l.mats.forEach((m) => {
+    const tr = m.userData.baseTransparent || l.op < 0.995;
+    if (m.transparent !== tr) { m.transparent = tr; m.needsUpdate = true; }
+    m.opacity = m.userData.baseOp * l.op;
+    m.depthWrite = !tr;
+  });
+  const cast = l.op > 0.6;
+  l.groups.forEach((g) => g.traverse((o) => { if (o.isMesh && !o.userData.noShadow && !(o.material && o.material.userData && o.material.userData.baseTransparent)) o.castShadow = cast; }));
+  l.labels.forEach((o) => { o.userData.layerVisible = vis && l.op > 0.12; });
+  refreshLabels();
+  if (l.ui) { l.ui.cb.checked = l.on; if (l.ui.range) { l.ui.range.value = Math.round(l.op * 100); l.ui.out.textContent = Math.round(l.op * 100) + '%'; } }
+}
+LAYERS.forEach((l) => {
+  const row = document.createElement('div'); row.className = 'lrow';
+  const id = 'ly_' + l.id;
+  row.innerHTML = `<label><input type="checkbox" id="${id}" checked><span>${l.name}</span></label>` +
+    (l.noSlider ? '<span></span><span></span>' : `<input type="range" id="${id}_r" min="0" max="100" value="100" aria-label="Прозрачность: ${l.name}"><output for="${id}_r">100%</output>`);
+  layersBox.appendChild(row);
+  const cb = row.querySelector('input[type=checkbox]');
+  const range = row.querySelector('input[type=range]');
+  const out = row.querySelector('output');
+  l.ui = { cb, range, out };
+  cb.addEventListener('change', () => { l.on = cb.checked; if (l.on && l.op < 0.05) l.op = 1; applyLayer(l); });
+  if (range) range.addEventListener('input', () => { l.op = range.value / 100; l.on = l.op > 0.01; applyLayer(l); });
+});
+const PRESETS = {
+  real: { shell: 1, doors: 1, foam: 1, liner: 1, food: 1, cond: 1, evap: 1, pipes: 1, compShell: 1, compMech: 1, electric: 1, sensors: 1, device: 1, flow: 1 },
+  xray: { shell: 0.14, doors: 0.18, foam: 0.08, liner: 0.3, food: 0, cond: 1, evap: 1, pipes: 1, compShell: 0.3, compMech: 1, electric: 1, sensors: 1, device: 1, flow: 1 },
+  circuit: { shell: 0, doors: 0, foam: 0, liner: 0, food: 0, cond: 1, evap: 1, pipes: 1, compShell: 0.22, compMech: 1, electric: 0, sensors: 1, device: 1, flow: 1 },
+};
+function applyPreset(name) {
+  const p = PRESETS[name];
+  LAYERS.forEach((l) => { const v = p[l.id]; l.on = v > 0; l.op = v > 0 ? v : 1; applyLayer(l); });
+  document.querySelectorAll('#presets button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.preset === name ? 'true' : 'false'));
+}
+document.querySelectorAll('#presets button').forEach((b) => b.addEventListener('click', () => applyPreset(b.dataset.preset)));
+
+let cutaway = false;
+$('#cCut').addEventListener('change', (e) => {
+  cutaway = e.target.checked;
+  [M.compShell, M.compSticker].forEach((m) => { m.clippingPlanes = cutaway ? [clipPlane] : null; m.clipShadows = true; m.needsUpdate = true; });
+});
+$('#cTags').addEventListener('change', (e) => { showTags = e.target.checked; refreshLabels(); });
+$('#cChips').addEventListener('change', (e) => { showChips = e.target.checked; refreshLabels(); });
+
+// ============ Камера ============
+const VIEWS = {
+  overview: { p: V(-17, 14, 21), t: V(0.5, 8.6, 0) },
+  front: { p: V(0, 10, 27), t: V(0, 9.2, 0) },
+  back: { p: V(-8, 11, -22), t: V(0, 8.8, -3) },
+  comp: { p: V(4.6, 2.3, -7.4), t: V(CX, 1.3, -2.4) },
+  freezer: { p: V(2.6, 15.8, 11.5), t: V(0, 15.4, -0.5) },
+  device: { p: V(9.8, 3.4, 3.4), t: V(4.8, 0.6, -1.2) },
+};
+let fly = null;
+function flyTo(p, t, dur = 1.0) {
+  if (!controls) return;
+  fly = { p0: camera.position.clone(), t0: controls.target.clone(), p1: p.clone(), t1: t.clone(), k: 0, dur: reduceMotion ? 0.01 : dur };
+}
+document.querySelectorAll('#views button').forEach((b) => b.addEventListener('click', () => {
+  const v = VIEWS[b.dataset.view]; stopAuto();
+  if (b.dataset.view === 'freezer' && doorTarget < 0.5) setDoors(true);
+  if (b.dataset.view === 'comp' && LY.shell.op > 0.5) { /* ниша видна сзади */ }
+  flyTo(v.p, v.t);
+}));
+
+let autoRotate = !reduceMotion;
+function stopAuto() { autoRotate = false; $('#tRotate').setAttribute('aria-pressed', 'false'); }
+$('#tRotate').setAttribute('aria-pressed', autoRotate ? 'true' : 'false');
+$('#tRotate').addEventListener('click', () => { autoRotate = !autoRotate; $('#tRotate').setAttribute('aria-pressed', autoRotate ? 'true' : 'false'); });
+
+let doorOpen = 0.62, doorTarget = 0.62;
+function setDoors(open) {
+  doorTarget = open ? 0.62 : 0;
+  $('#tDoors').setAttribute('aria-pressed', open ? 'true' : 'false');
+  $('#tDoors').textContent = open ? 'Двери открыты' : 'Двери закрыты';
+}
+$('#tDoors').addEventListener('click', () => setDoors(doorTarget < 0.3));
+$('#tRun').addEventListener('click', () => {
+  running = !running;
+  $('#tRun').setAttribute('aria-pressed', running ? 'true' : 'false');
+  $('#tRun').textContent = running ? 'Компрессор работает' : 'Компрессор выключен';
+});
+let heatMode = false;
+$('#tHeat').addEventListener('click', () => {
+  heatMode = !heatMode;
+  $('#tHeat').setAttribute('aria-pressed', heatMode ? 'true' : 'false');
+  $('#heatLegend').hidden = !heatMode;
+  SECTIONS.forEach((s) => { if (s.mesh) s.mesh.material = heatMode ? heatMats[s.layerId] : s.matReal; });
+  drierMesh.material = heatMode ? drierHeatMat : M.copper;
+  if (heatMode) updateHeat();
+});
+
+// ============ Описания деталей ============
+const INFO = {
+  shell: { k: 'Корпус', t: 'Стальной корпус', d: 'Окрашенная сталь снаружи, задняя стенка и ниша компрессора внизу сзади.', c: ['Вмятины на задней стенке рядом с трубками', 'Ржавчина у ниши компрессора — признак конденсата'] },
+  door: { k: 'Двери', t: 'Двери и уплотнитель', d: 'Магнитный уплотнитель держит холод. Если он пропускает, компрессор работает без остановки.', c: ['Лист бумаги, зажатый дверью, не должен выдёргиваться легко', 'Иней у края двери — подсос тёплого воздуха'] },
+  foam: { k: 'Теплоизоляция', t: 'Пенополиуретан (ППУ)', d: 'Заливается между корпусом и камерами. Внутри проходят соединительные трубки и провода — их утечку видно только по данным.', c: ['Конденсат или иней снаружи корпуса — пустота в пене', 'Утечка в трубке внутри пены требует вывода контура наружу'] },
+  liner: { k: 'Камеры', t: 'Морозильная и холодильная камеры', d: 'Пластиковые камеры с полками и ящиками. Морозилка сверху, холодильная камера снизу.', c: ['Слой льда на стенке холодильной камеры: «плачущий» испаритель работает', 'Лёд только в одном углу — недостаток хладагента'] },
+  food: { k: 'Продукты', t: 'Загрузка камер', d: 'Тёплые продукты на время повышают нагрузку — прибор это учитывает по температуре камеры.', c: ['Перед диагностикой дать камерам выйти на режим'] },
+  comp: { k: 'Компрессор', t: 'Герметичный поршневой компрессор', d: 'Сжимает пары хладагента и гонит их в конденсатор. Корпус сварной, внутри мотор и поршневая группа на пружинах. Три патрубка: всасывание, нагнетание и технологический (сервисный).', c: ['Ток и мощность (клещи I) — сравнить с шильдиком', 'Температура нагнетания T2: выше +90 °C — перегрев', 'Стук при пуске — гидроудар или износ'] },
+  mech: { k: 'Компрессор внутри', t: 'Мотор и поршневая группа', d: 'Статор с медными обмотками, ротор на коленчатом валу, шатун и поршень в цилиндре. Внизу масло. Вся сборка подвешена на четырёх пружинах.', c: ['Высокое давление всасывания при нормальной заправке — износ клапанов', 'Сопротивление обмоток: пусковая и рабочая'] },
+  relay: { k: 'Электрика', t: 'Пусковое реле и защита', d: 'Позисторное реле подключает пусковую обмотку на первые секунды, тепловая защита отключает мотор при перегреве.', c: ['Щелчки без запуска — реле или заклинивание', 'Ток пуска по клещам: 3–5 А на 1–2 секунды'] },
+  valve: { k: 'Сервис', t: 'Сервисный вентиль (Шрёдер)', d: 'Впаивается в технологический патрубок при ремонте. Сюда подключается датчик давления прибора и манометрический коллектор.', c: ['Проверить ниппель на утечку мыльным раствором', 'После ремонта закрыть колпачком'] },
+  cond: { k: 'Контур', t: 'Конденсатор (проволочно-трубный)', d: 'Горячий газ из компрессора остывает и превращается в жидкость. Верх горячий, низ тёплый. В режиме «Термокарта» это видно цветом.', c: ['Пыль на конденсаторе — высокое давление нагнетания и ток', 'Равномерно холодный конденсатор при работающем компрессоре — засор или нет хладагента'] },
+  drier: { k: 'Контур', t: 'Фильтр-осушитель', d: 'Цеолит внутри поглощает влагу, сетка задерживает грязь. Датчики T3 и T4 стоят до и после него.', c: ['Перепад T3 − T4 больше 4 °C — засор фильтра', 'Иней на выходе фильтра — тот же признак', 'Меняется при каждом вскрытии контура'] },
+  cap: { k: 'Контур', t: 'Капиллярная трубка', d: 'Тонкая трубка (0.6–0.8 мм) дросселирует жидкость. Большая её часть припаяна к всасывающей линии — это теплообменник.', c: ['Вакуум на всасывании и тёплый испаритель — засор капилляра', 'Ледяная пробка при влаге: работает, потом перестаёт'] },
+  discharge: { k: 'Контур', t: 'Нагнетательная линия', d: 'Горячий газ от компрессора к конденсатору. Здесь стоит датчик T2.', c: ['T2 выше +90 °C — перегрев компрессора'] },
+  suction: { k: 'Контур', t: 'Всасывающая линия', d: 'Пары хладагента возвращаются из испарителя в компрессор. На выходе из камеры — частое место утечки на пайке.', c: ['Холодная и в инее у компрессора — перезаправка', 'Масляное пятно на пайке — утечка'] },
+  fevap: { k: 'Контур', t: 'Испаритель морозильной камеры', d: 'Алюминиевая панель с каналами. Хладагент кипит при −25…−30 °C и забирает тепло из камеры. Иней показывает, докуда доходит жидкость.', c: ['Иней только в начале — недостаток хладагента', 'Нет инея совсем — засор или компрессор не качает'] },
+  revap: { k: 'Контур', t: 'Испаритель холодильной камеры', d: 'Вторая ступень испарителя на задней стенке. Обмерзает при работе и оттаивает в паузах.', c: ['Алюминий корродирует — частое место микроутечек', 'Ремонт: эпоксидный клей или вывод испарителя наружу'] },
+  conn: { k: 'Контур', t: 'Соединительная трубка в пене', d: 'Соединяет испаритель морозилки с испарителем холодильной камеры. Проходит в теплоизоляции, поэтому без данных её утечку не найти.', c: ['Если опрессовка показывает утечку, а снаружи сухо — подозревать трубки в пене'] },
+  thermo: { k: 'Электрика', t: 'Терморегулятор', d: 'Сильфон с капиллярной трубкой, прижатой к испарителю, размыкает цепь компрессора по температуре.', c: ['Компрессор не выключается при нормальных данных — терморегулятор', 'Компрессор не включается, ток 0 — терморегулятор или реле'] },
+  cord: { k: 'Электрика', t: 'Сетевой шнур', d: 'На нём стоят токовые клещи прибора: провод разрезать не нужно.', c: ['Клещи надевать на один провод, не на весь шнур'] },
+  device: { k: 'Прибор', t: 'Прибор FridgeScope', d: 'ESP32 собирает 9 каналов 5 раз в секунду, показывает главное на экране и отдаёт данные в приложение по Wi-Fi. Пишет журнал на карту памяти.', c: ['Перед замером дать холодильнику поработать 15 минут', 'Записанную сессию можно сравнить с прошлым визитом'] },
+};
+SENS.forEach((s) => {
+  const r = RANGES[s.ch];
+  INFO['s_' + s.id] = { k: 'Датчик', t: s.title, d: s.id === 'i' ? 'Разъёмный трансформатор тока на одном проводе шнура. Показывает ток и мощность без разрыва цепи.' : s.id === 'p' ? 'Датчик давления 0–30 бар с выходом 0.5–4.5 В, подключается к сервисному вентилю через быстросъём.' : 'Цифровой датчик DS18B20 в алюминиевом зажиме с хомутом и термопастой.', c: [r ? `Норма: ${r[0]}…${r[1]}` : 'Без нормы', 'Цвет индикатора на датчике совпадает с цветом карточки в приложении'] };
+});
+
+let selected = null, selHelper = null;
+function selectPart(key) {
+  if (selHelper) { scene.remove(selHelper); selHelper = null; }
+  selected = key;
+  const info = $('#info');
+  if (!key || !INFO[key]) { info.hidden = true; return; }
+  const d = INFO[key];
+  $('#infoKind').textContent = d.k; $('#infoTitle').textContent = d.t; $('#infoText').textContent = d.d;
+  $('#infoChecks').innerHTML = d.c.map((x) => `<li>${x}</li>`).join('');
+  info.hidden = false;
+  const b = partBox(key);
+  if (b) { selHelper = new THREE.Box3Helper(b, 0x18c6dc); scene.add(selHelper); }
+}
+function partBox(key) {
+  const p = PARTS[key]; if (!p) return null;
+  const b = new THREE.Box3();
+  p.objects.forEach((o) => { o.updateWorldMatrix(true, true); b.expandByObject(o); });
+  return b.isEmpty() ? null : b;
+}
+$('#infoClose').addEventListener('click', () => selectPart(null));
+$('#infoFly').addEventListener('click', () => {
+  const b = partBox(selected); if (!b) return; stopAuto();
+  const c = b.getCenter(new THREE.Vector3()), size = b.getSize(new THREE.Vector3()).length();
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  flyTo(c.clone().addScaledVector(dir, Math.max(3, size * 1.6)), c);
+});
+const PART_LAYER = { shell: 'shell', door: 'doors', foam: 'foam', liner: 'liner', food: 'food', comp: 'compShell', mech: 'compMech', relay: 'compShell', valve: 'compShell', cond: 'cond', drier: 'pipes', cap: 'pipes', discharge: 'pipes', suction: 'pipes', fevap: 'evap', revap: 'evap', conn: 'pipes', thermo: 'electric', cord: 'electric', device: 'device' };
+$('#infoSolo').addEventListener('click', () => {
+  const lid = PART_LAYER[selected] || (selected && selected.startsWith('s_') ? 'sensors' : null);
+  LAYERS.forEach((l) => {
+    if (l.id === lid || l.id === 'flow') { l.on = true; l.op = 1; }
+    else if (['cond', 'evap', 'pipes', 'compMech'].includes(l.id)) { l.on = true; l.op = 0.25; }
+    else if (l.id === 'compShell' && lid === 'compMech') { l.on = true; l.op = 0.15; }
+    else { l.on = false; }
+    applyLayer(l);
+  });
+  document.querySelectorAll('#presets button').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+  $('#infoFly').click();
+});
+
+// выбор кликом
+const ray = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+let downXY = null;
+function shownChain(o) { while (o) { if (!o.visible) return false; o = o.parent; } return true; }
+function layerOf(o) { while (o) { if (o.parent === scene) return LY[o.name]; o = o.parent; } return null; }
+if (renderer) {
+  renderer.domElement.addEventListener('pointerdown', (e) => { downXY = [e.clientX, e.clientY]; stopAuto(); });
+  renderer.domElement.addEventListener('pointerup', (e) => {
+    if (!downXY) return;
+    const d = Math.hypot(e.clientX - downXY[0], e.clientY - downXY[1]); downXY = null;
+    if (d > 5) return;
+    const r = renderer.domElement.getBoundingClientRect();
+    ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    const hits = ray.intersectObjects(LAYERS.filter((l) => l.id !== 'flow').map((l) => l.group), true);
+    for (const h of hits) {
+      const o = h.object;
+      if (!shownChain(o)) continue;
+      const l = layerOf(o);
+      if (l && l.op < 0.2) continue;
+      if (o.userData.part) { selectPart(o.userData.part); return; }
+    }
+    selectPart(null);
+  });
+}
+
+// ============ Приложение: карточки, графики ============
+const CARDS = [
+  ['t1', 'T1 Всасывание', '°C'], ['t2', 'T2 Нагнетание', '°C'], ['t3', 'T3 Перед фильтром', '°C'], ['t4', 'T4 После фильтра', '°C'],
+  ['dtd', 'ΔT на фильтре', '°C'], ['t5', 'T5 Вход испарителя', '°C'], ['t6', 'T6 Выход испарителя', '°C'], ['tc', 'Tкам Морозилка', '°C'],
+  ['p', 'P Всасывание', 'бар'], ['sh', 'SH Перегрев', 'K'], ['i', 'I Ток', 'А'], ['w', 'Мощность', 'Вт'],
+];
+const cardsBox = $('#cards');
+const cardEls = {};
+CARDS.forEach(([k, lab, u]) => {
+  const d = document.createElement('div'); d.className = 'card';
+  const r = RANGES[k];
+  d.innerHTML = `<div class="lab">${lab}</div><div class="val"><span>—</span><small>${u}</small></div><div class="sub">${r ? `норма ${fmt(r[0], k === 'i' || k === 'p' ? 2 : 0)}…${fmt(r[1], k === 'i' || k === 'p' ? 2 : 0)}` : ''}${k === 'p' ? ' · <span class="ts"></span>' : ''}</div>`;
+  cardsBox.appendChild(d);
+  cardEls[k] = { root: d, num: d.querySelector('.val span'), ts: d.querySelector('.ts') };
+});
+const HIST = [];
+const HMAX = 300;
+function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+function prepCanvas(c) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+  const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { g, w, h };
+}
+function drawChart(c, series, lo, hi, band, ticks, dec = 0) {
+  const { g, w, h } = prepCanvas(c);
+  if (!w) return;
+  const padL = 40, padR = 8, padT = 6, padB = 16;
+  const pw = w - padL - padR, ph = h - padT - padB;
+  const y = (v) => padT + ph * (1 - (clamp(v, lo, hi) - lo) / (hi - lo));
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = cssVar('--chart-band');
+  if (band) g.fillRect(padL, y(band[1]), pw, y(band[0]) - y(band[1]));
+  g.strokeStyle = cssVar('--chart-grid'); g.lineWidth = 1;
+  g.fillStyle = cssVar('--muted'); g.font = '11px ' + cssVar('--font-data'); g.textAlign = 'right'; g.textBaseline = 'middle';
+  ticks.forEach((t) => { g.beginPath(); g.moveTo(padL, y(t) + 0.5); g.lineTo(w - padR, y(t) + 0.5); g.stroke(); g.fillText(fmt(t, dec), padL - 6, y(t)); });
+  g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+  g.fillText('−60 с', padL, h - 3); g.textAlign = 'right'; g.fillText('сейчас', w - padR, h - 3);
+  series.forEach(([k, col]) => {
+    if (!HIST.length) return;
+    g.strokeStyle = col; g.lineWidth = 2; g.beginPath();
+    HIST.forEach((p, i) => { const xx = padL + pw * (i + HMAX - HIST.length) / (HMAX - 1); i ? g.lineTo(xx, y(p[k])) : g.moveTo(xx, y(p[k])); });
+    g.stroke();
+    const last = HIST.at(-1), xx = padL + pw;
+    g.fillStyle = col; g.beginPath(); g.arc(xx - 1, y(last[k]), 3.2, 0, 7); g.fill();
+  });
+}
+function drawCharts() {
+  drawChart($('#ch1'), [['p', '#7b61ff']], 0, 1.2, RANGES.p, [0, 0.4, 0.8, 1.2], 1);
+  drawChart($('#ch2'), [['t5', '#2f9bd6'], ['t6', '#e0702a']], -45, 15, RANGES.t6, [-40, -20, 0]);
+  drawChart($('#ch3'), [['i', '#c99a00']], 0, 1.2, RANGES.i, [0, 0.4, 0.8, 1.2], 1);
+  drawChart($('#ch4'), [['t2', '#d1301f'], ['dtd', '#12804f']], -5, 100, RANGES.t2, [0, 25, 50, 75, 100]);
+}
+let lastDiagKey = '';
+function renderDiag(m) {
+  const d = diagnose(m);
+  const key = d.title + '|' + d.why.join('|');
+  if (key === lastDiagKey) return;
+  lastDiagKey = key;
+  const box = $('#diag'); box.className = 'diag l' + d.level;
+  $('#diagPill').textContent = d.pill; $('#diagTitle').textContent = d.title;
+  $('#diagWhy').innerHTML = d.why.map((x) => `<li>${x}</li>`).join('');
+  $('#diagTodo').innerHTML = d.todo.map((x) => `<li>${x}</li>`).join('');
+}
+function renderCards(m) {
+  CARDS.forEach(([k]) => {
+    const e = cardEls[k]; const v = m[k];
+    const s = status(k, v);
+    e.root.className = 'card s' + s;
+    e.num.textContent = k === 'p' || k === 'i' ? fmt(v, 2) : k === 'w' ? v.toFixed(0) : k === 'sh' ? (m.p < 0.2 ? '—' : fmt(v, 0)) : fmtT(v);
+    if (e.ts) e.ts.textContent = 'кипение ' + fmtT(m.tsat) + ' °C';
+  });
+}
+const SC_COL = { 0: 0x3ccb8b, 1: 0xeeb049, 2: 0xff5a4e, 9: 0x8b9aa6 };
+function renderSensors(m) {
+  SENS.forEach((s) => {
+    const v = m[s.ch], st = status(s.ch, v);
+    ledMats[s.id].color.setHex(SC_COL[st]); ledMats[s.id].emissive.setHex(SC_COL[st]);
+    const el = s.chip.element; el.className = 'chip s' + st;
+    const shown = s.id === 't4' ? m.t4 : v;
+    const txt = s.id === 'i' ? fmt(shown, 2) + ' А' : s.id === 'p' ? fmt(shown, 2) + ' бар' : fmtT(shown) + '°';
+    el.querySelector('span').textContent = s.name + ' ' + txt;
+  });
+}
+const oledCanvas = oledTex.userData.canvas;
+function drawOled(m, d) {
+  const g = oledCanvas.getContext('2d');
+  g.fillStyle = '#02060a'; g.fillRect(0, 0, 512, 256);
+  g.fillStyle = '#9fe8ff'; g.font = 'bold 30px monospace'; g.textAlign = 'left';
+  g.fillText('FridgeScope', 18, 42);
+  g.fillStyle = '#5fb8d6'; g.font = '24px monospace'; g.textAlign = 'right'; g.fillText('WiFi', 494, 40); g.textAlign = 'left';
+  g.fillStyle = '#e8fbff'; g.font = 'bold 40px monospace';
+  g.fillText('P ' + fmt(m.p, 2), 18, 100); g.fillText('I ' + fmt(m.i, 2), 270, 100);
+  g.fillText('T5' + fmtT(m.t5).padStart(6), 18, 152); g.fillText('T6' + fmtT(m.t6).padStart(6), 270, 152);
+  g.fillStyle = d.level === 2 ? '#ff6b5f' : d.level === 1 ? '#f0b54a' : '#3ccb8b';
+  g.fillRect(18, 186, 476, 50);
+  g.fillStyle = '#02060a'; g.font = 'bold 30px sans-serif'; g.fillText(d.pill.toUpperCase(), 32, 222);
+  oledTex.needsUpdate = true;
+}
+
+// ============ Опрессовка ============
+const PT = { running: false, t: 0, data: [], leak: false };
+function ptReset() {
+  PT.running = false; PT.t = 0; PT.data = [];
+  $('#ptStart').textContent = 'Начать опрессовку';
+  $('#ptTime').textContent = '0:00 / 30:00'; $('#ptP').textContent = '10.00 бар'; $('#ptDrop').textContent = '0.00 бар';
+  const r = $('#ptRes'); r.className = 'result'; r.textContent = 'Порог герметичности — падение не больше 0.10 бар за 30 минут. Результат зависит от выбранной неисправности.';
+  drawPT();
+}
+$('#ptStart').addEventListener('click', () => {
+  PT.running = true; PT.t = 0; PT.data = []; PT.leak = SCEN[scenKey].leak;
+  $('#ptStart').textContent = 'Идёт запись…';
+  const r = $('#ptRes'); r.className = 'result'; r.textContent = 'Пишем давление и температуру…';
+});
+function ptStep(dt) {
+  if (!PT.running) return;
+  const prev = PT.t;
+  PT.t = Math.min(1800, PT.t + dt * 120);
+  for (let s = Math.ceil(prev / 10) * 10; s <= PT.t; s += 10) {
+    const T = 20 + 1.3 * Math.sin(s / 520) + 0.6 * (s / 1800);
+    const pc = PT.leak ? 10 * Math.exp(-s / 9000) : 10 - 0.012 * (s / 1800);
+    const raw = pc * (T + 273.15) / 293.15 + (Math.random() - 0.5) * 0.008;
+    PT.data.push({ s, raw, comp: raw * 293.15 / (T + 273.15), T });
+  }
+  const last = PT.data.at(-1);
+  if (last) {
+    const mm = Math.floor(PT.t / 60), ss = Math.floor(PT.t % 60);
+    $('#ptTime').textContent = `${mm}:${String(ss).padStart(2, '0')} / 30:00`;
+    $('#ptP').textContent = last.comp.toFixed(2) + ' бар';
+    $('#ptDrop').textContent = (10 - last.comp).toFixed(2) + ' бар';
+  }
+  if (PT.t >= 1800) {
+    PT.running = false; $('#ptStart').textContent = 'Повторить';
+    const drop = 10 - PT.data.at(-1).comp;
+    const r = $('#ptRes');
+    if (drop > 0.1) { r.className = 'result bad'; r.textContent = `Падение ${drop.toFixed(2)} бар за 30 минут — контур негерметичен. Дальше ищите место: мыльный раствор на пайках, ультразвук или течеискатель. Если снаружи сухо — подозревайте трубки в пене и испаритель.`; }
+    else { r.className = 'result ok'; r.textContent = `Падение ${drop.toFixed(2)} бар за 30 минут с поправкой на температуру — контур герметичен. Неисправность ищите не в утечке.`; }
+  }
+  drawPT();
+}
+function drawPT() {
+  const c = $('#ptChart'); if (!c.clientWidth) return;
+  const { g, w, h } = prepCanvas(c);
+  const padL = 44, padR = 10, padT = 10, padB = 22, pw = w - padL - padR, ph = h - padT - padB;
+  const lo = 8, hi = 10.4;
+  const x = (s) => padL + pw * s / 1800, y = (v) => padT + ph * (1 - (clamp(v, lo, hi) - lo) / (hi - lo));
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = cssVar('--chart-band'); g.fillRect(padL, y(10.05), pw, y(9.9) - y(10.05));
+  g.strokeStyle = cssVar('--chart-grid'); g.fillStyle = cssVar('--muted'); g.font = '11px ' + cssVar('--font-data');
+  g.textAlign = 'right'; g.textBaseline = 'middle';
+  [8, 8.5, 9, 9.5, 10].forEach((t) => { g.beginPath(); g.moveTo(padL, y(t) + 0.5); g.lineTo(w - padR, y(t) + 0.5); g.stroke(); g.fillText(t.toFixed(1), padL - 6, y(t)); });
+  g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+  [0, 10, 20, 30].forEach((m) => g.fillText(m + ' мин', clamp(x(m * 60), padL + 16, w - padR - 20), h - 5));
+  const line = (k, col, wd) => { if (!PT.data.length) return; g.strokeStyle = col; g.lineWidth = wd; g.beginPath(); PT.data.forEach((p, i) => (i ? g.lineTo(x(p.s), y(p[k])) : g.moveTo(x(p.s), y(p[k])))); g.stroke(); };
+  line('raw', cssVar('--muted'), 1.2);
+  line('comp', cssVar('--accent'), 2.4);
+  g.textAlign = 'left'; g.fillStyle = cssVar('--muted');
+  g.fillText('серая — как есть, цветная — приведено к 20 °C', padL + 6, padT + 12);
+}
+
+// ============ Термокарта ============
+const HEAT_STOPS = [[-40, 0x2b59c3], [-20, 0x3fa7d6], [0, 0xe8f1f2], [25, 0xf6c85f], [50, 0xf08a24], [80, 0xd1301f]].map(([t, c]) => [t, new THREE.Color(c)]);
+function heatColor(t, out) {
+  if (t <= HEAT_STOPS[0][0]) return out.copy(HEAT_STOPS[0][1]);
+  for (let i = 1; i < HEAT_STOPS.length; i++) if (t <= HEAT_STOPS[i][0]) {
+    const [t0, c0] = HEAT_STOPS[i - 1], [t1, c1] = HEAT_STOPS[i];
+    return out.copy(c0).lerp(c1, (t - t0) / (t1 - t0));
+  }
+  return out.copy(HEAT_STOPS.at(-1)[1]);
+}
+function evapTemp(g) {
+  const fr = cur.fr;
+  return g < fr ? meas.t5 + 2 * (g / Math.max(fr, 0.01)) : lerp(meas.t5 + 2, meas.t6, (g - fr) / Math.max(1 - fr, 0.01));
+}
+function tempAt(sec, f) {
+  const m = meas;
+  switch (sec.key) {
+    case 'discharge': return lerp(m.t2, m.t2 - 4, f);
+    case 'cond': { const tcn = m.t3 + 3; if (f < 0.12) return lerp(m.t2 - 4, tcn + 2, f / 0.12); if (f < 0.85) return lerp(tcn + 2, tcn, (f - 0.12) / 0.73); return lerp(tcn, m.t3, (f - 0.85) / 0.15); }
+    case 'toDrier': return m.t3;
+    case 'drier': return lerp(m.t3, m.t4, f);
+    case 'cap': return f < 0.3 ? m.t4 : lerp(m.t4, m.t5, Math.pow((f - 0.3) / 0.7, 2));
+    case 'fevap': case 'conn': case 'revap': return evapTemp((sec.s0 - evapS0 + f * sec.len) / evapLen);
+    case 'suction': return lerp(m.t6, m.t1, Math.pow(f, 0.7));
+    default: return lerp(m.t1, m.t2, f);
+  }
+}
+const hc = new THREE.Color();
+function updateHeat() {
+  SECTIONS.forEach((s) => {
+    if (!s.geo) return;
+    const col = s.geo.attributes.color, per = s.radial + 1;
+    for (let i = 0; i <= s.seg; i++) {
+      heatColor(tempAt(s, i / s.seg), hc);
+      for (let j = 0; j < per; j++) col.setXYZ(i * per + j, hc.r, hc.g, hc.b);
+    }
+    col.needsUpdate = true;
+  });
+  heatColor((meas.t3 + meas.t4) / 2, drierHeatMat.color);
+}
+
+// ============ Цикл ============
+function resize() {
+  if (!renderer) return;
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h); labelRenderer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  drawCharts(); drawPT();
+}
+new ResizeObserver(resize).observe(stage);
+new ResizeObserver(() => { drawCharts(); drawPT(); }).observe($('.app'));
+
+if (controls) { camera.position.copy(VIEWS.overview.p); controls.target.copy(VIEWS.overview.t); }
+applyPreset('real');
+setDoors(true);
+ptReset();
+
+let simT = 0, tick = 0, heatTick = 0, slowTick = 0, crank = 0;
+const clock = new THREE.Clock();
+let lastReal = performance.now();
+const tmpV = new THREE.Vector3();
+function noise(t, k) { return Math.sin(t * 1.7 + k * 3.1) * 0.6 + Math.sin(t * 0.43 + k * 7.7) * 0.4; }
+function frame() {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, clock.getDelta());
+  const nowReal = performance.now(); const rdt = Math.min(0.25, (nowReal - lastReal) / 1000); lastReal = nowReal;
+  simT += dt;
+  const sc = SCEN[scenKey];
+  const tgt = running ? sc.v : { ...sc.v, ...OFF };
+  const k = 1 - Math.exp(-dt * (running ? 0.9 : 0.5));
+  for (const key in tgt) cur[key] += (tgt[key] - cur[key]) * k;
+  cur.fr += ((running ? sc.fr : sc.fr * 0.6) - cur.fr) * k;
+  cur.flow += ((running ? sc.flow : 0) - cur.flow) * (1 - Math.exp(-dt * 2));
+  cur.sucFrost += (sc.sucFrost * (running ? 1 : 0.5) - cur.sucFrost) * k;
+  cur.drierFrost += (sc.drierFrost - cur.drierFrost) * k;
+  // измерения с шумом
+  ['t1', 't2', 't3', 't4', 't5', 't6', 'tc', 'tf'].forEach((key, i) => { meas[key] = cur[key] + noise(simT, i) * 0.25; });
+  meas.i = Math.max(0, cur.i + (running ? noise(simT * 3, 9) * 0.012 : 0));
+  meas.w = Math.max(0, cur.w + (running ? noise(simT * 3, 10) * 1.2 : 0));
+  meas.p = Math.max(0.02, cur.p + noise(simT * 2, 11) * 0.006);
+  meas.tsat = tsat(meas.p);
+  meas.sh = meas.t6 - meas.tsat;
+  meas.dtd = meas.t3 - meas.t4;
+
+  tick += dt;
+  if (tick > 0.2) {
+    tick = 0;
+    HIST.push({ p: meas.p, t5: meas.t5, t6: meas.t6, i: meas.i, t2: meas.t2, dtd: meas.dtd });
+    if (HIST.length > HMAX) HIST.shift();
+    renderCards(meas); renderSensors(meas); renderDiag(meas); drawCharts();
+  }
+  slowTick += dt;
+  if (slowTick > 0.5) { slowTick = 0; drawOled(meas, diagnose(meas)); drawDoorDisp(meas.tf, meas.tc); }
+  ptStep(dt);
+
+  if (!renderer) return;
+  // двери
+  doorOpen += (doorTarget - doorOpen) * (1 - Math.exp(-dt * 4));
+  doors.forEach((d) => { d.pivot.rotation.y = doorOpen * 1.9 * (d.kind === 'freezer' ? 0.95 : 1); });
+  fridgeLight.intensity = 6 * clamp(doorOpen / 0.4, 0, 1);
+  M.lamp.emissiveIntensity = 1.5 * clamp(doorOpen / 0.4, 0, 1);
+  // компрессор
+  const spin = running ? 1 : 0;
+  crank += dt * 9 * spin * (reduceMotion ? 0.2 : 1);
+  rotor.rotation.y = crank;
+  {
+    const e = 0.12, Lr = 0.32, th = crank;
+    const px = e * Math.cos(th), pz = e * Math.sin(th);
+    const xp = px + Math.sqrt(Lr * Lr - pz * pz);
+    piston.position.set(xp + 0.08, 1.42, 0);
+    const mid = V((px + xp) / 2, 1.42, pz / 2);
+    rod.position.copy(mid); rod.scale.x = Lr; rod.rotation.y = Math.atan2(pz, xp - px);
+  }
+  const shake = running && !reduceMotion ? 0.006 : 0;
+  comp.position.set(CX + Math.sin(simT * 90) * shake, CY, CZ + Math.cos(simT * 77) * shake);
+  mech.position.copy(comp.position);
+  devLed.material.color.setHex(Math.sin(simT * 8) > 0 ? 0x3ccb8b : 0x0e3a28);
+  // иней
+  const fr = clamp(cur.fr, 0, 1);
+  const fe = clamp((fr * evapLen) / secFE.len, 0, 1);
+  const cn = clamp((fr * evapLen - secFE.len) / secConn.len, 0, 1);
+  const re = clamp((fr * evapLen - secFE.len - secConn.len) / secRE.len, 0, 1);
+  feFrost.scale.y = Math.max(0.001, fe); feFrost.visible = fe > 0.01;
+  reFrost.scale.y = Math.max(0.001, re); reFrost.visible = re > 0.01;
+  setSleeve(sleeveFE, secFE, fe); setSleeve(sleeveConn, secConn, cn); setSleeve(sleeveRE, secRE, re);
+  setSleeve(sleeveSuc, secSuc, cur.sucFrost);
+  setSleeve(sleeveCap, secCap, cur.drierFrost > 0.3 ? 0.03 : 0);
+  drierFrost.visible = cur.drierFrost > 0.3;
+  drierFrost.material.opacity = 0.9 * cur.drierFrost * LY.pipes.op;
+  // неисправности
+  const clog = running ? sc.clog : null;
+  let clogS = null;
+  if (clog === 'cap') { clogS = secCap.s0 + 0.12; }
+  if (clog === 'drier') { clogS = secDrier.s0 + secDrier.len * 0.7; }
+  clogRing.visible = !!clogS;
+  clogTag.userData.forced = !!clogS;
+  if (clogS) {
+    const sec = secAt(clogS), f = (clogS - sec.s0) / sec.len;
+    const p = sec.curve.getPointAt(f), t = sec.curve.getTangentAt(f);
+    clogRing.position.copy(p); clogRing.quaternion.setFromUnitVectors(V(0, 0, 1), t);
+    const ringR = clog === 'drier' ? 1.6 : 1;
+    clogRing.scale.setScalar(ringR * (1 + 0.25 * Math.sin(simT * 7)));
+    clogTag.position.copy(p).add(V(-0.9, -0.45, -0.3));
+    clogTag.element.textContent = clog === 'drier' ? '⚠ Засор фильтра' : '⚠ Засор капилляра';
+  }
+  const leak = sc.leak;
+  leakTag.userData.forced = leak;
+  leakTag.position.copy(leakPos).add(V(0.2, 0.75, -0.5));
+  stain.visible = leak && LY.shell.on;
+  puffs.forEach((p) => {
+    if (!leak) { p.m.visible = false; return; }
+    p.life += dt;
+    if (p.life > 1.4) {
+      p.life = -Math.random() * 0.4; p.m.position.copy(leakPos);
+      p.v.set((Math.random() - 0.5) * 0.5, 0.15 + Math.random() * 0.5, -0.5 - Math.random() * 0.7);
+    }
+    if (p.life >= 0) { p.m.visible = true; p.m.position.addScaledVector(p.v, dt); p.m.scale.setScalar(1 + p.life * 2.2); p.m.material.opacity = 0.55 * (1 - p.life / 1.4); }
+    else p.m.visible = false;
+  });
+  mechTag.userData.forced = cutaway || !LY.compShell.on || LY.compShell.op < 0.5;
+  refreshLabels();
+  // поток
+  if (LY.flow.on) {
+    const showInComp = cutaway || LY.compShell.op < 0.5 || !LY.compShell.on;
+    const base = 3.0 * cur.flow * (reduceMotion ? 0.3 : 1);
+    for (const p of PS) {
+      const sec = secAt(p.s);
+      let sp = base;
+      if (clogS && p.s < clogS && p.s > clogS - 10) sp *= 0.35;
+      p.s = (p.s + sp * dt) % totalLen;
+      const s2 = secAt(p.s);
+      const f = (p.s - s2.s0) / s2.len;
+      let vis = true;
+      if (s2.key === 'drier') vis = false;
+      if (s2.key === 'comp' && !showInComp) vis = false;
+      if (clogS && p.s > clogS && p.s < secSuc.s0 + secSuc.len * 0.3) vis = false;
+      if (sc.leak && p.i % 5 < 3) vis = false;
+      if (!running && p.i % 3) vis = false;
+      s2.curve.getPointAt(clamp(f, 0, 1), tmpV);
+      dummy.position.copy(tmpV);
+      dummy.scale.setScalar(vis ? 1 : 0);
+      dummy.updateMatrix();
+      parts3.setMatrixAt(p.i, dummy.matrix);
+      // фаза
+      let c = COL.vap;
+      if (s2.key === 'discharge' || s2.key === 'comp') c = COL.hot;
+      else if (s2.key === 'cond') c = f < 0.15 ? COL.hot : tmpC.copy(COL.hot).lerp(COL.liq, clamp((f - 0.15) / 0.5, 0, 1));
+      else if (s2.key === 'toDrier' || s2.key === 'drier') c = COL.liq;
+      else if (s2.key === 'cap') c = f < 0.4 ? COL.liq : tmpC.copy(COL.liq).lerp(COL.mix, clamp((f - 0.4) / 0.6, 0, 1));
+      else if (s2.key === 'fevap' || s2.key === 'conn' || s2.key === 'revap') { const g = (p.s - evapS0) / evapLen; c = g < cur.fr ? COL.mix : COL.vap; }
+      else if (s2.key === 'suction') c = f < cur.sucFrost ? COL.mix : COL.vap;
+      parts3.setColorAt(p.i, c);
+    }
+    parts3.instanceMatrix.needsUpdate = true;
+    if (parts3.instanceColor) parts3.instanceColor.needsUpdate = true;
+  }
+  // импульсы данных
+  cables.forEach((c) => c.pulses.forEach((p) => { p.t = (p.t + dt * 0.25) % 1; c.curve.getPointAt(p.t, p.m.position); }));
+  // термокарта
+  if (heatMode) { heatTick += dt; if (heatTick > 0.25) { heatTick = 0; updateHeat(); } }
+  if (selHelper && selected) { const b = partBox(selected); if (b) selHelper.box.copy(b); }
+  // камера
+  if (fly) {
+    fly.k = Math.min(1, fly.k + rdt / fly.dur);
+    const e = fly.k < 0.5 ? 4 * fly.k ** 3 : 1 - (-2 * fly.k + 2) ** 3 / 2;
+    camera.position.lerpVectors(fly.p0, fly.p1, e); controls.target.lerpVectors(fly.t0, fly.t1, e);
+    if (fly.k >= 1) fly = null;
+  } else if (autoRotate) {
+    const off = camera.position.clone().sub(controls.target);
+    off.applyAxisAngle(V(0, 1, 0), dt * 0.12);
     camera.position.copy(controls.target).add(off);
   }
-  if (window.ResizeObserver) new ResizeObserver(onResize).observe(stage);
-  else window.addEventListener('resize', onResize);
-
-  scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-  var dl = new THREE.DirectionalLight(0xffffff, 1.2);
-  dl.position.set(5, 8, 10);
-  scene.add(dl);
-
-  var V3 = function (x, y, z) { return new THREE.Vector3(x, y, z || 0); };
-
-  function label(text, color, sc) {
-    color = color || '#ffffff'; sc = sc || 1;
-    var c = document.createElement('canvas'); c.width = 512; c.height = 128;
-    var g = c.getContext('2d');
-    g.font = 'bold 50px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-    var w = Math.min(500, g.measureText(text).width + 50);
-    g.fillStyle = 'rgba(10,16,24,0.78)';
-    g.beginPath(); g.roundRect ? g.roundRect((512 - w) / 2, 14, w, 100, 24) : g.rect((512 - w) / 2, 14, w, 100); g.fill();
-    g.fillStyle = color; g.fillText(text, 256, 66);
-    var t = new THREE.CanvasTexture(c);
-    var s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false }));
-    s.scale.set(2.4 * sc, 0.6 * sc, 1); s.renderOrder = 10;
-    return s;
-  }
-  function addLabel(text, x, y, sc, color, z) {
-    var l = label(text, color || '#cfe3f5', sc == null ? 0.6 : sc);
-    l.position.set(x, y, z == null ? 0.5 : z); scene.add(l); return l;
-  }
-  function pipe(pts, r, color) {
-    var grp = new THREE.Group();
-    var mat = new THREE.MeshStandardMaterial({ color: color, metalness: 0.6, roughness: 0.35 });
-    for (var i = 0; i < pts.length - 1; i++) {
-      var a = pts[i], b = pts[i + 1];
-      var d = new THREE.Vector3().subVectors(b, a);
-      var len = d.length();
-      var m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 10), mat);
-      m.position.copy(a).addScaledVector(d, 0.5);
-      m.quaternion.setFromUnitVectors(V3(0, 1, 0), d.clone().normalize());
-      grp.add(m);
-      var j = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), mat);
-      j.position.copy(a); grp.add(j);
-    }
-    var jl = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), mat);
-    jl.position.copy(pts[pts.length - 1]); grp.add(jl);
-    scene.add(grp); return grp;
-  }
-
-  // ---------- Холодильник ----------
-  var fridgeEdges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(new THREE.BoxGeometry(8.4, 7.5, 2)),
-    new THREE.LineBasicMaterial({ color: 0x4a6a8a }));
-  fridgeEdges.position.set(-4.4, 0.55, 0); scene.add(fridgeEdges);
-  var fridgeGlass = new THREE.Mesh(new THREE.BoxGeometry(8.4, 7.5, 2),
-    new THREE.MeshBasicMaterial({ color: 0x2a4560, transparent: true, opacity: 0.12, depthWrite: false }));
-  fridgeGlass.position.copy(fridgeEdges.position); scene.add(fridgeGlass);
-
-  // ---------- Контур ----------
-  var highPts = [V3(-7.4, -1.3), V3(-7.4, 3.3), V3(-3.8, 3.3), V3(-3.8, 2.9), V3(-7.0, 2.9), V3(-7.0, 2.5), V3(-3.8, 2.5)];
-  var capPts = [V3(-3.1, 2.5), V3(-1.2, 2.5), V3(-1.2, 0.8)];
-  var evapPts = [V3(-1.2, 0.8), V3(-4.5, 0.8), V3(-4.5, 0.4), V3(-1.2, 0.4), V3(-1.2, 0.0), V3(-4.5, 0.0)];
-  var sucPts = [V3(-4.5, 0.0), V3(-4.5, -1.3), V3(-6.4, -1.3)];
-  pipe(highPts, 0.07, 0xd9772b);
-  pipe(capPts, 0.03, 0xd9772b);
-  pipe(evapPts, 0.07, 0x5aa9d6);
-  pipe(sucPts, 0.07, 0x5aa9d6);
-
-  var comp = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 1.3, 24),
-    new THREE.MeshStandardMaterial({ color: 0x2b2f36, metalness: 0.5, roughness: 0.5 }));
-  comp.position.set(-6.9, -2.0, 0); scene.add(comp);
-  var drier = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.7, 16),
-    new THREE.MeshStandardMaterial({ color: 0xc9ced6, metalness: 0.7, roughness: 0.3 }));
-  drier.rotation.z = Math.PI / 2; drier.position.set(-3.45, 2.5, 0); scene.add(drier);
-
-  var frostGeo = new THREE.BoxGeometry(3.9, 1.3, 0.4); frostGeo.translate(-1.95, 0, 0);
-  var frost = new THREE.Mesh(frostGeo, new THREE.MeshBasicMaterial({ color: 0xe8f6ff, transparent: true, opacity: 0.4, depthWrite: false }));
-  frost.position.set(-0.8, 0.4, 0); scene.add(frost);
-
-  addLabel('Холодильник', -4.4, 4.75, 0.7, '#9fc4e8');
-  addLabel('Компрессор', -6.9, -3.2);
-  addLabel('Конденсатор', -5.6, 4.0);
-  addLabel('Фильтр-осушитель', -3.0, 1.8, 0.5);
-  addLabel('Капилляр', -0.35, 1.65, 0.5);
-  addLabel('Испаритель', -2.9, -0.7);
-
-  // ---------- Датчики ----------
-  var S = [
-    { k: 't1', n: 'T1', pos: V3(-4.9, -1.3), col: 0x4fc3f7 },
-    { k: 't2', n: 'T2', pos: V3(-7.4, 0.6), col: 0xff7043 },
-    { k: 't3', n: 'T3', pos: V3(-4.4, 2.5), col: 0xffb74d },
-    { k: 't4', n: 'T4', pos: V3(-1.2, 1.5), col: 0x80deea },
-    { k: 't5', n: 'T5', pos: V3(-4.5, -0.4), col: 0xa5d6a7 },
-    { k: 'i', n: 'I', pos: V3(-8.3, -2.0), col: 0xffee58 },
-    { k: 'p', n: 'P', pos: V3(-5.7, -2.55), col: 0xce93d8 }
-  ];
-  pipe([V3(-7.6, -2.0), V3(-9.6, -2.0)], 0.05, 0x111111);
-  pipe([V3(-5.7, -1.3), V3(-5.7, -2.3)], 0.035, 0xb0b0b0);
-  var OK = new THREE.Color(0x2ee59d), WARN = new THREE.Color(0xffc400), BAD = new THREE.Color(0xff4d4d);
-  S.forEach(function (s) {
-    var mesh;
-    var mat = new THREE.MeshStandardMaterial({ color: OK.clone(), emissive: OK.clone(), emissiveIntensity: 0.6 });
-    if (s.k === 'i') {
-      var tg = new THREE.TorusGeometry(0.3, 0.1, 12, 28); tg.rotateY(Math.PI / 2); mesh = new THREE.Mesh(tg, mat);
-    } else if (s.k === 'p') {
-      mesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), mat);
-    } else {
-      mesh = new THREE.Mesh(new THREE.SphereGeometry(0.17, 16, 12), mat);
-    }
-    mesh.position.copy(s.pos); scene.add(mesh); s.mesh = mesh; s.mat = mat;
-    addLabel(s.n, s.pos.x, s.pos.y + (s.k === 'p' ? -0.6 : 0.5), 0.4, '#ffffff', 0.8);
-  });
-
-  // ---------- ESP32 ----------
-  var esp = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.0, 0.12), new THREE.MeshStandardMaterial({ color: 0x0b5d3b, roughness: 0.6 }));
-  esp.position.set(2.6, -2.0, 0.5); scene.add(esp);
-  var chip = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.0, 0.08), new THREE.MeshStandardMaterial({ color: 0x20242a, metalness: 0.5 }));
-  chip.position.set(2.9, -1.9, 0.6); scene.add(chip);
-  var ant = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.35, 0.04), new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.8, roughness: 0.3 }));
-  ant.position.set(3.5, -1.2, 0.58); scene.add(ant);
-  var led = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), new THREE.MeshBasicMaterial({ color: 0x2ee59d }));
-  led.position.set(1.5, -2.8, 0.6); scene.add(led);
-  addLabel('ESP32 + АЦП', 2.6, -0.55, 0.65, '#7fe3b5');
-
-  var wires = [];
-  S.forEach(function (s, i) {
-    var pin = V3(0.95, -1.25 - i * 0.25, 0.62);
-    var pm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.05), new THREE.MeshStandardMaterial({ color: 0xd4af37 }));
-    pm.position.set(1.0, pin.y, 0.58); scene.add(pm);
-    var z = 1.3 + i * 0.08;
-    var pts = [s.pos.clone(), V3(s.pos.x, s.pos.y, z),
-      V3(THREE.MathUtils.lerp(s.pos.x, pin.x, 0.6), THREE.MathUtils.lerp(s.pos.y, pin.y, 0.6), z),
-      V3(pin.x - 0.3, pin.y, z), pin];
-    var curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.3);
-    var tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 80, 0.022, 6, false),
-      new THREE.MeshBasicMaterial({ color: s.col, transparent: true, opacity: 0.85 }));
-    scene.add(tube);
-    var pulses = [];
-    for (var j = 0; j < 2; j++) {
-      var p = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-      scene.add(p); pulses.push({ m: p, t: (j / 2 + i * 0.13) % 1 });
-    }
-    wires.push({ curve: curve, pulses: pulses });
-  });
-
-  var wifi = [];
-  for (var r = 0; r < 3; r++) {
-    var wm = new THREE.Mesh(new THREE.TorusGeometry(0.3 + r * 0.25, 0.03, 8, 24, Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0x4fc3f7, transparent: true }));
-    wm.position.set(4.4, -1.0, 0.6); wm.rotation.z = -Math.PI / 4; scene.add(wm); wifi.push(wm);
-  }
-  addLabel('Wi-Fi / BLE', 4.7, 0.15, 0.5, '#4fc3f7');
-
-  // ---------- Панель ----------
-  var frame = new THREE.Mesh(new THREE.BoxGeometry(6.0, 5.4, 0.2), new THREE.MeshStandardMaterial({ color: 0x1b2733, metalness: 0.4, roughness: 0.4 }));
-  frame.position.set(8.3, 1.0, 0); scene.add(frame);
-  var pc = document.createElement('canvas'); pc.width = 1140; pc.height = 1020;
-  var pg = pc.getContext('2d');
-  var ptex = new THREE.CanvasTexture(pc);
-  var screen = new THREE.Mesh(new THREE.PlaneGeometry(5.7, 5.1), new THREE.MeshBasicMaterial({ map: ptex }));
-  screen.position.set(8.3, 1.0, 0.11); scene.add(screen);
-
-  function rr(g, x, y, w, h, rad) { g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, h, rad); else g.rect(x, y, w, h); }
-
-  // ---------- Сценарии ----------
-  var SC = [
-    { tab: 'Норма', st: 0, title: 'Контур исправен',
-      v: { t1: 5, t2: 62, t3: 38, t4: -22, t5: -18, i: 0.85, p: 0.65, sh: 7 },
-      f: { t1: 0, t2: 0, t3: 0, t4: 0, t5: 0, i: 0, p: 0, sh: 0 },
-      lines: ['• Перегрев 7 K, давление всасывания 0.65 бар', '• Ток компрессора 0.85 А — в норме', '• Иней равномерно по всему испарителю', '→ Неисправностей не найдено'], frost: 1 },
-    { tab: 'Засор', st: 2, title: 'Засор капилляра / фильтра-осушителя',
-      v: { t1: 24, t2: 78, t3: 36, t4: 8, t5: -2, i: 0.55, p: 0.15, sh: 32 },
-      f: { t1: 1, t2: 2, t3: 0, t4: 2, t5: 2, i: 1, p: 2, sh: 2 },
-      lines: ['• Вакуум на всасывании: 0.15 бар (норма 0.65)', '• Ток упал до 0.55 А, нагнетание 78 °C', '• Испаритель не остывает: вход +8 °C, иней нет', '→ Проверить ΔT на осушителе, продуть капилляр N₂'], frost: 0.12 },
-    { tab: 'Утечка', st: 2, title: 'Недостаток хладагента — вероятна утечка',
-      v: { t1: 18, t2: 52, t3: 30, t4: -6, t5: -6, i: 0.6, p: 0.35, sh: 22 },
-      f: { t1: 1, t2: 0, t3: 1, t4: 1, t5: 2, i: 1, p: 2, sh: 2 },
-      lines: ['• Перегрев 22 K (норма 5–8 K), давление 0.35 бар', '• Ток 0.60 А ниже нормы, компрессор не отключается', '• Иней только на входе испарителя', '→ Тест падением давления азота 30 мин, затем поиск'], frost: 0.45 }
-  ];
-  var cur = {}; for (var kk in SC[0].v) cur[kk] = SC[0].v[kk];
-  var hist = [];
-  var stCol = ['#2ee59d', '#ffc400', '#ff4d4d'];
-  var sIdx = 0, histTimer = 0, drawTimer = 0, mode = -1;
-
-  function drawPanel(T, sc) {
-    var g = pg;
-    g.fillStyle = '#0f1923'; g.fillRect(0, 0, 1140, 1020);
-    g.textBaseline = 'alphabetic'; g.textAlign = 'left';
-    g.fillStyle = '#ffffff'; g.font = 'bold 42px sans-serif'; g.fillText('FridgeScope', 36, 58);
-    g.textAlign = 'right'; g.fillStyle = '#2ee59d'; g.font = '24px sans-serif'; g.fillText('● Wi-Fi онлайн · 5 Гц', 1104, 56);
-    for (var i = 0; i < 3; i++) {
-      var x = 36 + i * 356, active = i === sIdx;
-      g.fillStyle = active ? (i === 0 ? '#14513d' : '#5a1f24') : '#1a2733';
-      rr(g, x, 84, 340, 50, 12); g.fill();
-      g.fillStyle = active ? '#ffffff' : '#7f93a6'; g.font = (active ? 'bold ' : '') + '26px sans-serif';
-      g.textAlign = 'center'; g.fillText(SC[i].tab, x + 170, 119);
-    }
-    var cards = [['T1 всасывание', 't1', '°C', 0], ['T2 нагнетание', 't2', '°C', 0], ['T3 выход конд.', 't3', '°C', 0], ['T4 вход исп.', 't4', '°C', 0],
-      ['T5 выход исп.', 't5', '°C', 0], ['I ток компр.', 'i', 'А', 2], ['P всасывание', 'p', 'бар', 2], ['SH перегрев', 'sh', 'K', 0]];
-    cards.forEach(function (c, n) {
-      var col = n % 4, row = Math.floor(n / 4);
-      var x = 36 + col * 268, y = 160 + row * 136;
-      var fl = sc.f[c[1]] == null ? sc.f.sh : sc.f[c[1]];
-      if (c[1] === 'sh') fl = 0 + (sc.st === 2 ? 2 : 0);
-      g.fillStyle = '#1a2733'; rr(g, x, y, 252, 120, 14); g.fill();
-      g.strokeStyle = stCol[fl]; g.lineWidth = 3; rr(g, x, y, 252, 120, 14); g.stroke();
-      g.textAlign = 'left'; g.fillStyle = '#8fa3b5'; g.font = '22px sans-serif'; g.fillText(c[0], x + 16, y + 34);
-      g.fillStyle = stCol[fl]; g.font = 'bold 48px sans-serif';
-      var val = cur[c[1]] + (c[1] === 'i' ? Math.sin(T * 5) * 0.02 : c[1] === 'p' ? Math.sin(T * 3) * 0.01 : Math.sin(T * 2 + n) * 0.3);
-      var txt = val.toFixed(c[3]);
-      g.fillText(txt, x + 16, y + 92);
-      var w2 = g.measureText(txt).width;
-      g.fillStyle = '#8fa3b5'; g.font = '24px sans-serif'; g.fillText(c[2], x + 16 + w2 + 8, y + 92);
-    });
-    g.fillStyle = '#1a2733'; rr(g, 36, 440, 1068, 290, 14); g.fill();
-    g.fillStyle = '#8fa3b5'; g.font = '22px sans-serif'; g.textAlign = 'left'; g.fillText('Последние 18 секунд', 56, 474);
-    var series = [['T5 вых. испарителя', 't5', -25, 25, '#a5d6a7'], ['I ток', 'i', 0.3, 1.0, '#ffee58'], ['P давление', 'p', 0, 0.8, '#ce93d8']];
-    series.forEach(function (s, i) { g.fillStyle = s[4]; g.fillRect(380 + i * 250, 460, 22, 6); g.fillStyle = '#cfe3f5'; g.font = '20px sans-serif'; g.fillText(s[0], 410 + i * 250, 470); });
-    var gx = 56, gy = 490, gw = 1028, gh = 220;
-    g.strokeStyle = '#2a3b4b'; g.lineWidth = 1;
-    for (var k = 0; k <= 4; k++) { g.beginPath(); g.moveTo(gx, gy + gh * k / 4); g.lineTo(gx + gw, gy + gh * k / 4); g.stroke(); }
-    series.forEach(function (s) {
-      g.strokeStyle = s[4]; g.lineWidth = 3; g.beginPath();
-      hist.forEach(function (h, idx) {
-        var x = gx + gw * idx / 89;
-        var v = Math.min(1, Math.max(0, (h[s[1]] - s[2]) / (s[3] - s[2])));
-        var y = gy + gh * (1 - v);
-        if (idx) g.lineTo(x, y); else g.moveTo(x, y);
-      });
-      g.stroke();
-    });
-    g.fillStyle = '#1a2733'; rr(g, 36, 750, 1068, 250, 14); g.fill();
-    g.fillStyle = stCol[sc.st]; rr(g, 36, 750, 14, 250, 7); g.fill();
-    g.fillStyle = '#8fa3b5'; g.font = '20px sans-serif'; g.fillText('АВТОДИАГНОЗ', 72, 782);
-    g.fillStyle = stCol[sc.st]; g.font = 'bold 34px sans-serif'; g.fillText(sc.title, 72, 824);
-    g.font = '25px sans-serif';
-    sc.lines.forEach(function (l, i) { g.fillStyle = l.indexOf('→') === 0 ? '#7fe3b5' : '#dbe7f3'; g.fillText(l, 72, 868 + i * 36); });
-    ptex.needsUpdate = true;
-  }
-
-  // ---------- Частицы хладагента ----------
-  var loop = [].concat(highPts, [V3(-3.1, 2.5)], capPts.slice(1), evapPts.slice(1), sucPts.slice(1), [V3(-6.9, -1.3), V3(-7.4, -1.3)]);
-  var cum = [0];
-  for (var q = 1; q < loop.length; q++) cum.push(cum[q - 1] + loop[q].distanceTo(loop[q - 1]));
-  var L = cum[cum.length - 1];
-  var hh = highPts.length;
-  var uClog = cum[hh], uEvap = cum[hh + 2], uSucEnd = cum[loop.length - 3];
-  var parts = [];
-  for (var pi = 0; pi < 64; pi++) {
-    var pm2 = new THREE.Mesh(new THREE.SphereGeometry(0.075, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff7043 }));
-    scene.add(pm2); parts.push({ m: pm2, u: L * pi / 64, i: pi });
-  }
-  function place(p) {
-    var lo = 0; while (lo < cum.length - 2 && cum[lo + 1] < p.u) lo++;
-    var f = (p.u - cum[lo]) / (cum[lo + 1] - cum[lo]);
-    p.m.position.lerpVectors(loop[lo], loop[lo + 1], f);
-  }
-  var clogM = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 12), new THREE.MeshBasicMaterial({ color: 0xff4d4d, transparent: true, opacity: 0.7 }));
-  clogM.position.set(-3.1, 2.5, 0.2); scene.add(clogM);
-  var clogL = addLabel('⚠ засор', -2.2, 3.15, 0.6, '#ff6b6b');
-  var leakL = addLabel('⚠ утечка', -5.5, 1.9, 0.6, '#ff6b6b');
-  var leakP = [];
-  for (var li = 0; li < 16; li++) {
-    var lm = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), new THREE.MeshBasicMaterial({ color: 0xbfe9ff, transparent: true }));
-    scene.add(lm); leakP.push({ m: lm, life: -Math.random(), v: V3(0, 0, 0) });
-  }
-
-  // кнопки сценариев
-  var btns = Array.prototype.slice.call(document.querySelectorAll('.bar button'));
-  btns.forEach(function (b) {
-    b.addEventListener('click', function () {
-      mode = parseInt(b.getAttribute('data-mode'), 10);
-      btns.forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
-    });
-  });
-
-  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var t0 = performance.now(), last = t0;
-  function animate() {
-    requestAnimationFrame(animate);
-    var now = performance.now(); var dt = Math.min(0.05, (now - last) / 1000); last = now;
-    var T = (now - t0) / 1000;
-    sIdx = mode >= 0 ? mode : Math.floor(T / 9) % 3;
-    var sc = SC[sIdx];
-    var k = 1 - Math.exp(-dt * 2.5);
-    for (var key in sc.v) cur[key] += (sc.v[key] - cur[key]) * k;
-
-    S.forEach(function (s) {
-      var f = sc.f[s.k];
-      var tgt = f === 2 ? BAD : f === 1 ? WARN : OK;
-      s.mat.color.lerp(tgt, 0.1); s.mat.emissive.lerp(tgt, 0.1);
-      s.mesh.scale.setScalar(1 + (f === 2 ? 0.25 * Math.sin(T * 8) : 0.05 * Math.sin(T * 3)));
-    });
-    frost.scale.x += (sc.frost - frost.scale.x) * k;
-
-    var clog = sIdx === 1, leak = sIdx === 2;
-    parts.forEach(function (p) {
-      var sp = 2.2;
-      if (clog) sp = p.u < uClog ? 0.9 : 5;
-      p.u = (p.u + sp * dt) % L;
-      place(p);
-      var vis = true;
-      if (clog && p.u > uClog && p.u < uSucEnd) vis = false;
-      if (leak && p.i % 2) vis = false;
-      p.m.visible = vis;
-      p.m.material.color.setHex(p.u < uEvap || p.u > L - 1 ? 0xff7043 : 0x4fc3f7);
-    });
-    clogM.visible = clog; clogM.scale.setScalar(1 + 0.2 * Math.sin(T * 8)); clogL.visible = clog;
-    leakL.visible = leak;
-    leakP.forEach(function (p) {
-      if (!leak) { p.m.visible = false; return; }
-      p.life += dt;
-      if (p.life > 1.3) {
-        p.life = -Math.random() * 0.5; p.m.position.set(-5.5, 2.5, 0.05);
-        p.v.set((Math.random() - 0.5) * 0.8, 0.2 + Math.random() * 0.8, 0.4 + Math.random());
-      }
-      if (p.life >= 0) { p.m.visible = true; p.m.position.addScaledVector(p.v, dt); p.m.material.opacity = 1 - p.life / 1.3; }
-      else p.m.visible = false;
-    });
-
-    wires.forEach(function (w) {
-      w.pulses.forEach(function (p) {
-        p.t = (p.t + dt * 0.35) % 1; p.m.position.copy(w.curve.getPoint(p.t));
-      });
-    });
-    led.material.color.setHex(Math.sin(T * 10) > 0 ? 0x2ee59d : 0x0b5d3b);
-    wifi.forEach(function (m, r2) { m.material.opacity = 0.15 + 0.85 * Math.max(0, Math.sin(T * 4 - r2 * 1.1)); });
-
-    histTimer += dt;
-    if (histTimer > 0.2) {
-      histTimer = 0;
-      hist.push({ t5: cur.t5 + Math.sin(T * 2) * 0.4, i: cur.i + Math.sin(T * 5) * 0.02, p: cur.p + Math.sin(T * 3) * 0.01 });
-      if (hist.length > 90) hist.shift();
-    }
-    drawTimer += dt;
-    if (drawTimer > 0.1) { drawTimer = 0; drawPanel(T, sc); }
-
-    controls.update();
-    renderer.render(scene, camera);
-  }
-  for (var w0 = 0; w0 < 90; w0++) hist.push({ t5: cur.t5, i: cur.i, p: cur.p });
-  drawPanel(0, SC[0]);
-  animate();
-})();
+  controls.update();
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+}
+resize();
+frame();
 </script>
 </body>
 </html>
