@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#06060c">
+<title>ASCII World</title>
+<meta name="description" content="ASCII-игра в браузере: 3D-сцена, отрисованная символами — лес, погода, подземелье и магия.">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+  html,body{margin:0;height:100%;background:#06060c;overflow:hidden;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#d6dee8;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:crosshair}
+  .hud{position:fixed;font-size:13px;line-height:1.4;text-shadow:0 1px 3px #000,0 0 8px #000;pointer-events:none}
+  #zone{top:max(12px,env(safe-area-inset-top));left:14px;font-size:15px;letter-spacing:.04em}
+  #zone small{display:block;opacity:.6;font-size:12px}
+  #hearts{top:max(12px,env(safe-area-inset-top));right:14px;font-size:17px;color:#ff6a6a;letter-spacing:2px}
+  #hint{bottom:12px;left:50%;transform:translateX(-50%);opacity:.65;text-align:center;transition:opacity 1.5s;width:max-content;max-width:94vw}
+  #log{bottom:44px;left:14px;max-width:min(420px,72vw);font-size:13px}
+  #log div{transition:opacity 1.2s;margin-top:2px}
+  #log b{font-weight:600}
+  #toast{top:24%;left:50%;transform:translateX(-50%);font-size:clamp(22px,5vw,40px);letter-spacing:.14em;opacity:0;transition:opacity 1.2s;white-space:nowrap}
+  #fade{position:fixed;inset:0;background:#000;opacity:0;pointer-events:none}
+  #tags{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+  .tag{position:absolute;left:0;top:0;text-align:center;white-space:nowrap;will-change:transform}
+  .tag b{font:600 12px system-ui,sans-serif;text-shadow:0 0 4px #000,0 1px 2px #000}
+  .tag span{display:block;margin:0 auto 4px;max-width:220px;white-space:normal;background:rgba(8,10,18,.82);border:1px solid rgba(120,140,170,.3);border-radius:9px;padding:3px 9px;font:12px system-ui;color:#e8eef6;opacity:0;transition:opacity .4s}
+  .tag span.on{opacity:1}
+  #chat{position:fixed;left:14px;bottom:12px;width:min(360px,72vw);display:none;background:rgba(10,12,20,.85);border:1px solid #3a4658;color:#e8eef6;padding:7px 10px;border-radius:8px;font:14px system-ui;outline:none;-webkit-user-select:text;user-select:text}
+  .btns{position:fixed;top:calc(max(12px,env(safe-area-inset-top)) + 32px);right:12px;display:flex;flex-direction:column;gap:8px}
+  .btns button,#cast{background:rgba(14,18,30,.6);color:#d9e2ee;border:1px solid rgba(90,110,140,.5);border-radius:10px;padding:8px 12px;font:13px system-ui;cursor:pointer;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+  .btns button:active,#cast:active{background:rgba(60,80,110,.8)}
+  #cast{position:fixed;right:22px;bottom:calc(30px + env(safe-area-inset-bottom));width:76px;height:76px;border-radius:50%;font-size:30px;display:none;padding:0}
+  #stick{position:fixed;width:110px;height:110px;margin:-55px 0 0 -55px;border-radius:50%;border:1px solid rgba(180,200,230,.35);display:none;pointer-events:none}
+  #stick i{position:absolute;left:35px;top:35px;width:40px;height:40px;border-radius:50%;background:rgba(180,200,230,.3)}
+  #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:24px;font-size:15px}
+  @media (hover:none){#cast{display:block}#hint{display:none}}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="tags"></div>
+<div id="fade"></div>
+<div id="zone" class="hud"></div>
+<div id="hearts" class="hud"></div>
+<div id="toast" class="hud"></div>
+<div id="log" class="hud"></div>
+<div id="hint" class="hud">WASD — ходить · Shift — бежать · клик / пробел — магия · Q — школа магии · 1–5 — погода · Enter — чат · руины справа по тропе →</div>
+<div class="btns"><button id="bWx">☁ погода</button><button id="bSp">✦ магия</button></div>
+<button id="cast">✦</button>
+<div id="stick"><i></i></div>
+<input id="chat" maxlength="80" placeholder="Сообщение…" autocomplete="off" enterkeyhint="send">
+<div id="err">Нужен браузер с поддержкой WebGL2.</div>
+<script type="module" src="./game.js"></script>
+</body>
+</html>
