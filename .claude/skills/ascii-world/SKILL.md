@@ -15,7 +15,9 @@ Files: `ascii/models/knight.glb` (KayKit Adventurers Knight, CC0, 76 animations,
    - `< 0.09` (`RUNEM = .05`) → random rune glyphs (spell particles, portal motes).
 2. **`cellMat` → `cellRT`** (one texel per cell): reads the SX×SY block with `texelFetch`, builds the 3×3 sub-luminances, averages colour, takes the brightest texel's code, stores colour + glyph index (`a = index/255`). Glyph indices refer to `GLYPHS` = all printable ASCII (`SHAPES`, index = charCode−32) + 4 custom strokes (`DIRG`).
 3. **Bloom**: `brightMat` (threshold 1.0 on half-float — only emissive > 1 glows) → 2× separable `blurMat`.
-4. **`finalMat` → screen**: glyph atlas (`atlas`, built on a 2D canvas, mipmapped, sampled with `textureGrad`) × cell colour + bloom.
+3b. **`auxMat` → `auxRT`** (one texel per cell): r = glyph rotation (strokes: exact screen angle of the blade/rain; other glyphs: small lean along the luminance gradient), g = stroke flag.
+4. **`finalMat` → screen**: for each pixel looks at the 3×3 neighbouring cells, draws each glyph rotated, with a tiny per-cell jitter, strokes stretched 1.75× so they overlap (soft grass); combined with `max`. Then a calm palette (desaturate 26 %, soft highlight roll-off), dim vignette background and bloom.
+   Old description: glyph atlas (`atlas`, built on a 2D canvas, mipmapped, sampled with `textureGrad`) × cell colour + bloom.
    - `asciiOn = false` (button «ASCII», key **V**) skips 1–2: scene goes to full-res `rawRT` (MSAA 4) and `finalMat` (`uRaw=1`) tone-maps it. Useful to inspect models.
    - Detail level (button «детали», key **Z**): `DETAIL.big/small` = cell width in CSS px (крупно/средне/мелко/ультра: 8/6/5/4 desktop, 6/5/4/3 phone). Saved in `localStorage['ascii-view']`.
 
