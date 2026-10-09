@@ -38,7 +38,7 @@ const SX = 3, SY = 6;                         // scene texels per glyph cell (3�
 let W, H, DPR, cellW, cellH, cols, rows, quality = 1, asciiOn = true, detail = 1, rawRT = null;
 const DETAIL = { big: [8, 6, 5, 4], small: [6, 5, 4, 3], names: ['крупно', 'средне', 'мелко', 'ультра'] };
 try { const v = JSON.parse(localStorage.getItem('ascii-view') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 3) detail = v.detail; } catch (_) { }
-let sceneRT, cellRT, bA, bB;
+let sceneRT, cellRT, auxRT, bA, bB;
 
 /* ---------- glyph atlas ---------- */
 // Shape glyphs = all printable ASCII. Each glyph gets a 3×3 coverage descriptor;
@@ -50,7 +50,7 @@ const RUNE = "[]dbQUo(){}<>cpq";
 const GLYPHS = SHAPES + DIRG;
 const RUNE_IDX = [...RUNE].map(c => SHAPES.indexOf(c));
 const RAMP = " .,:;~-=+ioxcvzuwdbpqQO0&%$#8@";            // flat areas: density
-const EDGE = "_-=/\\|()<>[]{}'`,.^~!\":;LJ7TYVv";        // contours: matched by 3×3 shape
+const EDGE = "_-/\\|()'`,.^";        // contours: matched by 3×3 shape
 const RAMP_IDX = [...RAMP].map(c => SHAPES.indexOf(c)), EDGE_IDX = [...EDGE].map(c => SHAPES.indexOf(c));
 const { atlas, desc } = (() => {
   const gw = 32, gh = 56, c = document.createElement('canvas');
@@ -64,7 +64,7 @@ const { atlas, desc } = (() => {
     const ch = GLYPHS[i], x0 = i * gw;
     if (i >= SHAPES.length) {
       // directional strokes: long thin lines, like blades of grass / rain
-      g.lineWidth = 3.6; g.lineCap = 'round'; g.beginPath();
+      g.lineWidth = 3; g.lineCap = 'round'; g.beginPath();
       const k = i - SHAPES.length, m = 5;
       if (k === 0) { g.moveTo(x0 + m, gh / 2); g.lineTo(x0 + gw - m, gh / 2); }
       if (k === 1) { g.moveTo(x0 + m, gh - m); g.lineTo(x0 + gw - m, m); }
@@ -1455,10 +1455,10 @@ const cellMat = new THREE.ShaderMaterial({
       g = 0.;
       for(int k=0;k<NRAMP;k++) if(float(k)==ri) g = uRampIdx[k];
       // strong contrast inside the cell: pick the contour glyph whose 3x3 shape fits best
-      if(hi - lo > .22){
+      if(hi - lo > .34){
         int gi = int(g);
         vec3 a0 = texelFetch(tDesc, ivec2(gi,0), 0).rgb - t0, a1 = texelFetch(tDesc, ivec2(gi,1), 0).rgb - t1, a2 = texelFetch(tDesc, ivec2(gi,2), 0).rgb - t2;
-        float bc = (dot(a0,a0)+dot(a1,a1)+dot(a2,a2))*1.15;
+        float bc = (dot(a0,a0)+dot(a1,a1)+dot(a2,a2))*.85;
         for(int k=0;k<NEDGE;k++){
           int s = int(uEdgeIdx[k]);
           vec3 d0 = texelFetch(tDesc, ivec2(s,0), 0).rgb - t0;
@@ -1486,6 +1486,34 @@ const cellMat = new THREE.ShaderMaterial({
     gl_FragColor = vec4(min(cc,vec3(1.)), g/255.);
   }`,
 });
+// per-cell orientation: strokes get their exact screen angle, other glyphs lean slightly along contours
+const auxMat = new THREE.ShaderMaterial({
+  defines: { SX, SY },
+  uniforms: { tScene: { value: null }, uExpo: { value: 1 } },
+  vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
+  fragmentShader: /* glsl */`
+  uniform sampler2D tScene; uniform float uExpo;
+  void main(){
+    ivec2 cell = ivec2(gl_FragCoord.xy), b = cell*ivec2(SX,SY);
+    float bl = -1.; vec4 best = vec4(0.); float gx = 0., gy = 0., tot = 0.;
+    for(int j=0;j<SY;j++) for(int i=0;i<SX;i++){
+      vec4 t = texelFetch(tScene, b+ivec2(i,j), 0);
+      float l = dot(t.rgb, vec3(.3,.59,.11))*uExpo;
+      if(l>bl){ bl=l; best=t; }
+      gx += l*(float(i)-float(SX-1)*.5); gy += l*(float(j)-float(SY-1)*.5); tot += l;
+    }
+    float rot = 0., kind = 0., str = 0.;
+    if(best.a > .09 && best.a <= .95){
+      float ang = (best.a-.1)/.8*3.14159265;       // blade / rain direction, 0 = horizontal
+      rot = ang - 1.5707963; kind = 1.;
+    } else if(tot > 1e-4){
+      float th = atan(gy*.5, gx);                  // luminance gradient direction (cells are ~2:1)
+      str = clamp(length(vec2(gx, gy*.5))/(tot+.05)*1.4, 0., 1.);
+      rot = .32*sin(2.*th)*str;
+    }
+    gl_FragColor = vec4(rot/3.14159265 + .5, kind, str, 1.);
+  }`,
+});
 const brightMat = new THREE.ShaderMaterial({
   uniforms: { tScene: { value: null }, uTh: { value: canHalf ? 1.0 : .82 } }, vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: `uniform sampler2D tScene; uniform float uTh; varying vec2 vUv;
@@ -1502,10 +1530,10 @@ const blurMat = new THREE.ShaderMaterial({
   }`,
 });
 const finalMat = new THREE.ShaderMaterial({
-  uniforms: { tCell: { value: null }, tRaw: { value: null }, uRaw: { value: 0 }, tAtlas: { value: atlas }, tBloom: { value: null }, uCellPx: { value: new THREE.Vector2() }, uGridPx: { value: new THREE.Vector2() }, uGlyphN: { value: GLYPHS.length }, uBloomK: { value: 1.1 } },
+  uniforms: { tCell: { value: null }, tAux: { value: null }, uDirV: { value: SHAPES.length + 2 }, tRaw: { value: null }, uRaw: { value: 0 }, tAtlas: { value: atlas }, tBloom: { value: null }, uCellPx: { value: new THREE.Vector2() }, uGridPx: { value: new THREE.Vector2() }, uGlyphN: { value: GLYPHS.length }, uBloomK: { value: .95 } },
   vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: /* glsl */`
-  uniform sampler2D tCell, tAtlas, tBloom, tRaw; uniform vec2 uCellPx, uGridPx; uniform float uGlyphN, uBloomK, uRaw;
+  uniform sampler2D tCell, tAtlas, tBloom, tRaw, tAux; uniform vec2 uCellPx, uGridPx; uniform float uGlyphN, uBloomK, uRaw, uDirV;
   void main(){
     vec2 fc = gl_FragCoord.xy, cf = fc/uCellPx;
     if(uRaw > .5){
@@ -1514,16 +1542,43 @@ const finalMat = new THREE.ShaderMaterial({
       gl_FragColor = vec4(pow(r, vec3(.8)), 1.);
       return;
     }
-    ivec2 cell = ivec2(floor(cf)); vec2 lc = fract(cf);
-    vec4 cv = texelFetch(tCell, cell, 0);
-    float g = floor(cv.a*255.+.5);
-    float m = 0.;
-    if(g > 0.){
-      vec2 uv = vec2((g+lc.x)/uGlyphN, lc.y);
-      m = textureGrad(tAtlas, uv, vec2(1./(uCellPx.x*uGlyphN),0.), vec2(0.,1./uCellPx.y)).r;
+    ivec2 cell = ivec2(floor(cf));
+    ivec2 gmax = ivec2(uGridPx/uCellPx) - 1;
+    vec3 acc = vec3(0.);
+    for(int dy=-1; dy<=1; dy++) for(int dx=-1; dx<=1; dx++){
+      ivec2 nc = cell + ivec2(dx,dy);
+      if(nc.x<0 || nc.y<0 || nc.x>gmax.x || nc.y>gmax.y) continue;
+      vec4 cv = texelFetch(tCell, nc, 0);
+      float g = floor(cv.a*255.+.5);
+      if(g < .5) continue;
+      vec4 ax = texelFetch(tAux, nc, 0);
+      bool stroke = ax.g > .5;
+      // hand-placed look: tiny per-cell offset and lean
+      float h1 = fract(sin(dot(vec2(nc), vec2(12.9898,78.233)))*43758.5453);
+      float h2 = fract(h1*91.7 + .13);
+      vec2 jit = (vec2(h1,h2)-.5)*vec2(.16,.1);
+      float rot = (ax.r-.5)*3.14159265 + (stroke ? 0. : (h2-.5)*.1);
+      if(stroke) g = uDirV;
+      vec2 sc = stroke ? vec2(1.05, 1.75) : vec2(1.04, 1.02);
+      vec2 d = fc - (vec2(nc) + .5 + jit)*uCellPx;
+      float cs = cos(rot), sn = sin(rot);
+      mat2 R = mat2(cs, -sn, sn, cs);               // rotate into glyph space
+      vec2 k = 1./(uCellPx*sc);
+      vec2 lp = (R*d)*k + .5;
+      if(lp.x < 0. || lp.y < 0. || lp.x > 1. || lp.y > 1.) continue;
+      vec2 ddx = (R*vec2(1.,0.))*k, ddy = (R*vec2(0.,1.))*k;
+      float m = textureGrad(tAtlas, vec2((g+lp.x)/uGlyphN, lp.y), vec2(ddx.x/uGlyphN, ddx.y), vec2(ddy.x/uGlyphN, ddy.y)).r;
+      vec3 col = cv.rgb*(stroke ? .9 : 1.);
+      acc = max(acc, col*m);
     }
+    // calm palette: soften saturation and highlights
+    float l = dot(acc, vec3(.3,.59,.11));
+    acc = mix(vec3(l), acc, .74)*vec3(.96,1.,.97);
+    acc = acc/(1. + acc*.35)*1.18;
     vec3 bloom = texture2D(tBloom, fc/uGridPx).rgb;
-    vec3 c = vec3(.018,.018,.035) + cv.rgb*m + bloom*uBloomK;
+    vec2 q = fc/uGridPx - .5;
+    vec3 bg = vec3(.022,.024,.036)*(1. - dot(q,q)*.9);
+    vec3 c = bg + acc + bloom*uBloomK;
     gl_FragColor = vec4(c, 1.);
   }`,
 });
@@ -1537,9 +1592,10 @@ function resize() {
   const small = Math.min(W, H) < 600;
   cellW = (small ? DETAIL.small : DETAIL.big)[detail]; cellH = Math.round(cellW * 1.75);
   cols = Math.ceil(W / cellW); rows = Math.ceil(H / cellH);
-  [sceneRT, cellRT, bA, bB, rawRT].forEach(r => r && r.dispose()); rawRT = null;
+  [sceneRT, cellRT, auxRT, bA, bB, rawRT].forEach(r => r && r.dispose()); rawRT = null;
   sceneRT = makeRT(cols * SX, rows * SY, { depthBuffer: true, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, type: canHalf ? THREE.HalfFloatType : THREE.UnsignedByteType });
   cellRT = makeRT(cols, rows, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+  auxRT = makeRT(cols, rows, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
   const bw = Math.ceil(cols * SX / 3), bh = Math.ceil(rows * SY / 3);
   bA = makeRT(bw, bh, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, type: canHalf ? THREE.HalfFloatType : THREE.UnsignedByteType });
   bB = makeRT(bw, bh, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, type: canHalf ? THREE.HalfFloatType : THREE.UnsignedByteType });
@@ -1564,6 +1620,7 @@ function render() {
   if (asciiOn) {
     renderer.setRenderTarget(sceneRT); renderer.render(scene, camera);
     cellMat.uniforms.tScene.value = sceneRT.texture; pass(cellMat, cellRT);
+    auxMat.uniforms.tScene.value = sceneRT.texture; auxMat.uniforms.uExpo.value = cellMat.uniforms.uExpo.value; pass(auxMat, auxRT);
     brightMat.uniforms.tScene.value = sceneRT.texture; pass(brightMat, bA);
   } else {
     renderer.setRenderTarget(rawRT); renderer.render(scene, camera);
@@ -1575,7 +1632,7 @@ function render() {
     blurMat.uniforms.tSrc.value = bA.texture; blurMat.uniforms.uDir.value.set((1 + i) / bw, 0); pass(blurMat, bB);
     blurMat.uniforms.tSrc.value = bB.texture; blurMat.uniforms.uDir.value.set(0, (1 + i) / bh); pass(blurMat, bA);
   }
-  finalMat.uniforms.tCell.value = cellRT.texture; finalMat.uniforms.tBloom.value = bA.texture; pass(finalMat, null);
+  finalMat.uniforms.tCell.value = cellRT.texture; finalMat.uniforms.tAux.value = auxRT.texture; finalMat.uniforms.tBloom.value = bA.texture; pass(finalMat, null);
   // tags
   placeTag(P.tag, P.x, P.cls === 'knight' && knight.ready ? 2.35 : 2.75, P.z, P.sayT, P.say);
   if (zone === 'forest') for (const n of NPCS) placeTag(n.tag, n.x, 2.75, n.z, n.sayT, n.say);
