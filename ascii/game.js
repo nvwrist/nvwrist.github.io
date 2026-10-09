@@ -31,31 +31,38 @@ if (!renderer.capabilities.isWebGL2) { $('err').style.display = 'flex'; throw ne
 renderer.setClearColor(0x000000, 1);
 const canHalf = renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float');
 
-const SX = 3, SY = 5;                         // scene texels per glyph cell
+const SX = 3, SY = 6;                         // scene texels per glyph cell (3×3 sub-zones of 1×2 texels)
 let W, H, DPR, cellW, cellH, cols, rows, quality = 1, asciiOn = true, detail = 1, rawRT = null;
-const DETAIL = { big: [8, 6, 5], small: [7, 5, 4], names: ['крупно', 'средне', 'мелко'] };
-try { const v = JSON.parse(localStorage.getItem('ascii-view') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 2) detail = v.detail; } catch (_) { }
+const DETAIL = { big: [8, 6, 5, 4], small: [6, 5, 4, 3], names: ['крупно', 'средне', 'мелко', 'ультра'] };
+try { const v = JSON.parse(localStorage.getItem('ascii-view') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 3) detail = v.detail; } catch (_) { }
 let sceneRT, cellRT, bA, bB;
 
 /* ---------- glyph atlas ---------- */
-const RAMP = " .,:;~-=+ioxcvzuwdbpqQO0&%$#8@";
+// Shape glyphs = all printable ASCII. Each glyph gets a 3×3 coverage descriptor;
+// the cell pass picks the glyph whose shape best matches the 3×3 luminance of the
+// scene under the cell, so edges follow contours instead of only density.
+const SHAPES = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).join('');
 const DIRG = "-/|\\";
 const RUNE = "[]dbQUo(){}<>cpq";
-const GLYPHS = RAMP + DIRG + RUNE;
-const atlas = (() => {
-  const gw = 40, gh = 70, c = document.createElement('canvas');
+const GLYPHS = SHAPES + DIRG;
+const RUNE_IDX = [...RUNE].map(c => SHAPES.indexOf(c));
+const RAMP = " .,:;~-=+ioxcvzuwdbpqQO0&%$#8@";            // flat areas: density
+const EDGE = "_-=/\\|()<>[]{}'`,.^~!\":;LJ7TYVv";        // contours: matched by 3×3 shape
+const RAMP_IDX = [...RAMP].map(c => SHAPES.indexOf(c)), EDGE_IDX = [...EDGE].map(c => SHAPES.indexOf(c));
+const { atlas, desc } = (() => {
+  const gw = 32, gh = 56, c = document.createElement('canvas');
   c.width = GLYPHS.length * gw; c.height = gh;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', { willReadFrequently: true });
   g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
   g.fillStyle = '#fff'; g.strokeStyle = '#fff';
-  g.font = `${Math.round(gh * .78)}px "DejaVu Sans Mono",Menlo,Consolas,"Liberation Mono",monospace`;
+  g.font = `${Math.round(gh * .8)}px "DejaVu Sans Mono",Menlo,Consolas,"Liberation Mono",monospace`;
   g.textAlign = 'center'; g.textBaseline = 'middle';
   for (let i = 0; i < GLYPHS.length; i++) {
     const ch = GLYPHS[i], x0 = i * gw;
-    if (i >= RAMP.length && i < RAMP.length + 4) {
+    if (i >= SHAPES.length) {
       // directional strokes: long thin lines, like blades of grass / rain
-      g.lineWidth = 4.5; g.lineCap = 'round'; g.beginPath();
-      const k = i - RAMP.length, m = 7;
+      g.lineWidth = 3.6; g.lineCap = 'round'; g.beginPath();
+      const k = i - SHAPES.length, m = 5;
       if (k === 0) { g.moveTo(x0 + m, gh / 2); g.lineTo(x0 + gw - m, gh / 2); }
       if (k === 1) { g.moveTo(x0 + m, gh - m); g.lineTo(x0 + gw - m, m); }
       if (k === 2) { g.moveTo(x0 + gw / 2, m); g.lineTo(x0 + gw / 2, gh - m); }
@@ -63,9 +70,20 @@ const atlas = (() => {
       g.stroke();
     } else g.fillText(ch, x0 + gw / 2, gh * .54);
   }
+  // 3×3 coverage per shape glyph (row 0 = top)
+  const px = g.getImageData(0, 0, c.width, gh).data, N = SHAPES.length, d = new Float32Array(N * 3 * 4);
+  let mx = 1e-6;
+  for (let i = 0; i < N; i++) for (let r = 0; r < 3; r++) for (let q = 0; q < 3; q++) {
+    const xa = i * gw + Math.round(q * gw / 3), xb = i * gw + Math.round((q + 1) * gw / 3), ya = Math.round(r * gh / 3), yb = Math.round((r + 1) * gh / 3);
+    let sum = 0; for (let y = ya; y < yb; y++) for (let x = xa; x < xb; x++) sum += px[(y * c.width + x) * 4];
+    const v = sum / ((xb - xa) * (yb - ya) * 255); d[(r * N + i) * 4 + q] = v; if (v > mx) mx = v;
+  }
+  for (let k = 0; k < d.length; k++) if (k % 4 !== 3) d[k] /= mx;
+  const desc = new THREE.DataTexture(d, N, 3, THREE.RGBAFormat, THREE.FloatType);
+  desc.minFilter = desc.magFilter = THREE.NearestFilter; desc.needsUpdate = true;
   const t = new THREE.CanvasTexture(c);
   t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = true;
-  return t;
+  return { atlas: t, desc };
 })();
 
 /* ---------- shared uniforms / GLSL ---------- */
@@ -295,7 +313,7 @@ function addCircle(x, z, r) { const k = (Math.floor(x / 4)) + ',' + (Math.floor(
   const trunk = new THREE.InstancedMesh(trunkGeo, stdMat({ color: [.5, .42, .34], pat: 3 }), trunks.length);
   trunks.forEach(([x, z, s], i) => { m4.compose(v.set(x, 0, z), q.identity(), sc.set(s, 2.2 * s, s)); trunk.setMatrixAt(i, m4); });
   const canGeo = new THREE.IcosahedronGeometry(1, 0);
-  const canMat = stdMat({ color: [.72, .84, .74], pat: 3, sway: 1 });
+  const canMat = stdMat({ color: [.6, .7, .62], pat: 3, sway: 1 });
   const can1 = new THREE.InstancedMesh(canGeo, canMat, cans.length), can2 = new THREE.InstancedMesh(canGeo, canMat, cans.length);
   cans.forEach(([x, z, s, r], i) => {
     q.setFromEuler(e.set(0, r, 0));
@@ -720,7 +738,7 @@ addEventListener('keydown', e => {
   if (e.code === 'Space') { cast(null); e.preventDefault(); }
   if (e.code === 'KeyQ') { P.spell = (P.spell + 1) % SP.length; hud(); }
   if (e.code === 'KeyV') setView(!asciiOn, detail);
-  if (e.code === 'KeyZ') setView(asciiOn, (detail + 1) % 3);
+  if (e.code === 'KeyZ') setView(asciiOn, (detail + 1) % 4);
   if (/^Digit[1-5]$/.test(e.code)) setWx(+e.code[5] - 1);
 });
 function closeChat() { chatOpen = false; chatEl.style.display = 'none'; chatEl.blur(); }
@@ -751,7 +769,7 @@ $('cast').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropa
 $('bWx').onclick = () => setWx((wxIdx + 1) % WX.length);
 $('bSp').onclick = () => { P.spell = (P.spell + 1) % SP.length; hud(); };
 $('bAscii').onclick = () => setView(!asciiOn, detail);
-$('bDet').onclick = () => setView(asciiOn, (detail + 1) % 3);
+$('bDet').onclick = () => setView(asciiOn, (detail + 1) % 4);
 function setView(a, d) {
   asciiOn = a; detail = d; resize(); viewBtns();
   toast(asciiOn ? 'ASCII · ' + DETAIL.names[detail] : 'без ASCII');
@@ -1002,33 +1020,65 @@ const postScene = new THREE.Scene(), postCam = new THREE.OrthographicCamera(-1, 
 const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2)); quad.frustumCulled = false; postScene.add(quad);
 const QUAD_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy,0.,1.); }`;
 const cellMat = new THREE.ShaderMaterial({
-  defines: { SX, SY },
-  uniforms: { tScene: { value: null }, uR: { value: RAMP.length }, uDir: { value: RAMP.length }, uRune: { value: RAMP.length + 4 }, uRuneN: { value: RUNE.length }, uTime: U.uTime },
+  defines: { SX, SY, NRAMP: RAMP.length, NEDGE: EDGE.length, NRUNE: RUNE.length },
+  uniforms: { tScene: { value: null }, tDesc: { value: desc }, uDir: { value: SHAPES.length }, uRuneIdx: { value: RUNE_IDX }, uRampIdx: { value: RAMP_IDX }, uEdgeIdx: { value: EDGE_IDX }, uTime: U.uTime },
   vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: /* glsl */`
-  uniform sampler2D tScene; uniform float uR, uDir, uRune, uRuneN, uTime;
+  uniform sampler2D tScene; uniform highp sampler2D tDesc; uniform float uDir, uTime; uniform float uRuneIdx[NRUNE]; uniform float uRampIdx[NRAMP]; uniform float uEdgeIdx[NEDGE];
   void main(){
     ivec2 cell = ivec2(gl_FragCoord.xy);
     ivec2 b = cell*ivec2(SX,SY);
     vec3 sum = vec3(0.); float bl = -1.; vec4 best = vec4(0.);
+    float sub[9];
+    for(int k=0;k<9;k++) sub[k] = 0.;
     for(int j=0;j<SY;j++) for(int i=0;i<SX;i++){
       vec4 t = texelFetch(tScene, b+ivec2(i,j), 0);
       sum += t.rgb; float l = dot(t.rgb, vec3(.3,.59,.11));
       if(l>bl){ bl=l; best=t; }
+      sub[(2-(j*3)/SY)*3 + (i*3)/SX] += l;
     }
     vec3 avg = sum/float(SX*SY);
-    float lum = dot(avg, vec3(.3,.59,.11));
     float g; vec3 col;
     if(best.a > .95){
-      float k = clamp(lum*1.6, 0., 1.);
-      g = floor(pow(k,1.15)*(uR-1.)+.5); col = mix(avg, best.rgb, .55);
+      float w = 9./float(SX*SY);
+      vec3 t0, t1, t2;
+      for(int k=0;k<3;k++){
+        vec3 v = vec3(sub[k*3], sub[k*3+1], sub[k*3+2])*w;
+        v = pow(clamp(v*1.7, 0., 1.), vec3(1.1));
+        if(k==0) t0=v; else if(k==1) t1=v; else t2=v;
+      }
+      float mean = (dot(t0,vec3(1.))+dot(t1,vec3(1.))+dot(t2,vec3(1.)))/9.;
+      float hi = max(max(max(t0.x,t0.y),max(t0.z,t1.x)),max(max(t1.y,t1.z),max(t2.x,max(t2.y,t2.z))));
+      float lo = min(min(min(t0.x,t0.y),min(t0.z,t1.x)),min(min(t1.y,t1.z),min(t2.x,min(t2.y,t2.z))));
+      // flat: density ramp
+      float ri = clamp(floor(mean*float(NRAMP-1)+.5), 0., float(NRAMP-1));
+      g = 0.;
+      for(int k=0;k<NRAMP;k++) if(float(k)==ri) g = uRampIdx[k];
+      // strong contrast inside the cell: pick the contour glyph whose 3x3 shape fits best
+      if(hi - lo > .22){
+        int gi = int(g);
+        vec3 a0 = texelFetch(tDesc, ivec2(gi,0), 0).rgb - t0, a1 = texelFetch(tDesc, ivec2(gi,1), 0).rgb - t1, a2 = texelFetch(tDesc, ivec2(gi,2), 0).rgb - t2;
+        float bc = (dot(a0,a0)+dot(a1,a1)+dot(a2,a2))*1.15;
+        for(int k=0;k<NEDGE;k++){
+          int s = int(uEdgeIdx[k]);
+          vec3 d0 = texelFetch(tDesc, ivec2(s,0), 0).rgb - t0;
+          vec3 d1 = texelFetch(tDesc, ivec2(s,1), 0).rgb - t1;
+          vec3 d2 = texelFetch(tDesc, ivec2(s,2), 0).rgb - t2;
+          float c = dot(d0,d0) + dot(d1,d1) + dot(d2,d2);
+          if(c < bc){ bc = c; g = uEdgeIdx[k]; }
+        }
+      }
+      col = mix(avg, best.rgb, .55);
     } else if(best.a > .09){
       float a = (best.a-.1)/.8;
       g = uDir + mod(floor(a*4.+.5), 4.);
       col = best.rgb;
     } else {
       float h = fract(sin(dot(vec2(cell)+floor(uTime*9.), vec2(12.9898,78.233)))*43758.5453);
-      g = uRune + floor(h*uRuneN); col = best.rgb;
+      int ri = int(floor(h*float(NRUNE)));
+      float rg = 0.;
+      for(int k=0;k<NRUNE;k++) if(k==ri) rg = uRuneIdx[k];
+      g = rg; col = best.rgb;
     }
     if(bl < .014) g = 0.;
     float m = max(max(col.r,col.g),col.b);
@@ -1102,9 +1152,11 @@ function resize() {
   grass.geo.instanceCount = Math.floor(grass.N * (small ? .55 : 1) * quality);
   if (!asciiOn) {
     const rs = Math.min(1, 1.6 / DPR);
-    rawRT = makeRT(Math.round(cols * cellW * DPR * rs), Math.round(rows * cellH * DPR * rs), { depthBuffer: true, samples: 4, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, type: canHalf ? THREE.HalfFloatType : THREE.UnsignedByteType });
+    // 8-bit + MSAA works everywhere (half-float MSAA is not supported on some iPhones)
+    rawRT = makeRT(Math.round(cols * cellW * DPR * rs), Math.round(rows * cellH * DPR * rs), { depthBuffer: true, samples: 4, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
   }
   finalMat.uniforms.uRaw.value = asciiOn ? 0 : 1;
+  brightMat.uniforms.uTh.value = asciiOn && canHalf ? 1.0 : .8;
 }
 addEventListener('resize', resize);
 
