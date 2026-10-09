@@ -33,6 +33,30 @@
   #stick{position:fixed;width:110px;height:110px;margin:-55px 0 0 -55px;border-radius:50%;border:1px solid rgba(180,200,230,.35);display:none;pointer-events:none}
   #stick i{position:absolute;left:35px;top:35px;width:40px;height:40px;border-radius:50%;background:rgba(180,200,230,.3)}
   #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:24px;font-size:15px}
+  #pick{position:fixed;left:50%;bottom:calc(120px + env(safe-area-inset-bottom));transform:translateX(-50%);display:none;background:rgba(14,18,30,.78);color:#e8eef6;border:1px solid rgba(120,140,170,.5);border-radius:22px;padding:11px 20px;font:15px system-ui;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+  #pick b{font-weight:600}
+  #inv{position:fixed;inset:0;display:none;align-items:flex-end;justify-content:center;background:rgba(0,0,8,.35);z-index:5}
+  #inv .sheet{width:min(440px,100%);background:rgba(12,14,24,.94);border:1px solid rgba(90,110,140,.45);border-radius:18px 18px 0 0;padding:14px 14px calc(16px + env(safe-area-inset-bottom));box-shadow:0 -10px 40px rgba(0,0,0,.5)}
+  #inv .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:16px}
+  #inv .head button{background:none;border:0;color:#9ab;font-size:20px;padding:4px 8px}
+  #slots{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
+  .slot{aspect-ratio:1;position:relative;background:rgba(255,255,255,.04);border:1px solid rgba(120,140,170,.25);border-radius:10px;color:#fff;padding:0}
+  .slot.sel{border-color:#7fe3d8;background:rgba(127,227,216,.12)}
+  .slot i{font:500 26px "AsciiMono",ui-monospace,monospace;font-style:normal;text-shadow:0 0 10px currentColor}
+  .slot em{position:absolute;right:5px;bottom:3px;font:600 11px system-ui;font-style:normal;color:#cfd8e3}
+  #invInfo{min-height:86px;margin-top:12px;font-size:13px}
+  #invInfo h4{margin:0 0 4px;font-size:15px}
+  #invInfo p{margin:0 0 10px;color:#aab6c4}
+  #invInfo .muted{color:#6f7d8d}
+  .acts{display:flex;gap:8px;flex-wrap:wrap}
+  .acts button,#editor button{background:rgba(40,52,76,.7);color:#e2eaf4;border:1px solid rgba(110,130,160,.5);border-radius:10px;padding:9px 13px;font:13px system-ui}
+  #editor{position:fixed;left:0;right:0;bottom:0;display:none;flex-direction:column;gap:8px;padding:10px 10px calc(10px + env(safe-area-inset-bottom));background:linear-gradient(transparent,rgba(6,8,14,.9) 30%)}
+  #edTools,.edActs{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none}
+  #edTools button{white-space:nowrap;flex:0 0 auto}
+  #edTools button.on{border-color:#7fe3d8;background:rgba(127,227,216,.18)}
+  .edActs button{white-space:nowrap;flex:0 0 auto;font-size:12px!important;padding:7px 10px!important}
+  .edHint{font-size:11px;opacity:.55;text-align:center}
+  body.editing #cast,body.editing #bWx,body.editing #bSp,body.editing #bInv,body.editing #pick,body.editing #log,body.editing #stick{display:none!important}
   @media (hover:none){#cast{display:block}#hint{display:none}}
 </style>
 </head>
@@ -44,13 +68,24 @@
 <div id="hearts" class="hud"></div>
 <div id="toast" class="hud"></div>
 <div id="log" class="hud"></div>
-<div id="hint" class="hud">WASD — ходить · Shift — бежать · клик / пробел — магия · Q — школа магии · 1–5 — погода · Enter — чат · C — маг/рыцарь · M — Night City · E/F — эмоция/блок (рыцарь) · V — ASCII вкл/выкл · Z — детализация · руины справа по тропе →</div>
-<div class="btns"><button id="bWx">☁ погода</button><button id="bSp">✦ магия</button><button id="bHero">✦ маг</button><button id="bMap">🗺 карта</button><button id="bAscii">▦ ASCII: вкл</button><button id="bDet">◫ средне</button></div>
+<div id="hint" class="hud">WASD — ходить · Shift — бежать · клик / пробел — магия · Q — школа магии · 1–5 — погода · Enter — чат · E — подобрать · I — сумка · B — редактор · V — ASCII вкл/выкл · Z — детализация · руины справа по тропе →</div>
+<div class="btns"><button id="bInv">🎒 сумка</button><button id="bEdit">✎ редактор</button><button id="bWx">☁ погода</button><button id="bSp">✦ магия</button><button id="bAscii">▦ ASCII: вкл</button><button id="bDet">◫ средне</button></div>
 <button id="cast">✦</button>
+<button id="pick"></button>
+<div id="inv"><div class="sheet">
+  <div class="head"><b>Сумка</b><button id="invClose">✕</button></div>
+  <div id="slots"></div>
+  <div id="invInfo"></div>
+</div></div>
+<div id="editor">
+  <div id="edTools"></div>
+  <div class="edActs"><button id="edUndo">↶ отменить</button><button id="edExport">⤓ экспорт</button><button id="edImport">⤒ импорт</button><button id="edReset">♻ сброс</button><button id="edExit">✓ готово</button></div>
+  <div class="edHint">тап — поставить · тяни — двигать карту</div>
+</div>
+<input type="file" id="mapFile" accept="application/json,.json" hidden>
 <div id="stick"><i></i></div>
 <input id="chat" maxlength="80" placeholder="Сообщение…" autocomplete="off" enterkeyhint="send">
 <div id="err">Нужен браузер с поддержкой WebGL2.</div>
-<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js"}}</script>
-<script type="module" src="./game.js?v=9"></script>
+<script type="module" src="./game.js?v=10"></script>
 </body>
 </html>
