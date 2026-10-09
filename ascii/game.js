@@ -34,8 +34,8 @@ const canHalf = renderer.extensions.has('EXT_color_buffer_float') || renderer.ex
 
 const SX = 3, SY = 6;                         // scene texels per glyph cell (3×3 sub-zones of 1×2 texels)
 let W, H, DPR, cellW, cellH, cols, rows, quality = 1, asciiOn = true, detail = 1, rawRT = null;
-const DETAIL = { big: [8, 6, 5, 4], small: [6, 5, 4, 3], names: ['крупно', 'средне', 'мелко', 'ультра'] };
-try { const v = JSON.parse(localStorage.getItem('ascii-view') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 3) detail = v.detail; } catch (_) { }
+const DETAIL = { big: [11, 9, 7, 5], small: [10, 8.5, 7, 5], names: ['крупно', 'средне', 'мелко', 'ультра'] };
+try { const v = JSON.parse(localStorage.getItem('ascii-view2') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 3) detail = v.detail; } catch (_) { }
 let sceneRT, cellRT, auxRT, bA, bB;
 
 /* ---------- glyph atlas ---------- */
@@ -165,8 +165,8 @@ void main(){
     base *= mort>0. ? .18 : (.7+.6*hash(vec2(floor((q.x+off)/.9),row)));
   } else if(uPat>1.5 && uPat<2.5){    // floor slabs
     vec2 b = fract(vP.xz*.9);
-    float mort = step(b.x,.07)+step(b.y,.07);
-    base *= mort>0. ? .15 : (.45+.8*noise(vP.xz*2.1));
+    float mort = step(b.x,.14)+step(b.y,.14);
+    base *= mort>0. ? .0 : (.85+.5*noise(vP.xz*2.1));
   } else if(uPat>2.5){                // leafy / bark noise
     base *= .55+.9*noise(vP.xz*2.6+vP.y*3.1);
   }
@@ -208,7 +208,7 @@ const groundMat = new THREE.ShaderMaterial({
       float d=length(pt-fg); if(d<d1){d2=d1;d1=d;cid=ig+o;} else if(d<d2) d2=d;
     }
     float st = smoothstep(.02,.16,d2-d1);
-    vec3 stone = vec3(.40,.38,.35)*(.45+.7*hash(cid))*(.1+.9*st)*(.8+.4*noise(vP.xz*6.));
+    vec3 stone = vec3(.24,.23,.21)*(.45+.7*hash(cid))*(.1+.9*st)*(.8+.4*noise(vP.xz*6.));
     vec3 base = mix(soil,stone,pm);
     vec3 c = base*lightAt(vP,vec3(0,1,0));
     gl_FragColor = vec4(fogIt(c,vP),1.);
@@ -325,7 +325,7 @@ const PGEO = {
   bowl: new THREE.CylinderGeometry(.22, .12, .2, 6).translate(0, 1.55, 0),
 };
 const PMAT = {
-  trunk: stdMat({ color: [.5, .42, .34], pat: 3 }), leaf: stdMat({ color: [.6, .7, .62], pat: 3, sway: 1 }),
+  trunk: stdMat({ color: [.5, .42, .34], pat: 3 }), leaf: stdMat({ color: [.8, .88, .82], pat: 3, sway: 1, rim: .6 }),
   bush: stdMat({ color: [.42, .62, .45], pat: 3, sway: 1 }), rock: stdMat({ color: [.42, .42, .4], pat: 3 }),
   wall: stdMat({ color: [.5, .5, .47], pat: 1 }), crate: stdMat({ color: [.55, .4, .25], pat: 3 }),
   post: stdMat({ color: [.3, .22, .15] }), bowl: stdMat({ color: [.25, .2, .16], emis: [.5, .2, .05] }),
@@ -646,7 +646,7 @@ const snow = (() => {
       vQ = position.xy;
       gl_Position = projectionMatrix*viewMatrix*vec4(p + (r*position.x+u*position.y)*(.04+aO.w*.04),1.);
     }`,
-    fragmentShader: `varying vec2 vQ; void main(){ if(dot(vQ,vQ)>1.) discard; gl_FragColor = vec4(vec3(.85,.9,1.),1.); }`,
+    fragmentShader: `varying vec2 vQ; void main(){ if(dot(vQ,vQ)>1.) discard; gl_FragColor = vec4(vec3(.85,.9,1.),.02); }`,
   });
   const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; weatherG.add(mesh);
   return { geo };
@@ -737,7 +737,7 @@ const SP = [
   { n: 'Nature', c: [.8, 2.2, .45], col: '#8f6' },
 ];
 const P = { name: 'Странник', x: 0, z: 3, yaw: 0, hp: 5, cd: 0, spell: 0, inv: 0, hurt: 0, say: '', sayT: 0 };
-const hero = makeCharacter({ fill: [.07, .065, .06], rimK: 1.7 });
+const hero = makeCharacter({ fill: [.16, .14, .12], rimK: 2.2 });
 scene.add(hero.g);
 const NPC_DEF = [['Mira', [.75, .45, .55], [.35, .18, .25]], ['Kael', [.45, .55, .8], [.18, .22, .4]], ['Oru', [.5, .7, .45], [.2, .3, .18]]];
 const NPCS = NPC_DEF.map(([name, robe, hat], i) => {
@@ -842,7 +842,7 @@ $('bDet').onclick = () => setView(asciiOn, (detail + 1) % 4);
 function setView(a, d) {
   asciiOn = a; detail = d; resize(); viewBtns();
   toast(asciiOn ? 'ASCII · ' + DETAIL.names[detail] : 'без ASCII');
-  try { localStorage.setItem('ascii-view', JSON.stringify({ ascii: asciiOn, detail })); } catch (_) { }
+  try { localStorage.setItem('ascii-view2', JSON.stringify({ ascii: asciiOn, detail })); } catch (_) { }
 }
 function viewBtns() { $('bAscii').textContent = asciiOn ? '▦ ASCII: вкл' : '▦ ASCII: выкл'; $('bDet').textContent = '◫ ' + DETAIL.names[detail]; $('bDet').style.display = asciiOn ? '' : 'none'; }
 canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -1416,6 +1416,10 @@ const cellMat = new THREE.ShaderMaterial({
         }
       }
       col = mix(avg, best.rgb, .55);
+    } else if(best.a < .035 && bl > .02){
+      float hs = fract(sin(dot(vec2(cell), vec2(41.3,17.7)))*9137.1);
+      g = hs < .45 ? 10. : hs < .75 ? 79. : hs < .9 ? 14. : 11.;   // * o . +
+      col = best.rgb;
     } else if(best.a > .09){
       float a = (best.a-.1)/.8;
       g = uDir + mod(floor(a*4.+.5), 4.);
@@ -1427,7 +1431,7 @@ const cellMat = new THREE.ShaderMaterial({
       for(int k=0;k<NRUNE;k++) if(k==ri) rg = uRuneIdx[k];
       g = rg; col = best.rgb;
     }
-    if(bl < .014) g = 0.;
+    if(bl < .014 || (best.a > .95 && bl < .05)) g = 0.;
     float m = max(max(col.r,col.g),col.b);
     vec3 cc = m > 0. ? col/m * min(1.15, .22 + m*1.5) : col;
     gl_FragColor = vec4(min(cc,vec3(1.)), g/255.);
@@ -1477,10 +1481,10 @@ const blurMat = new THREE.ShaderMaterial({
   }`,
 });
 const finalMat = new THREE.ShaderMaterial({
-  uniforms: { tCell: { value: null }, tAux: { value: null }, uDirV: { value: SHAPES.length + 2 }, tRaw: { value: null }, uRaw: { value: 0 }, tAtlas: { value: atlas }, tBloom: { value: null }, uCellPx: { value: new THREE.Vector2() }, uGridPx: { value: new THREE.Vector2() }, uGlyphN: { value: GLYPHS.length }, uBloomK: { value: .95 } },
+  uniforms: { tCell: { value: null }, tAux: { value: null }, uDirV: { value: SHAPES.length + 2 }, uT: U.uTime, tRaw: { value: null }, uRaw: { value: 0 }, tAtlas: { value: atlas }, tBloom: { value: null }, uCellPx: { value: new THREE.Vector2() }, uGridPx: { value: new THREE.Vector2() }, uGlyphN: { value: GLYPHS.length }, uBloomK: { value: .95 } },
   vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: /* glsl */`
-  uniform sampler2D tCell, tAtlas, tBloom, tRaw, tAux; uniform vec2 uCellPx, uGridPx; uniform float uGlyphN, uBloomK, uRaw, uDirV;
+  uniform sampler2D tCell, tAtlas, tBloom, tRaw, tAux; uniform vec2 uCellPx, uGridPx; uniform float uGlyphN, uBloomK, uRaw, uDirV, uT;
   void main(){
     vec2 fc = gl_FragCoord.xy, cf = fc/uCellPx;
     if(uRaw > .5){
@@ -1504,9 +1508,10 @@ const finalMat = new THREE.ShaderMaterial({
       float h1 = fract(sin(dot(vec2(nc), vec2(12.9898,78.233)))*43758.5453);
       float h2 = fract(h1*91.7 + .13);
       vec2 jit = (vec2(h1,h2)-.5)*vec2(.16,.1);
-      float rot = (ax.r-.5)*3.14159265 + (stroke ? 0. : (h2-.5)*.1);
+      float rot = (ax.r-.5)*3.14159265 + (stroke ? 0. : (h2-.5)*.12 + sin(uT*1.3 + h1*31.)*.035);
+      jit += stroke ? vec2(0.) : vec2(sin(uT*.9 + h2*40.), cos(uT*1.1 + h1*27.))*.035;
       if(stroke) g = uDirV;
-      vec2 sc = stroke ? vec2(1.05, 1.75) : vec2(1.04, 1.02);
+      vec2 sc = stroke ? vec2(1.1, 2.3) : vec2(1.0, 1.0);
       vec2 d = fc - (vec2(nc) + .5 + jit)*uCellPx;
       float cs = cos(rot), sn = sin(rot);
       mat2 R = mat2(cs, -sn, sn, cs);               // rotate into glyph space
@@ -1520,7 +1525,7 @@ const finalMat = new THREE.ShaderMaterial({
     }
     // calm palette: soften saturation and highlights
     float l = dot(acc, vec3(.3,.59,.11));
-    acc = mix(vec3(l), acc, .74)*vec3(.96,1.,.97);
+    acc = mix(vec3(l), acc, .66)*vec3(.95,1.,.96);
     acc = acc/(1. + acc*.35)*1.18;
     vec3 bloom = texture2D(tBloom, fc/uGridPx).rgb;
     vec2 q = fc/uGridPx - .5;
@@ -1537,7 +1542,7 @@ function resize() {
   DPR = Math.min(2, devicePixelRatio || 1) * (quality < 1 ? .75 : 1);
   renderer.setPixelRatio(DPR); renderer.setSize(W, H, false);
   const small = Math.min(W, H) < 600;
-  cellW = (small ? DETAIL.small : DETAIL.big)[detail]; cellH = Math.round(cellW * 1.75);
+  cellW = (small ? DETAIL.small : DETAIL.big)[detail]; cellH = Math.round(cellW * 1.7);
   cols = Math.ceil(W / cellW); rows = Math.ceil(H / cellH);
   [sceneRT, cellRT, auxRT, bA, bB, rawRT].forEach(r => r && r.dispose()); rawRT = null;
   sceneRT = makeRT(cols * SX, rows * SY, { depthBuffer: true, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, type: canHalf ? THREE.HalfFloatType : THREE.UnsignedByteType });
