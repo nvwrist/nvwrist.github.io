@@ -25,35 +25,44 @@ const pathZ = x => Math.sin(x * .05) * 6 + Math.sin(x * .13) * 1.5;
 /* ---------- renderer ---------- */
 const canvas = $('c');
 let renderer;
-try { renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' }); }
+try { renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance' }); }
 catch (e) { $('err').style.display = 'flex'; throw e; }
 if (!renderer.capabilities.isWebGL2) { $('err').style.display = 'flex'; throw new Error('WebGL2 required'); }
 renderer.setClearColor(0x000000, 1);
 const canHalf = renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float');
 
-const SX = 3, SY = 5;                         // scene texels per glyph cell
-let W, H, DPR, cellW, cellH, cols, rows, quality = 1;
+const SX = 3, SY = 6;                         // scene texels per glyph cell (3×3 sub-zones of 1×2 texels)
+let W, H, DPR, cellW, cellH, cols, rows, quality = 1, asciiOn = true, detail = 1, rawRT = null;
+const DETAIL = { big: [8, 6, 5, 4], small: [6, 5, 4, 3], names: ['крупно', 'средне', 'мелко', 'ультра'] };
+try { const v = JSON.parse(localStorage.getItem('ascii-view') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 3) detail = v.detail; } catch (_) { }
 let sceneRT, cellRT, bA, bB;
 
 /* ---------- glyph atlas ---------- */
-const RAMP = " .,:;~-=+ioxcvzuwdbpqQO0&%$#8@";
+// Shape glyphs = all printable ASCII. Each glyph gets a 3×3 coverage descriptor;
+// the cell pass picks the glyph whose shape best matches the 3×3 luminance of the
+// scene under the cell, so edges follow contours instead of only density.
+const SHAPES = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).join('');
 const DIRG = "-/|\\";
 const RUNE = "[]dbQUo(){}<>cpq";
-const GLYPHS = RAMP + DIRG + RUNE;
-const atlas = (() => {
-  const gw = 40, gh = 70, c = document.createElement('canvas');
+const GLYPHS = SHAPES + DIRG;
+const RUNE_IDX = [...RUNE].map(c => SHAPES.indexOf(c));
+const RAMP = " .,:;~-=+ioxcvzuwdbpqQO0&%$#8@";            // flat areas: density
+const EDGE = "_-=/\\|()<>[]{}'`,.^~!\":;LJ7TYVv";        // contours: matched by 3×3 shape
+const RAMP_IDX = [...RAMP].map(c => SHAPES.indexOf(c)), EDGE_IDX = [...EDGE].map(c => SHAPES.indexOf(c));
+const { atlas, desc } = (() => {
+  const gw = 32, gh = 56, c = document.createElement('canvas');
   c.width = GLYPHS.length * gw; c.height = gh;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', { willReadFrequently: true });
   g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
   g.fillStyle = '#fff'; g.strokeStyle = '#fff';
-  g.font = `${Math.round(gh * .78)}px "DejaVu Sans Mono",Menlo,Consolas,"Liberation Mono",monospace`;
+  g.font = `${Math.round(gh * .8)}px "DejaVu Sans Mono",Menlo,Consolas,"Liberation Mono",monospace`;
   g.textAlign = 'center'; g.textBaseline = 'middle';
   for (let i = 0; i < GLYPHS.length; i++) {
     const ch = GLYPHS[i], x0 = i * gw;
-    if (i >= RAMP.length && i < RAMP.length + 4) {
+    if (i >= SHAPES.length) {
       // directional strokes: long thin lines, like blades of grass / rain
-      g.lineWidth = 4.5; g.lineCap = 'round'; g.beginPath();
-      const k = i - RAMP.length, m = 7;
+      g.lineWidth = 3.6; g.lineCap = 'round'; g.beginPath();
+      const k = i - SHAPES.length, m = 5;
       if (k === 0) { g.moveTo(x0 + m, gh / 2); g.lineTo(x0 + gw - m, gh / 2); }
       if (k === 1) { g.moveTo(x0 + m, gh - m); g.lineTo(x0 + gw - m, m); }
       if (k === 2) { g.moveTo(x0 + gw / 2, m); g.lineTo(x0 + gw / 2, gh - m); }
@@ -61,9 +70,20 @@ const atlas = (() => {
       g.stroke();
     } else g.fillText(ch, x0 + gw / 2, gh * .54);
   }
+  // 3×3 coverage per shape glyph (row 0 = top)
+  const px = g.getImageData(0, 0, c.width, gh).data, N = SHAPES.length, d = new Float32Array(N * 3 * 4);
+  let mx = 1e-6;
+  for (let i = 0; i < N; i++) for (let r = 0; r < 3; r++) for (let q = 0; q < 3; q++) {
+    const xa = i * gw + Math.round(q * gw / 3), xb = i * gw + Math.round((q + 1) * gw / 3), ya = Math.round(r * gh / 3), yb = Math.round((r + 1) * gh / 3);
+    let sum = 0; for (let y = ya; y < yb; y++) for (let x = xa; x < xb; x++) sum += px[(y * c.width + x) * 4];
+    const v = sum / ((xb - xa) * (yb - ya) * 255); d[(r * N + i) * 4 + q] = v; if (v > mx) mx = v;
+  }
+  for (let k = 0; k < d.length; k++) if (k % 4 !== 3) d[k] /= mx;
+  const desc = new THREE.DataTexture(d, N, 3, THREE.RGBAFormat, THREE.FloatType);
+  desc.minFilter = desc.magFilter = THREE.NearestFilter; desc.needsUpdate = true;
   const t = new THREE.CanvasTexture(c);
   t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = true;
-  return t;
+  return { atlas: t, desc };
 })();
 
 /* ---------- shared uniforms / GLSL ---------- */
@@ -171,9 +191,15 @@ const groundMat = new THREE.ShaderMaterial({
     float dp = abs(vP.z-pathZ(vP.x));
     vec3 soil = vec3(.012,.022,.015)*(.4+.9*noise(vP.xz*.8));
     float pm = 1.-smoothstep(1.35,1.9,dp+(noise(vP.xz*1.4)-.5)*.7);
-    vec2 g = vP.xz*1.7; vec2 id=floor(g); vec2 f=fract(g)-.5;
-    float st = smoothstep(.48,.25,length(f+(vec2(hash(id),hash(id+7.))-.5)*.35));
-    vec3 stone = vec3(.40,.38,.35)*(.45+.7*hash(id))*(.15+.85*st);
+    // irregular cobbles: voronoi cells with dark gaps
+    vec2 g = vP.xz*1.9; vec2 ig=floor(g), fg=fract(g);
+    float d1=9., d2=9.; vec2 cid=vec2(0.);
+    for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++){
+      vec2 o=vec2(float(x),float(y)); vec2 pt=o+vec2(hash(ig+o),hash(ig+o+19.))*.85+.075;
+      float d=length(pt-fg); if(d<d1){d2=d1;d1=d;cid=ig+o;} else if(d<d2) d2=d;
+    }
+    float st = smoothstep(.02,.16,d2-d1);
+    vec3 stone = vec3(.40,.38,.35)*(.45+.7*hash(cid))*(.1+.9*st)*(.8+.4*noise(vP.xz*6.));
     vec3 base = mix(soil,stone,pm);
     vec3 c = base*lightAt(vP,vec3(0,1,0));
     gl_FragColor = vec4(fogIt(c,vP),1.);
@@ -287,7 +313,7 @@ function addCircle(x, z, r) { const k = (Math.floor(x / 4)) + ',' + (Math.floor(
   const trunk = new THREE.InstancedMesh(trunkGeo, stdMat({ color: [.5, .42, .34], pat: 3 }), trunks.length);
   trunks.forEach(([x, z, s], i) => { m4.compose(v.set(x, 0, z), q.identity(), sc.set(s, 2.2 * s, s)); trunk.setMatrixAt(i, m4); });
   const canGeo = new THREE.IcosahedronGeometry(1, 0);
-  const canMat = stdMat({ color: [.95, 1.05, .97], pat: 3, sway: 1 });
+  const canMat = stdMat({ color: [.6, .7, .62], pat: 3, sway: 1 });
   const can1 = new THREE.InstancedMesh(canGeo, canMat, cans.length), can2 = new THREE.InstancedMesh(canGeo, canMat, cans.length);
   cans.forEach(([x, z, s, r], i) => {
     q.setFromEuler(e.set(0, r, 0));
@@ -366,35 +392,69 @@ const torchPos = [];
 })();
 
 /* ---------- characters (low-poly) ---------- */
-function makeCharacter({ robe = [.9, .87, .8], hat = [.42, .4, .5], orb = [1.6, 1.1, .5], fill = [.02, .02, .02], rimK = 1.2 } = {}) {
+function makeCharacter({ robe = [.9, .87, .8], hat = [.42, .4, .5], orb = [1.6, 1.1, .5], fill = [.02, .02, .02], rimK = 1.2, beard = [.93, .93, .9], trim = [.95, .72, .3] } = {}) {
   const g = new THREE.Group();
-  const mRobe = stdMat({ color: robe, rim: rimK, fill }), mHat = stdMat({ color: hat, rim: rimK, fill }),
-    mSkin = stdMat({ color: [.86, .7, .57], rim: .8, fill }), mDark = stdMat({ color: [.22, .2, .19], rim: .8, fill }),
-    mStaff = stdMat({ color: [.45, .31, .19], rim: .6, fill }), mOrb = stdMat({ color: [0, 0, 0], emis: orb });
+  const M = (color, o = {}) => stdMat({ color, rim: rimK, fill, ...o });
+  const mRobe = M(robe), mRobeD = M(robe.map(v => v * .6)), mHat = M(hat), mSkin = M([.88, .72, .58], { rim: .8 }),
+    mDark = M([.2, .18, .17], { rim: .8 }), mBoot = M([.34, .23, .15], { rim: .7 }), mStaff = M([.47, .32, .19], { rim: .6 }),
+    mBeard = M(beard), mTrim = M(trim, { emis: trim.map(v => v * .12) }), mOrb = stdMat({ color: [0, 0, 0], emis: orb });
+  const add = (parent, geo, mat, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); parent.add(m); return m; };
   const body = new THREE.Group(); g.add(body);
-  const robeM = new THREE.Mesh(new THREE.CylinderGeometry(.2, .44, 1.0, 6), mRobe); robeM.position.y = .78; body.add(robeM);
-  const chest = new THREE.Mesh(new THREE.CylinderGeometry(.25, .22, .35, 6), mRobe); chest.position.y = 1.2; body.add(chest);
-  const belt = new THREE.Mesh(new THREE.CylinderGeometry(.27, .27, .07, 6), mDark); belt.position.y = 1.03; body.add(belt);
-  const head = new THREE.Mesh(new THREE.IcosahedronGeometry(.17, 0), mSkin); head.position.y = 1.52; body.add(head);
-  const brim = new THREE.Mesh(new THREE.CylinderGeometry(.4, .4, .05, 8), mHat); brim.position.y = 1.62; body.add(brim);
-  const cone = new THREE.Mesh(new THREE.ConeGeometry(.25, .72, 7), mHat); cone.position.set(0, 2.0, -.06); cone.rotation.x = -.28; body.add(cone);
-  const limb = (x, y, w, h, mat) => { const p = new THREE.Group(); p.position.set(x, y, 0); const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, w * 1.1), mat); m.position.y = -h / 2; p.add(m); return p; };
-  const legL = limb(-.14, .5, .15, .5, mDark), legR = limb(.14, .5, .15, .5, mDark);
-  const armL = limb(-.32, 1.33, .13, .58, mRobe), armR = limb(.32, 1.33, .13, .58, mRobe);
-  armL.rotation.z = -.12; armR.rotation.z = .12;
+  // robe: flared skirt with trimmed hem, torso, belt with buckle and pouch
+  add(body, new THREE.CylinderGeometry(.27, .47, .78, 10), mRobe, 0, .58);
+  add(body, new THREE.CylinderGeometry(.475, .5, .07, 10), mTrim, 0, .2);
+  add(body, new THREE.CylinderGeometry(.24, .27, .46, 9), mRobe, 0, 1.15);
+  add(body, new THREE.CylinderGeometry(.285, .285, .08, 9), mDark, 0, .96);
+  add(body, new THREE.BoxGeometry(.1, .08, .04), mTrim, 0, .96, .28);
+  add(body, new THREE.BoxGeometry(.12, .15, .09), mBoot, -.25, .86, .1);
+  // robe front seam
+  add(body, new THREE.BoxGeometry(.035, .7, .02), mTrim, 0, .58, .39).rotation.x = -.3;
+  // mantle + shoulder pads
+  add(body, new THREE.CylinderGeometry(.2, .37, .2, 9), mRobeD, 0, 1.4);
+  for (const sx of [-.3, .3]) add(body, new THREE.IcosahedronGeometry(.11, 0), mRobeD, sx, 1.36, 0).scale.set(1.1, .7, 1);
+  // cloak hinged at the shoulders, flutters
+  const cloakP = new THREE.Group(); cloakP.position.set(0, 1.42, -.2); body.add(cloakP);
+  const cloakGeo = new THREE.CylinderGeometry(.3, .5, 1.25, 8, 1, true, Math.PI * .55, Math.PI * .9);
+  add(cloakP, cloakGeo, mRobeD, 0, -.62, .2);
+  // head: face, nose, eyes, eyebrows, long beard, moustache
+  const head = add(body, new THREE.IcosahedronGeometry(.155, 1), mSkin, 0, 1.6); head.scale.set(1, 1.1, 1);
+  add(body, new THREE.ConeGeometry(.032, .1, 4), mSkin, 0, 1.585, .17).rotation.x = Math.PI / 2;
+  for (const ex of [-.058, .058]) { add(body, new THREE.BoxGeometry(.034, .026, .02), mDark, ex, 1.63, .145); add(body, new THREE.BoxGeometry(.06, .018, .02), mBeard, ex, 1.665, .145); }
+  add(body, new THREE.ConeGeometry(.14, .5, 8), mBeard, 0, 1.33, .1).rotation.x = Math.PI + .15;
+  add(body, new THREE.BoxGeometry(.18, .035, .04), mBeard, 0, 1.55, .155);
+  // hat: wide brim, band, crown and bent tip
+  add(body, new THREE.CylinderGeometry(.34, .36, .035, 14), mHat, 0, 1.77);
+  add(body, new THREE.CylinderGeometry(.18, .24, .3, 10), mHat, 0, 1.91);
+  add(body, new THREE.CylinderGeometry(.243, .243, .06, 10), mTrim, 0, 1.79);
+  const tipP = new THREE.Group(); tipP.position.set(0, 2.05, 0); tipP.rotation.x = -.5; body.add(tipP);
+  add(tipP, new THREE.ConeGeometry(.18, .55, 9), mHat, 0, .26);
+  add(tipP, new THREE.IcosahedronGeometry(.035, 0), mTrim, 0, .54);
+  // limbs: tapered legs with boots, flared sleeves with hands
+  const limb = (x, y, len, r0, r1, mat) => { const p = new THREE.Group(); p.position.set(x, y, 0); add(p, new THREE.CylinderGeometry(r0, r1, len, 7), mat, 0, -len / 2); return p; };
+  const legL = limb(-.13, .56, .46, .075, .065, mDark), legR = limb(.13, .56, .46, .075, .065, mDark);
+  for (const l of [legL, legR]) { add(l, new THREE.BoxGeometry(.14, .13, .24), mBoot, 0, -.49, .04); add(l, new THREE.CylinderGeometry(.085, .085, .05, 7), mBoot, 0, -.4); }
+  const armL = limb(-.34, 1.33, .56, .075, .135, mRobe), armR = limb(.34, 1.33, .56, .075, .135, mRobe);
+  for (const a of [armL, armR]) { add(a, new THREE.CylinderGeometry(.14, .14, .05, 8), mTrim, 0, -.55); add(a, new THREE.IcosahedronGeometry(.065, 1), mSkin, 0, -.62); }
+  armL.rotation.z = -.14; armR.rotation.z = .14;
   body.add(armL, armR); g.add(legL, legR);
-  const staff = new THREE.Mesh(new THREE.CylinderGeometry(.035, .035, 2.0, 5), mStaff); staff.position.set(.02, -.32, .14); armR.add(staff);
-  const orbM = new THREE.Mesh(new THREE.IcosahedronGeometry(.11, 0), mOrb); orbM.position.set(.02, .72, .14); armR.add(orbM);
-  return { g, body, legL, legR, armL, armR, orbM, mOrb, phase: 0, cast: 0 };
+  // staff with ring, prongs and crystal
+  add(armR, new THREE.CylinderGeometry(.03, .042, 2.15, 6), mStaff, 0, -.32, .1);
+  add(armR, new THREE.TorusGeometry(.075, .018, 4, 10), mTrim, 0, .72, .1).rotation.x = Math.PI / 2;
+  for (let k = 0; k < 3; k++) { const a = k / 3 * TAU, pr = add(armR, new THREE.ConeGeometry(.02, .2, 4), mStaff, Math.cos(a) * .07, .86, .1 + Math.sin(a) * .07); pr.rotation.set(Math.sin(a) * .5, 0, -Math.cos(a) * .5); }
+  const orbM = add(armR, new THREE.OctahedronGeometry(.1, 0), mOrb, 0, .9, .1); orbM.scale.y = 1.4;
+  return { g, body, legL, legR, armL, armR, orbM, mOrb, cloakP, tipP, phase: 0, cast: 0 };
 }
 function animChar(c, dt, moving, speed) {
   c.phase += dt * (moving ? speed * 2.1 : 0);
-  const s = moving ? Math.sin(c.phase) : 0, k = 1 - Math.exp(-dt * 12);
+  const t = U.uTime.value, s = moving ? Math.sin(c.phase) : 0, k = 1 - Math.exp(-dt * 12);
   c.legL.rotation.x = lerp(c.legL.rotation.x, s * .7, k);
   c.legR.rotation.x = lerp(c.legR.rotation.x, -s * .7, k);
   c.armL.rotation.x = lerp(c.armL.rotation.x, -s * .6, k);
   c.armR.rotation.x = lerp(c.armR.rotation.x, c.cast > 0 ? -1.5 : s * .35, 1 - Math.exp(-dt * 18));
-  c.body.position.y = moving ? Math.abs(Math.cos(c.phase)) * .06 : Math.sin(U.uTime.value * 2) * .012;
+  c.body.position.y = moving ? Math.abs(Math.cos(c.phase)) * .06 : Math.sin(t * 2) * .012;
+  const flap = Math.sin(t * 5 + c.phase) * .08 + Math.sin(t * 1.7) * .05 * (.4 + U.uWindS.value);
+  c.cloakP.rotation.x = lerp(c.cloakP.rotation.x, (moving ? .45 : .08) + flap, k);
+  c.tipP.rotation.z = Math.sin(t * 1.3 + c.phase * .5) * .12;
   c.cast -= dt;
 }
 const orbWorld = (c, out) => c.orbM.getWorldPosition(out);
@@ -615,7 +675,7 @@ const SP = [
   { n: 'Fire', c: [2.4, 1.0, .25], col: '#f94' },
   { n: 'Nature', c: [.8, 2.2, .45], col: '#8f6' },
 ];
-const P = { name: 'Странник', x: 0, z: 3, yaw: Math.PI, hp: 5, cd: 0, spell: 0, inv: 0, hurt: 0, say: '', sayT: 0 };
+const P = { name: 'Странник', x: 0, z: 3, yaw: 0, hp: 5, cd: 0, spell: 0, inv: 0, hurt: 0, say: '', sayT: 0 };
 const hero = makeCharacter({ fill: [.07, .065, .06], rimK: 1.7 });
 scene.add(hero.g);
 const NPC_DEF = [['Mira', [.75, .45, .55], [.35, .18, .25]], ['Kael', [.45, .55, .8], [.18, .22, .4]], ['Oru', [.5, .7, .45], [.2, .3, .18]]];
@@ -677,6 +737,8 @@ addEventListener('keydown', e => {
   keys[e.code] = true;
   if (e.code === 'Space') { cast(null); e.preventDefault(); }
   if (e.code === 'KeyQ') { P.spell = (P.spell + 1) % SP.length; hud(); }
+  if (e.code === 'KeyV') setView(!asciiOn, detail);
+  if (e.code === 'KeyZ') setView(asciiOn, (detail + 1) % 4);
   if (/^Digit[1-5]$/.test(e.code)) setWx(+e.code[5] - 1);
 });
 function closeChat() { chatOpen = false; chatEl.style.display = 'none'; chatEl.blur(); }
@@ -706,6 +768,14 @@ canvas.addEventListener('pointerup', endStick); canvas.addEventListener('pointer
 $('cast').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); cast(null); });
 $('bWx').onclick = () => setWx((wxIdx + 1) % WX.length);
 $('bSp').onclick = () => { P.spell = (P.spell + 1) % SP.length; hud(); };
+$('bAscii').onclick = () => setView(!asciiOn, detail);
+$('bDet').onclick = () => setView(asciiOn, (detail + 1) % 4);
+function setView(a, d) {
+  asciiOn = a; detail = d; resize(); viewBtns();
+  toast(asciiOn ? 'ASCII · ' + DETAIL.names[detail] : 'без ASCII');
+  try { localStorage.setItem('ascii-view', JSON.stringify({ ascii: asciiOn, detail })); } catch (_) { }
+}
+function viewBtns() { $('bAscii').textContent = asciiOn ? '▦ ASCII: вкл' : '▦ ASCII: выкл'; $('bDet').textContent = '◫ ' + DETAIL.names[detail]; $('bDet').style.display = asciiOn ? '' : 'none'; }
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 function setWx(i) { wxIdx = i; if (zone === 'forest') toast(WX[i].n); hud(); }
 
@@ -811,9 +881,9 @@ function update(dt) {
   focus.x = lerp(focus.x, P.x, fk); focus.z = lerp(focus.z, P.z, fk);
   U.uFocus.value.copy(focus);
   const aspect = (cols * cellW) / (rows * cellH);
-  const dist = aspect < 1 ? 12.5 + (1 - aspect) * 5 : 12, pitch = .92;
+  const dist = aspect < 1 ? 11 + (1 - aspect) * 4.5 : 10.5, pitch = .9;
   camera.position.set(focus.x, Math.sin(pitch) * dist + .8, focus.z + Math.cos(pitch) * dist);
-  camera.lookAt(focus.x, .9, focus.z);
+  camera.lookAt(focus.x, 1.1, focus.z);
   ground.position.set(Math.round(focus.x), 0, Math.round(focus.z));
 
   /* weather */
@@ -950,33 +1020,65 @@ const postScene = new THREE.Scene(), postCam = new THREE.OrthographicCamera(-1, 
 const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2)); quad.frustumCulled = false; postScene.add(quad);
 const QUAD_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy,0.,1.); }`;
 const cellMat = new THREE.ShaderMaterial({
-  defines: { SX, SY },
-  uniforms: { tScene: { value: null }, uR: { value: RAMP.length }, uDir: { value: RAMP.length }, uRune: { value: RAMP.length + 4 }, uRuneN: { value: RUNE.length }, uTime: U.uTime },
+  defines: { SX, SY, NRAMP: RAMP.length, NEDGE: EDGE.length, NRUNE: RUNE.length },
+  uniforms: { tScene: { value: null }, tDesc: { value: desc }, uDir: { value: SHAPES.length }, uRuneIdx: { value: RUNE_IDX }, uRampIdx: { value: RAMP_IDX }, uEdgeIdx: { value: EDGE_IDX }, uTime: U.uTime },
   vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: /* glsl */`
-  uniform sampler2D tScene; uniform float uR, uDir, uRune, uRuneN, uTime;
+  uniform sampler2D tScene; uniform highp sampler2D tDesc; uniform float uDir, uTime; uniform float uRuneIdx[NRUNE]; uniform float uRampIdx[NRAMP]; uniform float uEdgeIdx[NEDGE];
   void main(){
     ivec2 cell = ivec2(gl_FragCoord.xy);
     ivec2 b = cell*ivec2(SX,SY);
     vec3 sum = vec3(0.); float bl = -1.; vec4 best = vec4(0.);
+    float sub[9];
+    for(int k=0;k<9;k++) sub[k] = 0.;
     for(int j=0;j<SY;j++) for(int i=0;i<SX;i++){
       vec4 t = texelFetch(tScene, b+ivec2(i,j), 0);
       sum += t.rgb; float l = dot(t.rgb, vec3(.3,.59,.11));
       if(l>bl){ bl=l; best=t; }
+      sub[(2-(j*3)/SY)*3 + (i*3)/SX] += l;
     }
     vec3 avg = sum/float(SX*SY);
-    float lum = dot(avg, vec3(.3,.59,.11));
     float g; vec3 col;
     if(best.a > .95){
-      float k = clamp(lum*1.6, 0., 1.);
-      g = floor(pow(k,1.15)*(uR-1.)+.5); col = mix(avg, best.rgb, .55);
+      float w = 9./float(SX*SY);
+      vec3 t0, t1, t2;
+      for(int k=0;k<3;k++){
+        vec3 v = vec3(sub[k*3], sub[k*3+1], sub[k*3+2])*w;
+        v = pow(clamp(v*1.7, 0., 1.), vec3(1.1));
+        if(k==0) t0=v; else if(k==1) t1=v; else t2=v;
+      }
+      float mean = (dot(t0,vec3(1.))+dot(t1,vec3(1.))+dot(t2,vec3(1.)))/9.;
+      float hi = max(max(max(t0.x,t0.y),max(t0.z,t1.x)),max(max(t1.y,t1.z),max(t2.x,max(t2.y,t2.z))));
+      float lo = min(min(min(t0.x,t0.y),min(t0.z,t1.x)),min(min(t1.y,t1.z),min(t2.x,min(t2.y,t2.z))));
+      // flat: density ramp
+      float ri = clamp(floor(mean*float(NRAMP-1)+.5), 0., float(NRAMP-1));
+      g = 0.;
+      for(int k=0;k<NRAMP;k++) if(float(k)==ri) g = uRampIdx[k];
+      // strong contrast inside the cell: pick the contour glyph whose 3x3 shape fits best
+      if(hi - lo > .22){
+        int gi = int(g);
+        vec3 a0 = texelFetch(tDesc, ivec2(gi,0), 0).rgb - t0, a1 = texelFetch(tDesc, ivec2(gi,1), 0).rgb - t1, a2 = texelFetch(tDesc, ivec2(gi,2), 0).rgb - t2;
+        float bc = (dot(a0,a0)+dot(a1,a1)+dot(a2,a2))*1.15;
+        for(int k=0;k<NEDGE;k++){
+          int s = int(uEdgeIdx[k]);
+          vec3 d0 = texelFetch(tDesc, ivec2(s,0), 0).rgb - t0;
+          vec3 d1 = texelFetch(tDesc, ivec2(s,1), 0).rgb - t1;
+          vec3 d2 = texelFetch(tDesc, ivec2(s,2), 0).rgb - t2;
+          float c = dot(d0,d0) + dot(d1,d1) + dot(d2,d2);
+          if(c < bc){ bc = c; g = uEdgeIdx[k]; }
+        }
+      }
+      col = mix(avg, best.rgb, .55);
     } else if(best.a > .09){
       float a = (best.a-.1)/.8;
       g = uDir + mod(floor(a*4.+.5), 4.);
       col = best.rgb;
     } else {
       float h = fract(sin(dot(vec2(cell)+floor(uTime*9.), vec2(12.9898,78.233)))*43758.5453);
-      g = uRune + floor(h*uRuneN); col = best.rgb;
+      int ri = int(floor(h*float(NRUNE)));
+      float rg = 0.;
+      for(int k=0;k<NRUNE;k++) if(k==ri) rg = uRuneIdx[k];
+      g = rg; col = best.rgb;
     }
     if(bl < .014) g = 0.;
     float m = max(max(col.r,col.g),col.b);
@@ -1000,12 +1102,18 @@ const blurMat = new THREE.ShaderMaterial({
   }`,
 });
 const finalMat = new THREE.ShaderMaterial({
-  uniforms: { tCell: { value: null }, tAtlas: { value: atlas }, tBloom: { value: null }, uCellPx: { value: new THREE.Vector2() }, uGridPx: { value: new THREE.Vector2() }, uGlyphN: { value: GLYPHS.length }, uBloomK: { value: 1.1 } },
+  uniforms: { tCell: { value: null }, tRaw: { value: null }, uRaw: { value: 0 }, tAtlas: { value: atlas }, tBloom: { value: null }, uCellPx: { value: new THREE.Vector2() }, uGridPx: { value: new THREE.Vector2() }, uGlyphN: { value: GLYPHS.length }, uBloomK: { value: 1.1 } },
   vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: /* glsl */`
-  uniform sampler2D tCell, tAtlas, tBloom; uniform vec2 uCellPx, uGridPx; uniform float uGlyphN, uBloomK;
+  uniform sampler2D tCell, tAtlas, tBloom, tRaw; uniform vec2 uCellPx, uGridPx; uniform float uGlyphN, uBloomK, uRaw;
   void main(){
     vec2 fc = gl_FragCoord.xy, cf = fc/uCellPx;
+    if(uRaw > .5){
+      vec3 r = texture2D(tRaw, fc/uGridPx).rgb*2.2 + texture2D(tBloom, fc/uGridPx).rgb*uBloomK*.8;
+      r = 1. - exp(-r*1.6);
+      gl_FragColor = vec4(pow(r, vec3(.8)), 1.);
+      return;
+    }
     ivec2 cell = ivec2(floor(cf)); vec2 lc = fract(cf);
     vec4 cv = texelFetch(tCell, cell, 0);
     float g = floor(cv.a*255.+.5);
@@ -1027,9 +1135,9 @@ function resize() {
   DPR = Math.min(2, devicePixelRatio || 1) * (quality < 1 ? .75 : 1);
   renderer.setPixelRatio(DPR); renderer.setSize(W, H, false);
   const small = Math.min(W, H) < 600;
-  cellW = small ? 6 : 7; cellH = Math.round(cellW * 1.75);
+  cellW = (small ? DETAIL.small : DETAIL.big)[detail]; cellH = Math.round(cellW * 1.75);
   cols = Math.ceil(W / cellW); rows = Math.ceil(H / cellH);
-  [sceneRT, cellRT, bA, bB].forEach(r => r && r.dispose());
+  [sceneRT, cellRT, bA, bB, rawRT].forEach(r => r && r.dispose()); rawRT = null;
   sceneRT = makeRT(cols * SX, rows * SY, { depthBuffer: true, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, type: canHalf ? THREE.HalfFloatType : THREE.UnsignedByteType });
   cellRT = makeRT(cols, rows, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
   const bw = Math.ceil(cols * SX / 3), bh = Math.ceil(rows * SY / 3);
@@ -1042,13 +1150,26 @@ function resize() {
   finalMat.uniforms.uCellPx.value.set(cellW * DPR, cellH * DPR);
   finalMat.uniforms.uGridPx.value.set(cols * cellW * DPR, rows * cellH * DPR);
   grass.geo.instanceCount = Math.floor(grass.N * (small ? .55 : 1) * quality);
+  if (!asciiOn) {
+    const rs = Math.min(1, 1.6 / DPR);
+    // 8-bit + MSAA works everywhere (half-float MSAA is not supported on some iPhones)
+    rawRT = makeRT(Math.round(cols * cellW * DPR * rs), Math.round(rows * cellH * DPR * rs), { depthBuffer: true, samples: 4, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+  }
+  finalMat.uniforms.uRaw.value = asciiOn ? 0 : 1;
+  brightMat.uniforms.uTh.value = asciiOn && canHalf ? 1.0 : .8;
 }
 addEventListener('resize', resize);
 
 function render() {
-  renderer.setRenderTarget(sceneRT); renderer.render(scene, camera);
-  cellMat.uniforms.tScene.value = sceneRT.texture; pass(cellMat, cellRT);
-  brightMat.uniforms.tScene.value = sceneRT.texture; pass(brightMat, bA);
+  if (asciiOn) {
+    renderer.setRenderTarget(sceneRT); renderer.render(scene, camera);
+    cellMat.uniforms.tScene.value = sceneRT.texture; pass(cellMat, cellRT);
+    brightMat.uniforms.tScene.value = sceneRT.texture; pass(brightMat, bA);
+  } else {
+    renderer.setRenderTarget(rawRT); renderer.render(scene, camera);
+    brightMat.uniforms.tScene.value = rawRT.texture; pass(brightMat, bA);
+    finalMat.uniforms.tRaw.value = rawRT.texture;
+  }
   const bw = bA.width, bh = bA.height;
   for (let i = 0; i < 2; i++) {
     blurMat.uniforms.tSrc.value = bA.texture; blurMat.uniforms.uDir.value.set((1 + i) / bw, 0); pass(blurMat, bB);
@@ -1056,8 +1177,8 @@ function render() {
   }
   finalMat.uniforms.tCell.value = cellRT.texture; finalMat.uniforms.tBloom.value = bA.texture; pass(finalMat, null);
   // tags
-  placeTag(P.tag, P.x, 2.55, P.z, P.sayT, P.say);
-  if (zone === 'forest') for (const n of NPCS) placeTag(n.tag, n.x, 2.55, n.z, n.sayT, n.say);
+  placeTag(P.tag, P.x, 2.75, P.z, P.sayT, P.say);
+  if (zone === 'forest') for (const n of NPCS) placeTag(n.tag, n.x, 2.75, n.z, n.sayT, n.say);
 }
 
 /* ---------- loop with simple adaptive quality ---------- */
@@ -1071,7 +1192,7 @@ function frame(now) {
   }
   requestAnimationFrame(frame);
 }
-resize(); hud(); toast('Шепчущий лес');
+resize(); hud(); viewBtns(); toast('Шепчущий лес');
 say('Система', 'добро пожаловать в Шепчущий лес. Руины — по тропе вправо.', '#9ab');
 window.__game = { P, setWx, enter: z => enterZone(z), cast: () => cast(null), get zone() { return zone; } };
 requestAnimationFrame(frame);
