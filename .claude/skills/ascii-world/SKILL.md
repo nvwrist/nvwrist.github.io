@@ -19,7 +19,7 @@ Files: `ascii/index.html` (HUD, buttons, CSS; loads `./game.js?v=N` — **bump N
 4. **`finalMat` → screen**: for each pixel looks at the 3×3 neighbouring cells, draws each glyph rotated, with a tiny per-cell jitter, strokes stretched 1.75× so they overlap (soft grass); combined with `max`. Then a calm palette (desaturate 26 %, soft highlight roll-off), dim vignette background and bloom.
    Old description: glyph atlas (`atlas`, built on a 2D canvas, mipmapped, sampled with `textureGrad`) × cell colour + bloom.
    - `asciiOn = false` (button «ASCII», key **V**) skips 1–2: scene goes to full-res `rawRT` (MSAA 4) and `finalMat` (`uRaw=1`) tone-maps it. Useful to inspect models.
-   - Detail level (button «детали», key **Z**): `DETAIL.big/small` = cell width in CSS px (крупно/средне/мелко/ультра: 11/9/7/5 desktop, 10/8.5/7/5 phone; default средне ≈ 45 columns on a phone, like the reference). Saved in `localStorage['ascii-view']`.
+   - Detail level (button «детали», key **Z**): `DETAIL.big/small` = cell width in CSS px (крупно/средне/мелко/ультра: 9/6/5/4 desktop, 8/5/4/3 phone; default средне). Saved in `localStorage['ascii-view']`.
 
 Camera aspect is `cols*cellW / rows*cellH` (the grid overhangs the screen by < 1 cell). Screen→world (`screenToWorld`) and name tags (`placeTag`) use the same mapping — keep them in sync if you change it.
 

@@ -34,8 +34,8 @@ const canHalf = renderer.extensions.has('EXT_color_buffer_float') || renderer.ex
 
 const SX = 3, SY = 6;                         // scene texels per glyph cell (3×3 sub-zones of 1×2 texels)
 let W, H, DPR, cellW, cellH, cols, rows, quality = 1, asciiOn = true, detail = 1, rawRT = null;
-const DETAIL = { big: [11, 9, 7, 5], small: [10, 8.5, 7, 5], names: ['крупно', 'средне', 'мелко', 'ультра'] };
-try { const v = JSON.parse(localStorage.getItem('ascii-view2') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 3) detail = v.detail; } catch (_) { }
+const DETAIL = { big: [9, 6, 5, 4], small: [8, 5, 4, 3], names: ['крупно', 'средне', 'мелко', 'ультра'] };
+try { const v = JSON.parse(localStorage.getItem('ascii-view3') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 3) detail = v.detail; } catch (_) { }
 let sceneRT, cellRT, auxRT, bA, bB;
 
 /* ---------- glyph atlas ---------- */
@@ -842,7 +842,7 @@ $('bDet').onclick = () => setView(asciiOn, (detail + 1) % 4);
 function setView(a, d) {
   asciiOn = a; detail = d; resize(); viewBtns();
   toast(asciiOn ? 'ASCII · ' + DETAIL.names[detail] : 'без ASCII');
-  try { localStorage.setItem('ascii-view2', JSON.stringify({ ascii: asciiOn, detail })); } catch (_) { }
+  try { localStorage.setItem('ascii-view3', JSON.stringify({ ascii: asciiOn, detail })); } catch (_) { }
 }
 function viewBtns() { $('bAscii').textContent = asciiOn ? '▦ ASCII: вкл' : '▦ ASCII: выкл'; $('bDet').textContent = '◫ ' + DETAIL.names[detail]; $('bDet').style.display = asciiOn ? '' : 'none'; }
 canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -1511,7 +1511,7 @@ const finalMat = new THREE.ShaderMaterial({
       float rot = (ax.r-.5)*3.14159265 + (stroke ? 0. : (h2-.5)*.12 + sin(uT*1.3 + h1*31.)*.035);
       jit += stroke ? vec2(0.) : vec2(sin(uT*.9 + h2*40.), cos(uT*1.1 + h1*27.))*.035;
       if(stroke) g = uDirV;
-      vec2 sc = stroke ? vec2(1.1, 2.3) : vec2(1.0, 1.0);
+      vec2 sc = stroke ? vec2(1.1, 2.0) : vec2(1.0, 1.0);
       vec2 d = fc - (vec2(nc) + .5 + jit)*uCellPx;
       float cs = cos(rot), sn = sin(rot);
       mat2 R = mat2(cs, -sn, sn, cs);               // rotate into glyph space
@@ -1542,7 +1542,7 @@ function resize() {
   DPR = Math.min(2, devicePixelRatio || 1) * (quality < 1 ? .75 : 1);
   renderer.setPixelRatio(DPR); renderer.setSize(W, H, false);
   const small = Math.min(W, H) < 600;
-  cellW = (small ? DETAIL.small : DETAIL.big)[detail]; cellH = Math.round(cellW * 1.7);
+  cellW = (small ? DETAIL.small : DETAIL.big)[detail]; cellH = Math.round(cellW * 1.75);
   cols = Math.ceil(W / cellW); rows = Math.ceil(H / cellH);
   [sceneRT, cellRT, auxRT, bA, bB, rawRT].forEach(r => r && r.dispose()); rawRT = null;
   sceneRT = makeRT(cols * SX, rows * SY, { depthBuffer: true, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, type: canHalf ? THREE.HalfFloatType : THREE.UnsignedByteType });
