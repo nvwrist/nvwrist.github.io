@@ -12,6 +12,7 @@ const TAU = Math.PI * 2, rnd = Math.random;
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const lerp = (a, b, k) => a + (b - a) * k;
 const $ = id => document.getElementById(id);
+addEventListener('error', e => { const t = document.getElementById('toast'); if (t) { t.style.fontSize = '14px'; t.style.whiteSpace = 'normal'; t.textContent = 'Ошибка: ' + (e.message || e.error); t.style.opacity = 1; } });
 
 /* ---------- noise (JS side, for world generation) ---------- */
 function h2(x, y) { let n = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263)) | 0; n = Math.imul(n ^ (n >>> 13), 1274126177); return ((n ^ (n >>> 16)) >>> 0) / 4294967296; }
@@ -513,7 +514,9 @@ gltfLoader.load('./models/knight.glb?v=1', gltf => {
   setHeroBase('Idle');
   spawnWalkers(gltf, sc, -box.min.y * sc);
   if (P.cls === 'knight') setHero('knight', true);
-}, undefined, e => { console.warn('knight load failed', e); });
+}, xhr => {
+  if (P.cls === 'knight' && xhr.total) toast('рыцарь ' + Math.round(xhr.loaded / xhr.total * 100) + '%');
+}, e => { console.warn('knight load failed', e); knight.failed = true; toast('рыцарь не загрузился'); if (P.cls === 'knight') { P.cls = 'mage'; heroBtn(); } });
 function prepKnight(root, mats, opt) {
   root.traverse(o => {
     if (KNIGHT_KEEP_HIDDEN.includes(o.name)) o.visible = false;
@@ -1049,7 +1052,7 @@ try { if (localStorage.getItem('ascii-hero') === 'knight') P.cls = 'knight'; } c
 const hero = makeCharacter({ fill: [.07, .065, .06], rimK: 1.7 });
 scene.add(hero.g);
 function setHero(cls, quiet) {
-  if (cls === 'knight' && !knight.ready) { P.cls = 'knight'; toast('загрузка рыцаря…'); return; }
+  if (cls === 'knight' && !knight.ready) { if (knight.failed) { toast('рыцарь не загрузился'); return; } P.cls = 'knight'; heroBtn(); toast('загрузка рыцаря…'); return; }
   P.cls = cls; hero.g.visible = cls === 'mage'; knight.g.visible = cls === 'knight';
   try { localStorage.setItem('ascii-hero', cls); } catch (_) { }
   if (!quiet) toast(cls === 'knight' ? 'Рыцарь' : 'Маг');
@@ -1236,11 +1239,12 @@ function pushLights() {
 /* ---------- update ---------- */
 function turn(a, b, k) { let d = b - a; d = Math.atan2(Math.sin(d), Math.cos(d)); return a + d * k; }
 const emitAcc = { v: 0 };
-function update(dt) {
+function update(dt, rdt = dt) {
   T += dt; U.uTime.value = T;
   P.cd -= dt; P.sayT -= dt; P.inv -= dt; P.hurt -= dt;
-  if (fadeDir === 1) { fadeV += dt * 2.5; if (fadeV >= 1) { fadeV = 1; enterZone(fadeTo); fadeDir = -1; } }
-  else if (fadeDir === -1) { fadeV -= dt * 1.8; if (fadeV <= 0) { fadeV = 0; fadeDir = 0; } }
+  const fdt = Math.min(rdt, .12);
+  if (fadeDir === 1) { fadeV += fdt * 2.5; if (fadeV >= 1) { fadeV = 1; enterZone(fadeTo); fadeDir = -1; } }
+  else if (fadeDir === -1) { fadeV -= fdt * 1.8; if (fadeV <= 0) { fadeV = 0; fadeDir = 0; } }
   fadeEl.style.opacity = fadeV;
 
   /* movement (camera-relative: up = away from camera) */
@@ -1578,10 +1582,10 @@ function render() {
 }
 
 /* ---------- loop with simple adaptive quality ---------- */
-let last = performance.now(), perfT = 0, perfN = 0, perfSum = 0;
+let last0 = performance.now(), last = performance.now(), perfT = 0, perfN = 0, perfSum = 0;
 function frame(now) {
   const dt = clamp((now - last) / 1000, 0, .05); last = now;
-  update(dt); render();
+  update(dt, clamp((now - last0) / 1000, 0, .2)); last0 = now; render();
   if (quality === 1 && T > 2) {
     perfT += dt; perfN++; perfSum += dt;
     if (perfT > 3) { if (perfSum / perfN > .034) { quality = .55; resize(); } perfT = perfN = perfSum = 0; if (T > 12) perfT = -1e9; }
