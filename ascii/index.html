@@ -60,6 +60,7 @@ function mulberry(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1
 
 /* ───────────── canvas / grid ───────────── */
 const FONT="'DejaVu Sans Mono',Menlo,Consolas,'Liberation Mono',monospace";
+const MR_BASE=13;let MR=13,MS=1,SCOLS=11;
 let W,H,DPR,fs,CW,CH,ASP,cols,rows,hc,hr,chBuf,colBuf,lumBuf,camI=0,camJ=0;
 function resize(){
   DPR=Math.min(2,window.devicePixelRatio||1);W=innerWidth;H=innerHeight;
@@ -68,7 +69,7 @@ function resize(){
   fs=Math.max(9,Math.round(Math.sqrt(W*H/(.69*N))));
   ctx.setTransform(DPR,0,0,DPR,0,0);ctx.font=fs+'px '+FONT;ctx.textBaseline='top';
   CW=ctx.measureText('M').width;CH=Math.round(fs*1.15);ASP=CH/CW;
-  cols=Math.ceil(W/CW)+1;rows=Math.ceil(H/CH)+1;hc=cols>>1;hr=rows>>1;
+  cols=Math.ceil(W/CW)+1;rows=Math.ceil(H/CH)+1;hc=cols>>1;hr=rows>>1;MR=W<700?11:MR_BASE;MS=MR*CH/1.95;SCOLS=Math.ceil(1.35*MS/CW)|1;
   chBuf=new Uint16Array(cols*rows);colBuf=new Uint32Array(cols*rows);lumBuf=new Float32Array(cols*rows);
 }
 addEventListener('resize',resize);resize();
@@ -150,7 +151,7 @@ const solid=(X,Y)=>zone==='forest'?solidF(X,Y):solidD(X,Y);
 
 /* ───────────── state ───────────── */
 let zone='forest',T=0,camX=0,camY=0,fade=0,fadeDir=0,fadeTo=null;
-const P={name:'Странник',X:0,Y:6,face:1,hp:5,step:0,cd:0,spell:0,say:'',sayT:0,moving:false,hurt:0,inv:0};
+const P={name:'Странник',X:0,Y:6,face:1,yaw:0,yawT:0,mv:false,hp:5,step:0,cd:0,spell:0,say:'',sayT:0,moving:false,hurt:0,inv:0};
 const SP=[
   {n:'Arcane',c:[90,235,215],g:'dQUoB[]|(){}c'},
   {n:'Fire',c:[255,150,50],g:'%&@#$8*'},
@@ -172,7 +173,7 @@ const drops=[],flakes=[];
 /* entities */
 const parts=[],projs=[],sigils=[];
 const NPCS=[['Mira',[210,150,170]],['Kael',[150,180,230]],['Oru',[170,220,150]],['Vex',[225,200,130]]].map(([name,col],i)=>({
-  name,col,X:CAMP.X+(rnd()-.5)*30,Y:CAMP.Y+(rnd()-.5)*18,tx:0,ty:0,face:1,step:0,say:'',sayT:0,cd:3+rnd()*5,sp:SP[i%3],talk:6+rnd()*14,wait:0}));
+  name,col,X:CAMP.X+(rnd()-.5)*30,Y:CAMP.Y+(rnd()-.5)*18,tx:0,ty:0,face:1,step:0,say:'',sayT:0,cd:3+rnd()*5,sp:SP[i%3],yaw:0,mv:false,talk:6+rnd()*14,wait:0}));
 NPCS.forEach(n=>{n.tx=n.X;n.ty=n.Y});
 const LINES=['кто-нибудь видел вход в руины?','этот дождь просто чудо','ищу пати в Глубины','красивый посох!','смотри как трава гнётся','гг','осторожно, там глаза в темноте','огонь у костра — самое то','кто умеет в Arcane?'];
 
@@ -236,12 +237,12 @@ const pxOf=o=>[(cellX(o.X)+.5)*CW,(cellY(o.Y)-2)*CH];
 function cast(target){
   if(P.cd>0||fadeDir)return;P.cd=.4;
   let dx=P.face,dy=0;
-  if(target){const [px,py]=pxOf(P);dx=(target.x-px)/CW;dy=(target.y-py)/CW;const d=Math.hypot(dx,dy)||1;dx/=d;dy/=d;if(Math.abs(dx)>.15)P.face=Math.sign(dx)}
+  if(target){const [px,py]=pxOf(P);dx=(target.x-px)/CW;dy=(target.y-py)/CW;const d=Math.hypot(dx,dy)||1;dx/=d;dy/=d;if(Math.abs(dx)>.15)P.face=Math.sign(dx);P.yaw=P.yawT=Math.atan2(dx,dy*.6+.3)}
   fireSpell(P,dx,dy,P.spell,true);
 }
 function fireSpell(o,dx,dy,si,mine){
   const sp=SP[si];
-  projs.push({X:o.X+dx*3,Y:o.Y-3*ASP+dy*3,vx:dx*34,vy:dy*34,life:1.4,sp:si,mine,seed:rnd()*100});
+  const ob=orbPos(o);projs.push({X:ob.X+dx*2,Y:ob.Y+dy*2,vx:dx*34,vy:dy*34,life:1.4,sp:si,mine,seed:rnd()*100});
   sigils.push({o,t:0,life:.8,sp:si});
 }
 function burst(X,Y,si,n){
@@ -260,6 +261,7 @@ function addLight(X,Y,r,cr,cg,cb,k){lights.push({X,Y,r2:r*r,cr,cg,cb,k})}
 function flick(seed,sp){return .85+.25*vn(T*(sp||7)+seed*13.1,seed)+.1*Math.sin(T*23+seed)}
 
 /* ───────────── update ───────────── */
+function turn(a,b,dt){let d=b-a;d=Math.atan2(Math.sin(d),Math.cos(d));return a+d*Math.min(1,dt*12)}
 function tryMove(o,dx,dy){if(!solid(o.X+dx,o.Y))o.X+=dx;if(!solid(o.X,o.Y+dy))o.Y+=dy}
 function startTransition(to){if(fadeDir)return;fadeDir=1;fadeTo=to}
 function enterZone(z){
@@ -278,8 +280,9 @@ function update(dt){
       my=(keys.KeyS||keys.ArrowDown?1:0)-(keys.KeyW||keys.ArrowUp?1:0)+joy.y;
   const ml=Math.hypot(mx,my);if(ml>1){mx/=ml;my/=ml}
   const sp=(keys.ShiftLeft||keys.ShiftRight?20:12)*(fadeDir?0:1);
-  P.moving=ml>.1&&!chatOpen;
-  if(P.moving){tryMove(P,mx*sp*dt,my*sp*dt);P.step+=dt*(sp/12)*5;if(Math.abs(mx)>.2)P.face=Math.sign(mx)}
+  P.moving=ml>.1&&!chatOpen;P.mv=P.moving;
+  P.yaw=turn(P.yaw,P.moving?Math.atan2(mx,my):P.yawT,dt);
+  if(P.moving){tryMove(P,mx*sp*dt,my*sp*dt);P.step+=dt*(sp/12)*5;if(Math.abs(mx)>.2)P.face=Math.sign(mx);P.yawT=Math.atan2(mx,my)}
   /* zone triggers */
   if(!fadeDir){
     if(zone==='forest'&&Math.abs(P.X-DX)<2.8&&P.Y<BY1-3&&P.Y>BY0+3.5)startTransition('dungeon');
@@ -303,10 +306,10 @@ function update(dt){
     if(n.wait<=0){
       const dx=n.tx-n.X,dy=n.ty-n.Y,d=Math.hypot(dx,dy);
       if(d<1.5){n.tx=CAMP.X+(rnd()-.5)*50;n.ty=CAMP.Y+(rnd()-.5)*30;n.wait=1+rnd()*4}
-      else{const ox=n.X,oy=n.Y;tryMove(n,dx/d*7*dt,dy/d*7*dt);n.step+=dt*4.5;if(Math.abs(dx)>1)n.face=Math.sign(dx);
+      else{const ox=n.X,oy=n.Y;tryMove(n,dx/d*7*dt,dy/d*7*dt);n.step+=dt*4.5;if(Math.abs(dx)>1)n.face=Math.sign(dx);n.mv=true;n.yaw=turn(n.yaw,Math.atan2(dx,dy),dt);
         if(n.X===ox&&n.Y===oy){n.tx=n.X+(rnd()-.5)*20;n.ty=n.Y+(rnd()-.5)*20;n.wait=.3}}
     }
-    n.sayT-=dt;n.cd-=dt;n.talk-=dt;
+    if(n.wait>0)n.mv=false;n.sayT-=dt;n.cd-=dt;n.talk-=dt;
     if(n.cd<=0){n.cd=5+rnd()*9;const a=rnd()*TAU;fireSpell(n,Math.cos(a),Math.sin(a)*.3,SP.indexOf(n.sp),false)}
     if(n.talk<=0){n.talk=14+rnd()*25;n.say=LINES[rnd()*LINES.length|0];n.sayT=5;say(n.name,n.say,'rgb('+n.col+')')}
   }
@@ -334,7 +337,7 @@ function update(dt){
   if(zone==='forest'&&Math.abs(CAMP.X-camX)<cols)em(CAMP.X,CAMP.Y-ASP,nEm,[[255,200,80],[255,140,40],[255,90,30]],'^*%&@8',6);
   if(zone==='forest'&&Math.abs(DX-camX)<cols){em(DX-7,BY1+1,nEm,[[255,170,70],[255,110,40]],'^*%&',5);em(DX+7,BY1+1,nEm,[[255,170,70],[255,110,40]],'^*%&',5)}
   if(zone==='dungeon')for(const l of dlightsStatic)if(Math.abs(l.X-camX)<cols&&Math.abs(l.Y-camY)<rows*ASP)em(l.X,l.Y-ASP,nEm,[[255,190,80],[255,120,40]],'^*%&@',5);
-  const lampX=P.X+P.face*3,lampY=P.Y-4*ASP;
+  const lamp0=orbPos(P),lampX=lamp0.X,lampY=lamp0.Y;
   if(rnd()<dt*18)parts.push({X:lampX+(rnd()-.5)*1.5,Y:lampY,vx:0,vy:-4,life:.5,max:.5,ch:'*',c:zone==='dungeon'?[210,255,90]:[255,190,100],drag:.5});
   for(let i=parts.length-1;i>=0;i--){const q=parts[i];q.life-=dt;if(q.life<=0||parts.length>1400){parts.splice(i,1);continue}
     q.X+=q.vx*dt;q.Y+=q.vy*dt;const dr=Math.exp(-(q.drag||0)*dt);q.vx*=dr;q.vy*=dr}
@@ -413,7 +416,7 @@ function shadeD(X,Y,wx,wy){
 function renderScene(){
   lights.length=0;
   const dun=zone==='dungeon';
-  const lampX=P.X+P.face*3,lampY=P.Y-4*ASP,fl=flick(1,8);
+  const lamp1=orbPos(P),lampX=lamp1.X,lampY=lamp1.Y,fl=flick(1,8);
   if(dun)addLight(lampX,lampY,21,.75*fl,1.1*fl,.35*fl,1.3);else addLight(lampX,lampY,24,1.3*fl,.85*fl,.45*fl,1.0);
   const vis=(X,Y,r)=>Math.abs(X-camX)<cols/2+r&&Math.abs(Y-camY)<rows*ASP/2+r;
   if(!dun){
@@ -449,24 +452,112 @@ function renderScene(){
   }
 }
 
-/* sprite */
-const BODY=['  ^  ',' /_\\ ',' (.) ','/|#|\\',' |#| '];
-function drawSprite(o,col,isPlayer){
-  const cx=cellX(o.X),cy=cellY(o.Y),f=o.face;
-  const lum=clamp(.45+lumAt(cx,cy)*.9,.3,1.25);
-  const hurt=isPlayer&&o.hurt>0;
-  const R=hurt?255:col[0]*lum,G=hurt?90:col[1]*lum,B=hurt?90:col[2]*lum;
-  const legs=(Math.floor(o.step)&1)?' | | ':' / \\ ';
-  const rowsS=[...BODY,legs];
-  for(let r=0;r<rowsS.length;r++){const s=rowsS[r];
-    for(let c=0;c<5;c++){let ch=s[f>0?c:4-c];if(ch===' ')continue;if(f<0)ch=mir(ch);
-      put(cx-2+c,cy-5+r,ch,R*(r<3?1.1:.85),G*(r<3?1.1:.85),B*(r<3?1.1:.85))}}
-  // staff + orb
-  const sx=cx+3*f;for(let r=1;r<6;r++)put(sx,cy-5+r,'|',150*lum,110*lum,70*lum);
-  const lc=zone==='dungeon'&&isPlayer?[215,255,90]:isPlayer?[255,190,100]:(o.sp?o.sp.c:[200,200,255]);
-  const fl=.8+.3*Math.sin(T*18+(o.X||0));
-  put(sx,cy-5,'@',lc[0]*fl,lc[1]*fl,lc[2]*fl);
+/* ───────────── low-poly 3D character → ASCII ───────────── */
+const PITCH=.42,CP=Math.cos(PITCH),SPT=Math.sin(PITCH),LDIR=(()=>{const v=[.45,.75,.5],l=Math.hypot(...v);return v.map(x=>x/l)})();
+function box(hx,hy,hz,cx=0,cy=0,cz=0){
+  const V=[];for(const x of[-1,1])for(const y of[-1,1])for(const z of[-1,1])V.push([cx+x*hx,cy+y*hy,cz+z*hz]);
+  const f=[[0,1,3,2],[4,6,7,5],[0,4,5,1],[2,3,7,6],[0,2,6,4],[1,5,7,3]],T_=[];
+  for(const[a,b,c,d]of f){T_.push([V[a],V[b],V[c]],[V[a],V[c],V[d]])}return T_;
 }
+function frustum(r0,r1,h,n,cx=0,cy=0,cz=0){
+  const T_=[],ring=(r,y,k)=>[cx+Math.cos(k/n*TAU)*r,cy+y,cz+Math.sin(k/n*TAU)*r];
+  for(let k=0;k<n;k++){const a=ring(r0,0,k),b=ring(r0,0,k+1),c=ring(r1,h,k+1),d=ring(r1,h,k);
+    T_.push([a,b,c],[a,c,d]);T_.push([[cx,cy,cz],b,a]);if(r1>0)T_.push([[cx,cy+h,cz],d,c])}
+  return T_;
+}
+/* parts: tris relative to pivot; rot = animated about X axis */
+const MODEL=[
+  {t:box(.12,.34,.13,0,-.34,0),piv:[-.15,.72,0],k:'legL',c:[.55,.45,.35]},
+  {t:box(.12,.34,.13,0,-.34,0),piv:[.15,.72,0],k:'legR',c:[.55,.45,.35]},
+  {t:frustum(.42,.22,.82,6,0,.3,0),piv:[0,0,0],k:'body',c:[1,1,1],robe:1},
+  {t:box(.1,.3,.11,0,-.28,0),piv:[-.36,1.08,0],k:'armL',c:[.9,.8,.65],robe:1},
+  {t:box(.1,.3,.11,0,-.28,0),piv:[.36,1.08,0],k:'armR',c:[.9,.8,.65],robe:1},
+  {t:box(.17,.17,.17,0,1.3,.02),piv:[0,0,0],k:'head',c:[.95,.78,.62]},
+  {t:frustum(.3,.0,.62,6,0,1.38,0),piv:[0,0,0],k:'hat',c:[1,1,1],robe:2},
+  {t:frustum(.38,.3,.07,6,0,1.4,0),piv:[0,0,0],k:'brim',c:[1,1,1],robe:2},
+  {t:box(.035,.95,.035,.0,.0,.0),piv:[.5,.95,.22],k:'staff',c:[.5,.34,.2]},
+  {t:box(.1,.1,.1,.0,.0,0),piv:[.5,1.98,.22],k:'orb',c:[1,1,1],emit:1}
+];
+const ORB=[.5,1.98,.22];
+function rotAnim(k,o,ph,mv,cast){
+  const sw=mv?Math.sin(ph)*.75:0;
+  if(k==='legL')return sw;if(k==='legR')return -sw;
+  if(k==='armL')return -sw*.8;
+  if(k==='armR')return cast>0?-1.6:0;
+  return 0;
+}
+const ZB=new Float32Array(64*64),CB=new Float32Array(64*64*4);
+function modelMat(yaw){return[Math.cos(yaw),Math.sin(yaw)]}
+function projPoint(x,y,z,yc,ys){const xr=x*yc+z*ys,zr=-x*ys+z*yc;return[xr,y*CP-zr*SPT,zr*CP+y*SPT]}
+function orbPos(o){
+  const [yc,ys]=modelMat(o.yaw||0),q=projPoint(ORB[0],ORB[1],ORB[2],yc,ys);
+  return{X:o.X+q[0]*MS/CW,Y:o.Y-q[1]*MS/CW};
+}
+function drawModel(o,robe,isPlayer){
+  const SR=MR+1,GW=SCOLS*2,GH=SR*2,N=GW*GH;
+  ZB.fill(-1e9,0,N);CB.fill(0,0,N*4);
+  const cx=cellX(o.X),cy=cellY(o.Y),lum=clamp(.5+lumAt(cx,cy)*.9,.35,1.3);
+  const [yc,ys]=modelMat(o.yaw||0),ph=o.step*Math.PI*1.0,mv=o.mv,cast=isPlayer?P.cd-.15:0;
+  const bob=mv?Math.abs(Math.sin(ph))*.05:Math.sin(T*2)*.012;
+  const hurt=isPlayer&&o.hurt>0,sc=lc(o,isPlayer);
+  const gx=SCOLS*CW/2,gy=SR*CH-CH*.5,sx2=CW/2,sy2=CH/2;
+  for(const part of MODEL){
+    const ang=rotAnim(part.k,o,ph,mv,cast),ca=Math.cos(ang),sa=Math.sin(ang);
+    let col=part.robe?robe:part.c;if(part.emit)col=sc;
+    const sat=part.robe===2?.8:1;
+    for(const tri of part.t){
+      const P3=[];
+      for(const v of tri){
+        let x=v[0],y=v[1],z=v[2];
+        const y1=y*ca-z*sa,z1=y*sa+z*ca;y=y1;z=z1;
+        x+=part.piv[0];y+=part.piv[1]+bob;z+=part.piv[2];
+        const q=projPoint(x,y,z,yc,ys);
+        P3.push([gx+q[0]*MS,gy-q[1]*MS,q[2],x,y,z]);
+      }
+      const[a,b,c]=P3,area=(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
+      if(Math.abs(area)<1e-4)continue;
+      // normal (view-space-ish, from rotated verts)
+      const ax=b[3]-a[3],ay=b[4]-a[4],az=b[5]-a[5],bx=c[3]-a[3],by=c[4]-a[4],bz=c[5]-a[5];
+      let nx=ay*bz-az*by,ny=az*bx-ax*bz,nz=ax*by-ay*bx;const nl=Math.hypot(nx,ny,nz)||1;nx/=nl;ny/=nl;nz/=nl;
+      const rx=nx*yc+nz*ys,rz=-nx*ys+nz*yc;
+      let br=part.emit?1:.38+.62*Math.abs(rx*LDIR[0]+ny*LDIR[1]+rz*LDIR[2]);
+      if(part.robe===1&&!part.emit)br*=1;
+      const minx=Math.max(0,Math.floor(Math.min(a[0],b[0],c[0])/sx2-.5)),maxx=Math.min(GW-1,Math.ceil(Math.max(a[0],b[0],c[0])/sx2-.5));
+      const miny=Math.max(0,Math.floor(Math.min(a[1],b[1],c[1])/sy2-.5)),maxy=Math.min(GH-1,Math.ceil(Math.max(a[1],b[1],c[1])/sy2-.5));
+      for(let j=miny;j<=maxy;j++)for(let i=minx;i<=maxx;i++){
+        const px=(i+.5)*sx2,py=(j+.5)*sy2;
+        const w0=((b[0]-px)*(c[1]-py)-(b[1]-py)*(c[0]-px))/area,w1=((c[0]-px)*(a[1]-py)-(c[1]-py)*(a[0]-px))/area,w2=1-w0-w1;
+        if(w0<-.001||w1<-.001||w2<-.001)continue;
+        const z=w0*a[2]+w1*b[2]+w2*c[2],k=j*GW+i;
+        if(z<=ZB[k])continue;ZB[k]=z;
+        CB[k*4]=col[0]*br*sat;CB[k*4+1]=col[1]*br*sat;CB[k*4+2]=col[2]*br*sat;CB[k*4+3]=part.emit?2:1;
+      }
+    }
+  }
+  const c0=cx-(SCOLS>>1),r0=cy-(SR-1),DENSE='ocvxzuwdbpqQO0&%$#8@MW';
+  // clear background around the silhouette so the figure reads clearly
+  for(let r=-1;r<=SR;r++)for(let c=-1;c<=SCOLS;c++){
+    let hit=false;
+    for(let dr=-1;dr<=1&&!hit;dr++)for(let dc=-1;dc<=1;dc++){const rr=r+dr,cc=c+dc;
+      if(rr<0||cc<0||rr>=SR||cc>=SCOLS)continue;
+      const k=(rr*2)*GW+cc*2;if(CB[k*4+3]||CB[(k+1)*4+3]||CB[(k+GW)*4+3]||CB[(k+GW+1)*4+3]){hit=true;break}}
+    if(hit){const x=c0+c,y=r0+r;if(x>=0&&y>=0&&x<cols&&y<rows)chBuf[y*cols+x]=0}
+  }
+  for(let r=0;r<SR;r++)for(let c=0;c<SCOLS;c++){
+    let n=0,sr=0,sg=0,sb=0,em=0;
+    for(let dj=0;dj<2;dj++)for(let di=0;di<2;di++){const k=((r*2+dj)*GW+c*2+di);if(CB[k*4+3]){n++;sr+=CB[k*4];sg+=CB[k*4+1];sb+=CB[k*4+2];if(CB[k*4+3]===2)em=1}}
+    if(!n)continue;
+    const R=sr/n,G=sg/n,B=sb/n,b=(R+G+B)/3;
+    let ch,m=lum;
+    if(em){ch='@';m=1.2}
+    else if(n===1)ch='.';
+    else{const L=Math.max(R,G,B);ch=DENSE[clamp(Math.floor(L*(DENSE.length-1)*(n===2?.6:1)),0,DENSE.length-1)]}
+    const f=hurt?1:m;
+    put(c0+c,r0+r,ch,hurt?255:Math.min(255,R*255*f*1.15),hurt?90:Math.min(255,G*255*f*1.15),hurt?90:Math.min(255,B*255*f*1.15));
+  }
+}
+function lc(o,isPlayer){return zone==='dungeon'&&isPlayer?[.85,1,.35]:isPlayer?[1,.75,.4]:(o.sp?o.sp.c.map(v=>v/255):[.8,.8,1])}
+const drawSprite=(o,col,isPlayer)=>drawModel(o,col.map(v=>v/255),isPlayer);
 const symGlyph=(g,seed,k)=>g[(Math.floor(seed*7+k*3.7))%g.length|0];
 function drawOverlays(){
   /* world particles */
@@ -546,7 +637,7 @@ function flush(){
   /* name tags & chat bubbles */
   ctx.textAlign='center';ctx.textBaseline='alphabetic';
   const tag=(o,name,col)=>{
-    const x=(cellX(o.X)+.5)*CW,y=(cellY(o.Y)-6)*CH-3;
+    const x=(cellX(o.X)+.5)*CW,y=(cellY(o.Y)-MR-1)*CH-3;
     ctx.font='600 '+Math.max(11,fs)+'px system-ui,sans-serif';
     ctx.shadowColor='#000';ctx.shadowBlur=4;ctx.fillStyle=col;ctx.fillText(name,x,y);ctx.shadowBlur=0;
     if(o.sayT>0&&o.say){
