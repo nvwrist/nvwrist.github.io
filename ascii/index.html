@@ -44,12 +44,13 @@
 <div id="hearts" class="hud"></div>
 <div id="toast" class="hud"></div>
 <div id="log" class="hud"></div>
-<div id="hint" class="hud">WASD — ходить · Shift — бежать · клик / пробел — магия · Q — школа магии · 1–5 — погода · Enter — чат · V — ASCII вкл/выкл · Z — детализация · руины справа по тропе →</div>
-<div class="btns"><button id="bWx">☁ погода</button><button id="bSp">✦ магия</button><button id="bAscii">▦ ASCII: вкл</button><button id="bDet">◫ средне</button></div>
+<div id="hint" class="hud">WASD — ходить · Shift — бежать · клик / пробел — магия · Q — школа магии · 1–5 — погода · Enter — чат · C — маг/рыцарь · M — Night City · E/F — эмоция/блок (рыцарь) · V — ASCII вкл/выкл · Z — детализация · руины справа по тропе →</div>
+<div class="btns"><button id="bWx">☁ погода</button><button id="bSp">✦ магия</button><button id="bHero">✦ маг</button><button id="bMap">🗺 карта</button><button id="bAscii">▦ ASCII: вкл</button><button id="bDet">◫ средне</button></div>
 <button id="cast">✦</button>
 <div id="stick"><i></i></div>
 <input id="chat" maxlength="80" placeholder="Сообщение…" autocomplete="off" enterkeyhint="send">
 <div id="err">Нужен браузер с поддержкой WebGL2.</div>
-<script type="module" src="./game.js?v=6"></script>
+<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js"}}</script>
+<script type="module" src="./game.js?v=7"></script>
 </body>
 </html>

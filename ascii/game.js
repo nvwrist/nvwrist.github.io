@@ -1,4 +1,6 @@
 import * as THREE from './vendor/three.module.min.js';
+import { GLTFLoader } from './vendor/addons/loaders/GLTFLoader.js';
+import * as SkeletonUtils from './vendor/addons/utils/SkeletonUtils.js';
 
 /* =====================================================================
    ASCII World — 3D scene rendered to an off-screen target, then turned
@@ -104,12 +106,14 @@ const U = {
   uPlayer: { value: new THREE.Vector3() },
   uFocus: { value: new THREE.Vector3() },
   uRes: { value: new THREE.Vector2(1, 1) },
+  uWet: { value: 0 },
+  uPN: { value: new THREE.Vector3(0, 0, 1e9) },
 };
 const COMMON = /* glsl */`
 uniform float uTime; uniform vec3 uAmb; uniform vec3 uMoonDir; uniform vec3 uMoonCol;
 uniform vec3 uLP[${MAXL}]; uniform vec3 uLC[${MAXL}]; uniform float uLR[${MAXL}]; uniform int uNL;
 uniform vec3 uFogCol; uniform float uFogD; uniform vec2 uWind; uniform float uWindS;
-uniform vec3 uPlayer; uniform vec3 uFocus; uniform vec2 uRes;
+uniform vec3 uPlayer; uniform vec3 uFocus; uniform vec2 uRes; uniform float uWet; uniform vec3 uPN;
 float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
 float noise(vec2 p){ vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.-2.*f);
   return mix(mix(hash(i),hash(i+vec2(1,0)),u.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),u.x), u.y); }
@@ -458,6 +462,129 @@ function animChar(c, dt, moving, speed) {
   c.cast -= dt;
 }
 const orbWorld = (c, out) => c.orbM.getWorldPosition(out);
+/* ---------- skinned glTF characters (KayKit Knight, CC0) ---------- */
+const SKIN_VS = /* glsl */`
+#include <common>
+#include <skinning_pars_vertex>
+varying vec3 vP; varying vec2 vUv; varying vec3 vN;
+void main(){
+  #include <beginnormal_vertex>
+  #include <skinbase_vertex>
+  #include <skinnormal_vertex>
+  #include <begin_vertex>
+  #include <skinning_vertex>
+  vec4 wp = modelMatrix * vec4(transformed, 1.);
+  vP = wp.xyz; vN = normalize(mat3(modelMatrix) * objectNormal); vUv = uv;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+const SKIN_FS = COMMON + /* glsl */`
+uniform sampler2D tMap; uniform vec3 uTint; uniform float uRim; uniform vec3 uFill; uniform vec3 uEmis; uniform float uHurt;
+varying vec3 vP; varying vec2 vUv; varying vec3 vN;
+void main(){
+  vec3 base = pow(texture2D(tMap, vUv).rgb, vec3(1.3)) * uTint;
+  vec3 n = normalize(vN), V = normalize(cameraPosition - vP);
+  vec3 L = lightAt(vP, n) + uFill;
+  float rim = pow(1. - max(dot(n, V), 0.), 2.) * uRim;
+  vec3 c = base * L + uEmis + rim * (base + .15) * (uAmb * 3. + .25) + uHurt * vec3(1.2, .15, .1);
+  gl_FragColor = vec4(fogIt(c, vP), 1.);
+}`;
+function skinMat(map, { tint = [1, 1, 1], rim = 1.4, fill = [.06, .055, .05], emis = [0, 0, 0] } = {}) {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...U, tMap: { value: map }, uTint: { value: new THREE.Color(...tint) }, uRim: { value: rim }, uFill: { value: new THREE.Color(...fill) }, uEmis: { value: new THREE.Color(...emis) }, uHurt: { value: 0 } },
+    vertexShader: SKIN_VS, fragmentShader: SKIN_FS,
+  });
+}
+const KNIGHT_KEEP_HIDDEN = ['1H_Sword_Offhand', 'Badge_Shield', 'Rectangle_Shield', 'Spike_Shield', '2H_Sword'];
+const knight = { g: new THREE.Group(), ready: false, mixer: null, clips: {}, base: null, baseName: '', one: null, combo: 0, slash: null, mats: [], height: 2.15, src: null };
+knight.g.visible = false; scene.add(knight.g);
+const cityWalkers = [];
+const gltfLoader = new GLTFLoader();
+gltfLoader.load('./models/knight.glb?v=1', gltf => {
+  const root = gltf.scene;
+  knight.src = gltf;
+  prepKnight(root, knight.mats, { tint: [1.25, 1.25, 1.3], rim: 2, fill: [.1, .1, .1] });
+  const box = new THREE.Box3().setFromObject(root), h = box.max.y - box.min.y;
+  const sc = knight.height / h; root.scale.setScalar(sc); root.position.y = -box.min.y * sc;
+  knight.g.add(root);
+  knight.mixer = new THREE.AnimationMixer(root);
+  for (const c of gltf.animations) knight.clips[c.name] = c;
+  knight.mixer.addEventListener('finished', e => { if (e.action === knight.one) { e.action.fadeOut(.2); knight.one = null; knight.baseName = ''; } });
+  knight.ready = true;
+  setHeroBase('Idle');
+  spawnWalkers(gltf, sc, -box.min.y * sc);
+  if (P.cls === 'knight') setHero('knight', true);
+}, undefined, e => { console.warn('knight load failed', e); });
+function prepKnight(root, mats, opt) {
+  root.traverse(o => {
+    if (KNIGHT_KEEP_HIDDEN.includes(o.name)) o.visible = false;
+    if (o.isMesh) {
+      const m = skinMat(o.material.map, opt); o.material = m; mats.push(m); o.frustumCulled = false;
+    }
+  });
+}
+function act(mixer, clips, name, loop = true) { const a = mixer.clipAction(clips[name]); a.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1); a.clampWhenFinished = !loop; return a; }
+function setHeroBase(name, ts = 1) {
+  if (!knight.ready) return;
+  if (knight.baseName === name) { knight.base.timeScale = ts; return; }
+  const a = act(knight.mixer, knight.clips, name); a.timeScale = ts;
+  a.reset().fadeIn(.2).play();
+  if (knight.base && knight.base !== a) knight.base.fadeOut(.2);
+  if (knight.one) { knight.one.fadeOut(.2); knight.one = null; }
+  knight.base = a; knight.baseName = name;
+}
+function heroOnce(name, ts = 1) {
+  if (!knight.ready) return;
+  const a = act(knight.mixer, knight.clips, name, false); a.timeScale = ts;
+  a.reset().fadeIn(.08).play();
+  if (knight.base) knight.base.fadeOut(.08);
+  if (knight.one && knight.one !== a) knight.one.fadeOut(.08);
+  knight.one = a; knight.baseName = '';
+}
+function knightAttack(dx, dz) {
+  const seq = ['1H_Melee_Attack_Slice_Diagonal', '1H_Melee_Attack_Slice_Horizontal', '1H_Melee_Attack_Chop', '1H_Melee_Attack_Stab'];
+  heroOnce(seq[knight.combo++ % seq.length], 1.35);
+  knight.slash = { t: .26, dx, dz };
+}
+function knightSlash(dx, dz) {
+  const c = SP[P.spell].c, base = Math.atan2(dx, dz);
+  for (let i = 0; i < 28; i++) {
+    const a = base + (i / 27 - .5) * 2.3, r = 1.25 + rnd() * .25;
+    const x = P.x + Math.sin(a) * r, z = P.z + Math.cos(a) * r;
+    emit({ x, y: .7 + (i / 27) * .9, z, vx: Math.sin(a) * 2.5, vz: Math.cos(a) * 2.5, vy: .3, r: c[0], g: c[1], b: c[2], size: .09, life: .35 + rnd() * .2, drag: 3, mode: i % 3 ? RUNEM : 1 });
+  }
+  L(P.x + dx, 1.1, P.z + dz, 5, c[0] * .8, c[1] * .8, c[2] * .8);
+  if (zone === 'dungeon') for (const m of D.monsters) {
+    if (!m.alive) continue;
+    const mx = m.g.position.x - P.x, mz = m.g.position.z - P.z, d = Math.hypot(mx, mz);
+    if (d < 2.7 && (mx * dx + mz * dz) / (d || 1) > .25) { m.alive = false; m.g.visible = false; m.rt = 15; burst(m.g.position.x, 1, m.g.position.z, P.spell, 60); }
+  }
+}
+function updateKnight(dt, moving, spd) {
+  if (!knight.ready) return;
+  if (knight.slash) { knight.slash.t -= dt; if (knight.slash.t <= 0) { knightSlash(knight.slash.dx, knight.slash.dz); knight.slash = null; } }
+  if (!knight.one) {
+    if (!moving) setHeroBase('Idle');
+    else if (spd > 5) setHeroBase('Running_A', spd / 5.6);
+    else setHeroBase('Walking_A', spd / 2.3);
+  }
+  const hurt = P.hurt > 0 ? 1 : 0; for (const m of knight.mats) m.uniforms.uHurt.value = hurt * .6;
+  knight.mixer.update(dt);
+}
+/* city pedestrians: clones of the knight with neon tints */
+function spawnWalkers(gltf, sc, y0) {
+  const tints = [[.5, 1, 1.3], [1.3, .45, 1.1], [1.2, 1.05, .45], [.6, .55, 1.4], [.4, 1.2, .7], [1.3, .6, .4], [.9, .9, 1.1], [1.2, .4, .6]];
+  for (let i = 0; i < 10; i++) {
+    const root = SkeletonUtils.clone(gltf.scene), mats = [];
+    prepKnight(root, mats, { tint: tints[i % tints.length], rim: 1.2, fill: [.02, .02, .03] });
+    root.scale.setScalar(sc); root.position.y = y0;
+    const g = new THREE.Group(); g.add(root); city.add(g);
+    const mixer = new THREE.AnimationMixer(root);
+    const a = act(mixer, gltf.animations.reduce((o, c) => (o[c.name] = c, o), {}), i % 4 === 3 ? 'Running_A' : 'Walking_A');
+    a.play(); a.time = rnd() * 2;
+    const bx = (rnd() * 6 | 0) - 3, bz = (rnd() * 6 | 0) - 3;
+    cityWalkers.push({ g, mixer, bx, bz, s: rnd() * 100, sp: i % 4 === 3 ? 4.2 : 1.6, dir: rnd() < .5 ? 1 : -1 });
+  }
+}
 
 /* ---------- particles (billboards, instanced) ---------- */
 const PMAX = 5000;
@@ -531,14 +658,14 @@ const rain = (() => {
   geo.setAttribute('aO', new THREE.InstancedBufferAttribute(a, 4));
   geo.instanceCount = 0;
   const mat = new THREE.ShaderMaterial({
-    uniforms: { ...U, uFlash: { value: 0 } },
+    uniforms: { ...U, uFlash: { value: 0 }, uRainH: { value: 1 } },
     vertexShader: COMMON + /* glsl */`
-    attribute vec4 aO; uniform float uFlash;
+    attribute vec4 aO; uniform float uFlash; uniform float uRainH;
     varying float vAng; varying float vB; varying vec3 vP;
     void main(){
       vec2 c = uFocus.xz;
       float fall = 15. + aO.w*7.;
-      float y = mod(aO.y - uTime*fall, 16.);
+      float y = mod(aO.y - uTime*fall, 16.) * uRainH;
       vec3 vel = vec3(uWind.x*(2.+uWindS*8.), -fall, uWind.y*(2.+uWindS*8.));
       vec3 p = vec3(0., y, 0.);
       p.xz = c + mod(aO.xz - c + 18. + (-vel.xz/fall)*y, 36.) - 18.;
@@ -647,6 +774,247 @@ const D = { map: null, start: new THREE.Vector3(), exit: new THREE.Vector3(), br
     D.monsters.push({ g, eyes, hx: x, hz: z, alive: true, rt: 0, ph: r() * 10 });
   }
 })();
+/* ---------- Night City (procedural cyberpunk district) ---------- */
+const city = new THREE.Group(); city.visible = false; scene.add(city);
+const CBK = 26, CST = 10, CPD = CBK + CST, CN = 4;   // block size, street width, period, blocks from centre
+const cityHash = new Map();
+function cityAdd(b) {
+  for (let x = Math.floor(b.x0 / 12); x <= Math.floor(b.x1 / 12); x++) for (let z = Math.floor(b.z0 / 12); z <= Math.floor(b.z1 / 12); z++) {
+    const k = x + ',' + z; if (!cityHash.has(k)) cityHash.set(k, []); cityHash.get(k).push(b);
+  }
+}
+function cSolid(x, z, rad) {
+  if (Math.abs(x) > CN * CPD + 4 || Math.abs(z) > CN * CPD + 4) return true;
+  const l = cityHash.get(Math.floor(x / 12) + ',' + Math.floor(z / 12)); if (!l) return false;
+  for (const b of l) if (x > b.x0 - rad && x < b.x1 + rad && z > b.z0 - rad && z < b.z1 + rad) return true;
+  return false;
+}
+const CITY_NEON = [[.25, 1.3, 1.6], [1.7, .3, 1.3], [1.6, 1.1, .3], [.6, .45, 1.8], [.3, 1.6, .7]];
+const CITY = { lamps: [], vents: [], cars: [], carBody: null, carLite: null };
+(function buildCity() {
+  const r = mulberry(2077), blds = [], signs = [], holos = [];
+  for (let bx = -CN; bx < CN; bx++) for (let bz = -CN; bz < CN; bz++) {
+    const x0 = bx * CPD + CST / 2, z0 = bz * CPD + CST / 2, lx0 = x0 + 2.6, lz0 = z0 + 2.6, L_ = CBK - 5.2;
+    const centre = 1 - Math.min(1, Math.hypot(x0 + CBK / 2, z0 + CBK / 2) / (CN * CPD));
+    const mode = r() * 4 | 0, lots = [];
+    if (mode === 0) lots.push([lx0, lz0, L_, L_]);
+    else if (mode === 1) { const s = L_ * (.35 + r() * .3); lots.push([lx0, lz0, s - .6, L_], [lx0 + s + .6, lz0, L_ - s - .6, L_]); }
+    else if (mode === 2) { const s = L_ * (.35 + r() * .3); lots.push([lx0, lz0, L_, s - .6], [lx0, lz0 + s + .6, L_, L_ - s - .6]); }
+    else { const h = L_ / 2; for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) lots.push([lx0 + a * (h + .6), lz0 + b * (h + .6), h - .6, h - .6]); }
+    for (const [lx, lz, w, d] of lots) {
+      const h = 9 + Math.pow(r(), 1.6) * 60 * (.45 + centre * .8), hue = r(), seed = r() * 100;
+      blds.push([lx + w / 2, lz + d / 2, w, d, 0, h, hue, seed]);
+      cityAdd({ x0: lx, x1: lx + w, z0: lz, z1: lz + d });
+      if (h > 26 && r() < .6) { const k = .55 + r() * .25, h2 = 6 + r() * 20; blds.push([lx + w / 2, lz + d / 2, w * k, d * k, h, h2, hue, seed + 1]); if (r() < .5) holos.push([lx + w / 2, h + h2, lz + d / 2, Math.min(w, d) * k, r() * 5 | 0]); }
+      else if (h > 18 && r() < .3) holos.push([lx + w / 2, h, lz + d / 2, Math.min(w, d) * .8, r() * 5 | 0]);
+      // blade signs on street-facing walls
+      const nS = 1 + (r() * 3 | 0);
+      for (let k = 0; k < nS; k++) {
+        const side = r() * 4 | 0, sh = 2.5 + r() * 5, sy = 3 + r() * Math.max(1, Math.min(h - sh - 2, 16)), sw = 1 + r() * 1.4;
+        let sx, sz, rot;
+        if (side === 0) { sx = lx + r() * w; sz = lz - sw / 2; rot = 0; }
+        else if (side === 1) { sx = lx + r() * w; sz = lz + d + sw / 2; rot = 0; }
+        else if (side === 2) { sx = lx - sw / 2; sz = lz + r() * d; rot = 1; }
+        else { sx = lx + w + sw / 2; sz = lz + r() * d; rot = 1; }
+        signs.push([sx, sy, sz, sw, sh, rot, r() * 5 | 0, r() * 100]);
+      }
+    }
+    // street lamps at block corners and mid-sides
+    for (const [px, pz] of [[x0 + 1, z0 + 1], [x0 + CBK - 1, z0 + 1], [x0 + 1, z0 + CBK - 1], [x0 + CBK - 1, z0 + CBK - 1], [x0 + CBK / 2, z0 + 1], [x0 + 1, z0 + CBK / 2]])
+      CITY.lamps.push([px, pz, r() < .5 ? 0 : 1]);
+    CITY.vents.push([x0 - CST / 2 + (r() - .5) * 4, z0 + r() * CBK], [x0 + r() * CBK, z0 - CST / 2 + (r() - .5) * 4]);
+  }
+  // buildings: one instanced box mesh, windows / neon trims in the shader
+  const bGeo = new THREE.BoxGeometry(1, 1, 1).translate(0, .5, 0);
+  const aB = new Float32Array(blds.length * 4);
+  const bMat = new THREE.ShaderMaterial({
+    uniforms: { ...U },
+    vertexShader: COMMON + /* glsl */`
+    attribute vec4 aB; varying vec3 vP; varying vec4 vB; varying vec4 vClip; varying float vVD;
+    void main(){ vec4 wp = modelMatrix*instanceMatrix*vec4(position,1.); vP = wp.xyz; vB = aB;
+      vec4 vp = viewMatrix*wp; vVD = -vp.z; vClip = projectionMatrix*vp; gl_Position = vClip; }`,
+    fragmentShader: COMMON + /* glsl */`
+    varying vec3 vP; varying vec4 vB; varying vec4 vClip; varying float vVD;
+    vec3 neonC(float h){ return h<.2?vec3(.25,1.3,1.6):h<.4?vec3(1.7,.3,1.3):h<.6?vec3(1.6,1.1,.3):h<.8?vec3(.6,.45,1.8):vec3(.3,1.6,.7); }
+    void main(){
+      // see-through around the player when a building is in front of them
+      vec2 dd = (vClip.xy/vClip.w - uPN.xy)*vec2(uRes.x/uRes.y,1.);
+      if(vVD < uPN.z - 1.5 && vP.y > .4){ float r = length(dd); if(r < .22 + .05*hash(floor(gl_FragCoord.xy*.25))) discard; }
+      vec3 n = normalize(cross(dFdx(vP),dFdy(vP)));
+      vec3 V = normalize(cameraPosition-vP); if(dot(n,V)<0.) n=-n;
+      vec3 base = vec3(.2,.2,.26)*(.7+.6*hash(vec2(vB.w,1.)));
+      vec3 em = vec3(0.); vec3 neon = neonC(vB.z);
+      float top = vB.x + vB.y;
+      if(abs(n.y) < .5){
+        float u = abs(n.x) > .5 ? vP.z : vP.x;
+        vec2 g = vec2(u/1.6, vP.y/3.1); vec2 id = floor(g); vec2 f = fract(g);
+        float win = step(.16,f.x)*step(f.x,.84)*step(.22,f.y)*step(f.y,.78);
+        float h = hash(id + vB.w*7.13);
+        float lit = step(.42, h) * step(vB.x + 1.2, vP.y) * step(vP.y, top - .8);
+        if(h > .985) lit *= step(.25, hash(id + floor(uTime*3.)));   // a few flickering windows
+        vec3 wc = h > .94 ? neon : h > .8 ? vec3(1.15,.78,.45) : h > .7 ? vec3(.45,.85,1.2) : vec3(.85,.8,.7)*.6;
+        em += win*lit*wc*(.75 + .9*hash(id+3.));
+        base *= 1. - win*.5;
+        // vertical neon strip on some buildings
+        float strip = step(.65, hash(vec2(vB.w,3.))) * (1.-step(.18, abs(fract(u/9.+vB.w)-.5)*9.));
+        em += strip*neon*1.4*step(vP.y, top);
+      } else {
+        // roofs: tar panels, AC units and the odd beacon
+        vec2 rc = floor(vP.xz/2.2); float rh = hash(rc + vB.w);
+        base = vec3(.07,.07,.09)*(.6+.8*rh);
+        if(rh > .965) em += neon*(.8 + .6*sin(uTime*3. + rh*40.));
+      }
+      float edge = smoothstep(top-.45, top-.12, vP.y);
+      em += edge*neon*1.8*step(.35, hash(vec2(vB.w,7.)));
+      vec3 c = base*(lightAt(vP,n) + vec3(.22,.2,.32)*(.6 + .4*n.y)) + em;
+      gl_FragColor = vec4(fogIt(c,vP),1.);
+    }`,
+  });
+  const bMesh = new THREE.InstancedMesh(bGeo, bMat, blds.length);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  blds.forEach(([x, z, w, d, y0, h, hue, seed], i) => { m4.compose(v.set(x, y0, z), q.identity(), sc.set(w, h, d)); bMesh.setMatrixAt(i, m4); aB.set([y0, h, hue, seed], i * 4); });
+  bGeo.setAttribute('aB', new THREE.InstancedBufferAttribute(aB, 4));
+  bMesh.frustumCulled = false; city.add(bMesh);
+  // blade signs: flickering neon panels with fake lettering
+  const sGeo = new THREE.BoxGeometry(1, 1, 1), aS = new Float32Array(signs.length * 4);
+  const sMat = new THREE.ShaderMaterial({
+    uniforms: { ...U },
+    vertexShader: COMMON + `attribute vec4 aS; varying vec3 vL; varying vec4 vS; varying vec3 vP;
+      void main(){ vL = position; vS = aS; vec4 wp = modelMatrix*instanceMatrix*vec4(position,1.); vP = wp.xyz; gl_Position = projectionMatrix*viewMatrix*wp; }`,
+    fragmentShader: COMMON + /* glsl */`
+    varying vec3 vL; varying vec4 vS; varying vec3 vP;
+    void main(){
+      vec3 col = vS.x<.5?vec3(.25,1.3,1.6):vS.x<1.5?vec3(1.7,.3,1.3):vS.x<2.5?vec3(1.6,1.1,.3):vS.x<3.5?vec3(.6,.45,1.8):vec3(.3,1.6,.7);
+      vec2 uv = vec2(vL.z + vL.x, vL.y) + .5;
+      vec2 g = floor(uv*vec2(3.,9.));
+      float letter = step(.42, hash(g + vS.y));
+      float border = step(.44, max(abs(uv.x-.5), abs(uv.y-.5)));
+      float on = step(.07, hash(vec2(vS.y, floor(uTime*(1.+fract(vS.y)*4.)))));
+      vec3 c = col*(letter*.9 + border*1.4 + .08)*on*1.6;
+      gl_FragColor = vec4(fogIt(c, vP), 1.);
+    }`,
+  });
+  const sMesh = new THREE.InstancedMesh(sGeo, sMat, signs.length);
+  signs.forEach(([x, y, z, w, h, rot, col, seed], i) => {
+    m4.compose(v.set(x, y + h / 2, z), q.identity(), rot ? sc.set(w, h, .14) : sc.set(.14, h, w)); sMesh.setMatrixAt(i, m4); aS.set([col, seed, 0, 0], i * 4);
+  });
+  sGeo.setAttribute('aS', new THREE.InstancedBufferAttribute(aS, 4));
+  sMesh.frustumCulled = false; city.add(sMesh);
+  // rooftop holograms: scanline panels rendered with rune glyphs
+  const hGeo = new THREE.PlaneGeometry(1, 1).translate(0, .5, 0), aH = new Float32Array(holos.length * 4);
+  const hMat = new THREE.ShaderMaterial({
+    uniforms: { ...U }, side: THREE.DoubleSide,
+    vertexShader: `attribute vec4 aH; varying vec2 vUv; varying vec4 vH; void main(){ vUv = uv; vH = aH; gl_Position = projectionMatrix*viewMatrix*modelMatrix*instanceMatrix*vec4(position,1.); }`,
+    fragmentShader: /* glsl */`uniform float uTime; varying vec2 vUv; varying vec4 vH;
+      void main(){
+        vec3 col = vH.x<.5?vec3(.25,1.3,1.6):vH.x<1.5?vec3(1.7,.3,1.3):vH.x<2.5?vec3(1.6,1.1,.3):vH.x<3.5?vec3(.6,.45,1.8):vec3(.3,1.6,.7);
+        float scan = .55 + .45*sin(vUv.y*60. - uTime*6.);
+        float band = step(.7, fract(vUv.y*3. - uTime*.4 + vH.y));
+        float glitch = step(.93, fract(sin(floor(uTime*8.)+vH.y)*43758.5));
+        if(fract(vUv.y*14.) < .25 && glitch < .5) discard;
+        gl_FragColor = vec4(col*(scan*.8 + band*.8)*(1.-glitch*.6), .05);
+      }`,
+  });
+  const hMesh = new THREE.InstancedMesh(hGeo, hMat, holos.length);
+  const up = new THREE.Vector3(0, 1, 0);
+  holos.forEach(([x, y, z, w, col], i) => { q.setFromAxisAngle(up, (i % 2) * Math.PI / 2); m4.compose(v.set(x, y + .5, z), q, sc.set(w * .9, w * .5, 1)); hMesh.setMatrixAt(i, m4); aH.set([col, i * 1.7, 0, 0], i * 4); });
+  hGeo.setAttribute('aH', new THREE.InstancedBufferAttribute(aH, 4));
+  hMesh.frustumCulled = false; city.add(hMesh);
+  // street lamps
+  const pole = new THREE.InstancedMesh(new THREE.CylinderGeometry(.07, .1, 6, 5).translate(0, 3, 0), stdMat({ color: [.2, .2, .24] }), CITY.lamps.length);
+  const head = new THREE.InstancedMesh(new THREE.BoxGeometry(.9, .14, .3), stdMat({ color: [0, 0, 0], emis: [1, 1, 1] }), CITY.lamps.length);
+  const hc = new THREE.Color();
+  CITY.lamps.forEach(([x, z, t], i) => {
+    m4.makeTranslation(x, 0, z); pole.setMatrixAt(i, m4); m4.makeTranslation(x, 6, z); head.setMatrixAt(i, m4);
+    head.setColorAt(i, t ? hc.setRGB(1.9, .4, 1.5) : hc.setRGB(.4, 1.6, 1.9));
+  });
+  head.material = new THREE.ShaderMaterial({
+    uniforms: { ...U },
+    vertexShader: `varying vec3 vC; void main(){ vC = instanceColor; gl_Position = projectionMatrix*viewMatrix*modelMatrix*instanceMatrix*vec4(position,1.); }`,
+    fragmentShader: `varying vec3 vC; void main(){ gl_FragColor = vec4(vC, 1.); }`,
+  });
+  pole.frustumCulled = head.frustumCulled = false; city.add(pole, head);
+  // ground: asphalt, lane markings, crosswalks, sidewalks and wet neon reflections
+  const gMat = new THREE.ShaderMaterial({
+    uniforms: { ...U },
+    vertexShader: COMMON + `varying vec3 vP; void main(){ vec4 wp=modelMatrix*vec4(position,1.); vP=wp.xyz; gl_Position=projectionMatrix*viewMatrix*wp; }`,
+    fragmentShader: COMMON + /* glsl */`
+    varying vec3 vP;
+    void main(){
+      float P = ${CPD}.; float B = ${CBK}.; float S = ${CST}.;
+      vec2 l = mod(vP.xz, P);
+      vec2 inB = step(S*.5, l)*(1.-step(S*.5+B, l));
+      vec2 dc = min(l, P-l);                               // distance to the street centre line on each axis
+      vec3 c = vec3(.06,.062,.075)*(.6+.8*noise(vP.xz*1.3));
+      vec3 add = vec3(0.);
+      if(inB.x*inB.y > .5){
+        vec2 e = min(l - S*.5, S*.5+B - l); float ed = min(e.x,e.y);
+        if(ed < 2.6){ vec2 t = fract(vP.xz/1.3); c = vec3(.12,.12,.14)*(.6+.5*hash(floor(vP.xz/1.3)))*(.4+.6*step(.06,min(t.x,t.y))); }
+        else c = vec3(.05,.05,.06);
+      } else {
+        bool alongX = inB.x > .5 || (inB.x < .5 && inB.y < .5 && dc.y < dc.x);
+        float cross_ = (inB.x < .5 && inB.y < .5) ? 1. : 0.;
+        float centre = alongX ? dc.y : dc.x, run = alongX ? vP.x : vP.z;
+        if(cross_ < .5 && centre < .09 && fract(run/4.) < .55) add += vec3(1.2,.9,.25)*.5;
+        // crosswalk stripes at the block edges
+        float toBlock = alongX ? abs(dc.x - S*.5) : abs(dc.y - S*.5);
+        if(cross_ < .5 && toBlock < 1.6 && fract((alongX ? vP.z : vP.x)/1.1) < .5) c = vec3(.35);
+      }
+      // puddles reflect the neon of the street
+      float pud = smoothstep(.5,.72, noise(vP.xz*.22) + .35*noise(vP.xz*1.3));
+      vec3 refl = mix(vec3(1.5,.25,1.2), vec3(.2,1.2,1.6), noise(vP.xz*.06 + vec2(uTime*.02,0.)));
+      refl *= .25 + .55*noise(vP.xz*.7 - uTime*.1);
+      vec3 col = c*lightAt(vP, vec3(0,1,0)) + add + refl*pud*(.25 + .75*uWet)*.55;
+      gl_FragColor = vec4(fogIt(col, vP), 1.);
+    }`,
+  });
+  CITY.ground = new THREE.Mesh(new THREE.PlaneGeometry(260, 260).rotateX(-Math.PI / 2), gMat);
+  city.add(CITY.ground);
+  // flying cars
+  const NC = 46;
+  CITY.carBody = new THREE.InstancedMesh(new THREE.BoxGeometry(1.6, .55, 3.4), stdMat({ color: [.25, .25, .3], rim: .8 }), NC);
+  CITY.carLite = new THREE.InstancedMesh(new THREE.BoxGeometry(1.7, .12, 3.5), new THREE.ShaderMaterial({
+    vertexShader: `varying float vZ; varying vec3 vC; void main(){ vZ = position.z; vC = instanceColor; gl_Position = projectionMatrix*viewMatrix*modelMatrix*instanceMatrix*vec4(position,1.); }`,
+    fragmentShader: `varying float vZ; varying vec3 vC; void main(){ vec3 c = vZ > 1.6 ? vec3(2.,2.,1.8) : vZ < -1.6 ? vec3(2.2,.2,.3) : vC; gl_FragColor = vec4(c,1.); }`,
+  }), NC);
+  for (let i = 0; i < NC; i++) {
+    const alongX = r() < .5, lane = ((r() * 2 * CN | 0) - CN) * CPD, y = 9 + r() * 22, sp = (10 + r() * 16) * (r() < .5 ? 1 : -1);
+    CITY.cars.push({ alongX, lane: lane + (sp > 0 ? 2 : -2), y, sp, t: (r() - .5) * 2 * CN * CPD });
+    const n = CITY_NEON[i % 5]; CITY.carLite.setColorAt(i, hc.setRGB(n[0] * .5, n[1] * .5, n[2] * .5));
+  }
+  CITY.carBody.frustumCulled = CITY.carLite.frustumCulled = false; city.add(CITY.carBody, CITY.carLite);
+})();
+function updateCity(dt, ne) {
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), lim = CN * CPD + 20;
+  CITY.cars.forEach((c, i) => {
+    c.t += c.sp * dt; if (c.t > lim) c.t -= 2 * lim; if (c.t < -lim) c.t += 2 * lim;
+    const x = c.alongX ? c.t : c.lane, z = c.alongX ? c.lane : c.t, yaw = c.alongX ? (c.sp > 0 ? Math.PI / 2 : -Math.PI / 2) : (c.sp > 0 ? 0 : Math.PI);
+    q.setFromAxisAngle(v.set(0, 1, 0), yaw); m4.compose(v.set(x, c.y + Math.sin(T + i) * .2, z), q, one);
+    CITY.carBody.setMatrixAt(i, m4); CITY.carLite.setMatrixAt(i, m4);
+    if (rnd() < dt * 10 && Math.abs(x - P.x) < 30 && Math.abs(z - P.z) < 30) {
+      const bx = Math.sin(yaw), bz = Math.cos(yaw);
+      emit({ x: x - bx * 1.9, y: c.y, z: z - bz * 1.9, r: 2, g: .2, b: .3, size: .1, life: .5, shrink: 1 });
+    }
+  });
+  CITY.carBody.instanceMatrix.needsUpdate = CITY.carLite.instanceMatrix.needsUpdate = true;
+  CITY.ground.position.set(Math.round(focus.x), 0, Math.round(focus.z));
+  for (const [x, z, t] of CITY.lamps) if (Math.abs(x - P.x) < 26 && Math.abs(z - P.z) < 22) L(x, 5.6, z, 11, t ? 1.3 : .25, t ? .3 : 1.1, t ? 1.0 : 1.3);
+  for (const [x, z] of CITY.vents) if (Math.abs(x - P.x) < 24 && Math.abs(z - P.z) < 20 && rnd() < dt * 9)
+    emit({ x: x + (rnd() - .5) * .6, y: .1, z: z + (rnd() - .5) * .6, vx: U.uWind.value.x * .4, vy: 1.2 + rnd(), vz: (rnd() - .5) * .3, r: .22, g: .22, b: .3, size: .08 + rnd() * .06, grow: 1.5, life: 1.4, drag: .3 });
+  const ns = Wc.rain * dt * 110;
+  for (let i = 0; i < Math.floor(ns) + (rnd() < ns % 1 ? 1 : 0); i++)
+    emit({ x: focus.x + (rnd() - .5) * 26, y: .04, z: focus.z + (rnd() - .5) * 20, r: .55, g: .5, b: .8, size: .03, grow: 2.5, life: .28 });
+  for (const w of cityWalkers) {
+    // walk around a block on its sidewalk
+    const x0 = w.bx * CPD + CST / 2 + 1.3, z0 = w.bz * CPD + CST / 2 + 1.3, Lx = CBK - 2.6, per = 4 * Lx;
+    w.s = ((w.s + w.dir * w.sp * dt) % per + per) % per;
+    const s = w.s, side = Math.floor(s / Lx), f = s - side * Lx;
+    const pts = [[x0 + f, z0], [x0 + Lx, z0 + f], [x0 + Lx - f, z0 + Lx], [x0, z0 + Lx - f]][side];
+    const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]][side];
+    w.g.position.set(pts[0], 0, pts[1]); w.g.rotation.y = Math.atan2(dirs[0] * w.dir, dirs[1] * w.dir);
+    if (Math.abs(pts[0] - P.x) < 40 && Math.abs(pts[1] - P.z) < 40) w.mixer.update(dt);
+  }
+}
 function dSolid(x, z) {
   const tx = Math.floor(x / TS + DW / 2), ty = Math.floor(z / TS + DH / 2);
   return tx < 0 || ty < 0 || tx >= DW || ty >= DH || !D.map[ty * DW + tx];
@@ -665,6 +1033,7 @@ function fSolid(x, z, rad) {
 }
 function solid(x, z, rad = .3) {
   if (zone === 'forest') return fSolid(x, z, rad);
+  if (zone === 'city') return cSolid(x, z, rad);
   return dSolid(x - rad, z - rad) || dSolid(x + rad, z - rad) || dSolid(x - rad, z + rad) || dSolid(x + rad, z + rad);
 }
 function tryMove(o, dx, dz) { let moved = false; if (!solid(o.x + dx, o.z)) { o.x += dx; moved = true; } if (!solid(o.x, o.z + dz)) { o.z += dz; moved = true; } return moved; }
@@ -675,9 +1044,18 @@ const SP = [
   { n: 'Fire', c: [2.4, 1.0, .25], col: '#f94' },
   { n: 'Nature', c: [.8, 2.2, .45], col: '#8f6' },
 ];
-const P = { name: 'Странник', x: 0, z: 3, yaw: 0, hp: 5, cd: 0, spell: 0, inv: 0, hurt: 0, say: '', sayT: 0 };
+const P = { name: 'Странник', x: 0, z: 3, yaw: 0, hp: 5, cd: 0, spell: 0, inv: 0, hurt: 0, say: '', sayT: 0, cls: 'mage' };
+try { if (localStorage.getItem('ascii-hero') === 'knight') P.cls = 'knight'; } catch (_) { }
 const hero = makeCharacter({ fill: [.07, .065, .06], rimK: 1.7 });
 scene.add(hero.g);
+function setHero(cls, quiet) {
+  if (cls === 'knight' && !knight.ready) { P.cls = 'knight'; toast('загрузка рыцаря…'); return; }
+  P.cls = cls; hero.g.visible = cls === 'mage'; knight.g.visible = cls === 'knight';
+  try { localStorage.setItem('ascii-hero', cls); } catch (_) { }
+  if (!quiet) toast(cls === 'knight' ? 'Рыцарь' : 'Маг');
+  heroBtn();
+}
+function heroBtn() { const b = document.getElementById('bHero'); if (b) b.textContent = P.cls === 'knight' ? '⚔ рыцарь' : '✦ маг'; }
 const NPC_DEF = [['Mira', [.75, .45, .55], [.35, .18, .25]], ['Kael', [.45, .55, .8], [.18, .22, .4]], ['Oru', [.5, .7, .45], [.2, .3, .18]]];
 const NPCS = NPC_DEF.map(([name, robe, hat], i) => {
   const c = makeCharacter({ robe, hat, orb: SP[i].c });
@@ -713,8 +1091,8 @@ function say(who, txt, col) {
 }
 let toastTm; function toast(t) { toastEl.textContent = t; toastEl.style.opacity = 1; clearTimeout(toastTm); toastTm = setTimeout(() => { toastEl.style.opacity = 0; }, 2400); }
 function hud() {
-  zoneEl.innerHTML = (zone === 'forest' ? 'Шепчущий лес' : 'Глубины руин') + '<small></small>';
-  zoneEl.lastChild.textContent = (zone === 'forest' ? WX[wxIdx].n : 'тьма') + ' · ' + SP[P.spell].n;
+  zoneEl.innerHTML = (zone === 'forest' ? 'Шепчущий лес' : zone === 'city' ? 'Night City' : 'Глубины руин') + '<small></small>';
+  zoneEl.lastChild.textContent = (zone === 'dungeon' ? 'тьма' : WX[wxIdx].n) + ' · ' + SP[P.spell].n;
   heartsEl.textContent = '♥'.repeat(Math.max(0, P.hp)) + '♡'.repeat(Math.max(0, 5 - P.hp));
 }
 setTimeout(() => { $('hint').style.opacity = 0; }, 16000);
@@ -738,6 +1116,10 @@ addEventListener('keydown', e => {
   if (e.code === 'Space') { cast(null); e.preventDefault(); }
   if (e.code === 'KeyQ') { P.spell = (P.spell + 1) % SP.length; hud(); }
   if (e.code === 'KeyV') setView(!asciiOn, detail);
+  if (e.code === 'KeyC') setHero(P.cls === 'knight' ? 'mage' : 'knight');
+  if (e.code === 'KeyM') goMap();
+  if (e.code === 'KeyE' && P.cls === 'knight') heroOnce('Cheer');
+  if (e.code === 'KeyF' && P.cls === 'knight') heroOnce('Block', 1.2);
   if (e.code === 'KeyZ') setView(asciiOn, (detail + 1) % 4);
   if (/^Digit[1-5]$/.test(e.code)) setWx(+e.code[5] - 1);
 });
@@ -769,6 +1151,10 @@ $('cast').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropa
 $('bWx').onclick = () => setWx((wxIdx + 1) % WX.length);
 $('bSp').onclick = () => { P.spell = (P.spell + 1) % SP.length; hud(); };
 $('bAscii').onclick = () => setView(!asciiOn, detail);
+$('bHero').onclick = () => setHero(P.cls === 'knight' ? 'mage' : 'knight');
+$('bMap').onclick = () => goMap();
+function goMap() { if (!fadeDir) startTransition(zone === 'city' ? 'forest' : 'city'); }
+function cityWx(w) { return { ...w, fog: Math.max(w.fog, .035), wind: w.wind * .6, amb: [.17, .15, .26], moon: [.3, .25, .45], fogc: w.snow ? [.09, .08, .12] : [.07, .03, .09] }; }
 $('bDet').onclick = () => setView(asciiOn, (detail + 1) % 4);
 function setView(a, d) {
   asciiOn = a; detail = d; resize(); viewBtns();
@@ -777,7 +1163,7 @@ function setView(a, d) {
 }
 function viewBtns() { $('bAscii').textContent = asciiOn ? '▦ ASCII: вкл' : '▦ ASCII: выкл'; $('bDet').textContent = '◫ ' + DETAIL.names[detail]; $('bDet').style.display = asciiOn ? '' : 'none'; }
 canvas.addEventListener('contextmenu', e => e.preventDefault());
-function setWx(i) { wxIdx = i; if (zone === 'forest') toast(WX[i].n); hud(); }
+function setWx(i) { wxIdx = i; if (zone !== 'dungeon') toast(WX[i].n); hud(); }
 
 /* ---------- spells ---------- */
 const ray = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -.9), tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3();
@@ -796,6 +1182,7 @@ function cast(target) {
     dx = tmpV.x - P.x; dz = tmpV.z - P.z; const d = Math.hypot(dx, dz) || 1; dx /= d; dz /= d;
     P.yaw = Math.atan2(dx, dz); hero.g.rotation.y = P.yaw;
   }
+  if (P.cls === 'knight' && knight.ready) { P.cd = .55; knightAttack(dx, dz); return; }
   hero.cast = .3;
   fireSpell(hero, P, dx, dz, P.spell, true);
 }
@@ -820,15 +1207,17 @@ function burst(x, y, z, si, n) {
 /* ---------- zone switching ---------- */
 function startTransition(to) { if (!fadeDir) { fadeDir = 1; fadeTo = to; } }
 function enterZone(z) {
-  zone = z; parts.length = 0;
+  const fromZone = zone; zone = z; parts.length = 0;
   for (const p of projs) scene.remove(p.m); projs.length = 0;
-  forest.visible = z === 'forest'; dungeon.visible = z === 'dungeon';
+  forest.visible = z === 'forest'; dungeon.visible = z === 'dungeon'; city.visible = z === 'city';
   NPCS.forEach(n => { n.tag.style.display = z === 'forest' ? '' : 'none'; });
   if (z === 'dungeon') {
     P.x = D.start.x; P.z = D.start.z; P.yaw = Math.PI; toast('Глубины руин');
     Object.assign(Wc, { rain: 0, snow: 0, storm: 0, wind: 0 });
     D.monsters.forEach(m => { m.alive = true; m.g.visible = true; m.g.position.set(m.hx, 0, m.hz); });
-  } else { P.x = DOOR.x; P.z = DOOR.z + 2.2; P.yaw = 0; toast('Шепчущий лес'); }
+  } else if (z === 'city') { P.x = 0; P.z = CPD / 2; P.yaw = 0; toast('Night City'); }
+  else if (fromZone === 'dungeon') { P.x = DOOR.x; P.z = DOOR.z + 2.2; P.yaw = 0; toast('Шепчущий лес'); }
+  else { P.x = 0; P.z = 3; P.yaw = 0; toast('Шепчущий лес'); }
   focus.set(P.x, 0, P.z); hud();
 }
 
@@ -862,12 +1251,13 @@ function update(dt) {
   const spd = (run ? 6.2 : 3.6) * (fadeDir ? 0 : 1);
   const moving = ml > .12 && !chatOpen && !fadeDir;
   if (moving) {
-    tryMove(P, mx * spd * dt, mz * spd * dt);
+    tryMove(P, mx * spd * dt * (P.cls === 'knight' && knight.one ? .45 : 1), mz * spd * dt * (P.cls === 'knight' && knight.one ? .45 : 1));
     P.yaw = turn(P.yaw, Math.atan2(mx, mz), 1 - Math.exp(-dt * 14));
     if (zone === 'forest' && rnd() < dt * 6) emit({ x: P.x + (rnd() - .5) * .4, y: .05, z: P.z + (rnd() - .5) * .4, vy: .6, r: .25, g: .3, b: .22, size: .05, life: .4 });
   }
   hero.g.position.set(P.x, 0, P.z); hero.g.rotation.y = P.yaw;
-  animChar(hero, dt, moving, spd);
+  knight.g.position.set(P.x, 0, P.z); knight.g.rotation.y = P.yaw;
+  if (P.cls === 'knight' && knight.ready) updateKnight(dt, moving, (knight.one ? .45 : 1) * spd); else animChar(hero, dt, moving, spd);
   U.uPlayer.value.set(P.x, 0, P.z);
 
   /* zone triggers */
@@ -881,16 +1271,18 @@ function update(dt) {
   focus.x = lerp(focus.x, P.x, fk); focus.z = lerp(focus.z, P.z, fk);
   U.uFocus.value.copy(focus);
   const aspect = (cols * cellW) / (rows * cellH);
-  const dist = aspect < 1 ? 11 + (1 - aspect) * 4.5 : 10.5, pitch = .9;
+  const dist = (aspect < 1 ? 11 + (1 - aspect) * 4.5 : 10.5) * (zone === 'city' ? 1.7 : 1), pitch = zone === 'city' ? .62 : .9;
   camera.position.set(focus.x, Math.sin(pitch) * dist + .8, focus.z + Math.cos(pitch) * dist);
   camera.lookAt(focus.x, 1.1, focus.z);
   ground.position.set(Math.round(focus.x), 0, Math.round(focus.z));
+  camera.updateMatrixWorld(); tmpV.set(P.x, 1, P.z).project(camera);
+  { const vz = tmpV2.set(P.x, 1, P.z).applyMatrix4(camera.matrixWorldInverse).z; U.uPN.value.set(tmpV.x, tmpV.y, -vz); }
 
   /* weather */
-  const tg = zone === 'forest' ? WX[wxIdx] : DUN_WX, wk = zone === 'dungeon' ? 1 : 1 - Math.exp(-dt * 1.2);
+  const tg = zone === 'forest' ? WX[wxIdx] : zone === 'city' ? cityWx(WX[wxIdx]) : DUN_WX, wk = zone === 'dungeon' ? 1 : 1 - Math.exp(-dt * 1.2);
   for (const k of ['rain', 'snow', 'fog', 'wind', 'storm']) Wc[k] = lerp(Wc[k], tg[k], wk);
   for (const k of ['amb', 'moon', 'fogc']) for (let i = 0; i < 3; i++) Wc[k][i] = lerp(Wc[k][i], tg[k][i], wk);
-  if (zone === 'forest' && Wc.storm > .5) { flashT -= dt; if (flashT <= 0) { flash = 1; flash2 = .16; flashT = 2.5 + rnd() * 7; } }
+  if (zone !== 'dungeon' && Wc.storm > .5) { flashT -= dt; if (flashT <= 0) { flash = 1; flash2 = .16; flashT = 2.5 + rnd() * 7; } }
   if (flash2 > 0) { flash2 -= dt; if (flash2 <= 0) flash = Math.max(flash, .7); }
   flash = Math.max(0, flash - dt * 2.6);
   const fl = flash * flash;
@@ -899,9 +1291,11 @@ function update(dt) {
   U.uFogCol.value.setRGB(...Wc.fogc); U.uFogD.value = Wc.fog;
   U.uWindS.value = Wc.wind;
   const wa = -2.6 + Math.sin(T * .05) * .3; U.uWind.value.set(Math.cos(wa), Math.sin(wa) * .5).normalize();
-  rain.geo.instanceCount = zone === 'forest' ? Math.floor(RAIN_MAX * Wc.rain * quality) : 0;
-  rain.mat.uniforms.uFlash.value = fl;
-  snow.geo.instanceCount = zone === 'forest' ? Math.floor(SNOW_MAX * Wc.snow) : 0;
+  rain.geo.instanceCount = zone !== 'dungeon' ? Math.floor(RAIN_MAX * Wc.rain * quality) : 0;
+  U.uWet.value = Wc.rain;
+  cellMat.uniforms.uExpo.value = zone === 'city' ? 2.1 : 1;
+  rain.mat.uniforms.uFlash.value = fl; rain.mat.uniforms.uRainH.value = zone === 'city' ? .55 : 1;
+  snow.geo.instanceCount = zone !== 'dungeon' ? Math.floor(SNOW_MAX * Wc.snow) : 0;
 
   /* emitters */
   emitAcc.v += dt * 60; const ne = Math.floor(emitAcc.v); emitAcc.v -= ne;
@@ -927,6 +1321,8 @@ function update(dt) {
     const ns = Wc.rain * dt * 90;
     for (let i = 0; i < Math.floor(ns) + (rnd() < ns % 1 ? 1 : 0); i++)
       emit({ x: focus.x + (rnd() - .5) * 26, y: .04, z: focus.z + (rnd() - .5) * 20, r: .45, g: .55, b: .7, size: .03, grow: 2.5, life: .28 });
+  } else if (zone === 'city') {
+    updateCity(dt, ne);
   } else {
     D.braziers.forEach((b, j) => {
       if (Math.abs(b.x - P.x) > 26 || Math.abs(b.z - P.z) > 26) return;
@@ -937,11 +1333,11 @@ function update(dt) {
   }
   /* hero lantern (staff orb) */
   hero.g.updateMatrixWorld(true);
-  const ob = orbWorld(hero, tmpV2), lf = flick(1, 8);
+  const ob = P.cls === 'knight' && knight.ready ? tmpV2.set(P.x - Math.sin(P.yaw) * .3, 2.1, P.z - Math.cos(P.yaw) * .3) : orbWorld(hero, tmpV2), lf = flick(1, 8);
   const dun = zone === 'dungeon';
   if (dun) { hero.mOrb.uniforms.uEmis.value.setRGB(1.1, 2.2, .5); L(ob.x, ob.y + .4, ob.z, 9, 1.05 * lf, 1.55 * lf, .45 * lf); }
   else { hero.mOrb.uniforms.uEmis.value.setRGB(2.2, 1.4, .6); L(ob.x, ob.y + .4, ob.z, 7, .85 * lf, .58 * lf, .32 * lf); }
-  if (rnd() < dt * 14) emit({ x: ob.x + (rnd() - .5) * .15, y: ob.y, z: ob.z + (rnd() - .5) * .15, vy: .7, r: dun ? 1 : 2, g: dun ? 2 : 1.3, b: .5, size: .035, life: .6 });
+  if (P.cls === 'mage' && rnd() < dt * 14) emit({ x: ob.x + (rnd() - .5) * .15, y: ob.y, z: ob.z + (rnd() - .5) * .15, vy: .7, r: dun ? 1 : 2, g: dun ? 2 : 1.3, b: .5, size: .035, life: .6 });
 
   /* NPCs */
   if (zone === 'forest') for (const n of NPCS) {
@@ -979,6 +1375,7 @@ function update(dt) {
     m.eyes.scale.y = Math.sin(T * .9 + m.ph * 3) > .96 ? .1 : 1;
     if (d < 1.1 && P.inv <= 0 && !fadeDir) {
       P.hp--; P.inv = 1.1; P.hurt = .3; hud();
+      if (P.cls === 'knight') heroOnce(P.hp <= 0 ? 'Death_A' : 'Hit_A', 1.3);
       if (P.hp <= 0) { P.hp = 5; toast('Вы погибли'); startTransition('dungeon'); }
     }
     
@@ -1002,7 +1399,6 @@ function update(dt) {
 
   updateParts(dt);
   pushLights();
-  hero.g.visible = true;
 }
 
 /* ---------- name tags ---------- */
@@ -1021,10 +1417,10 @@ const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2)); quad.frustumCulled =
 const QUAD_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy,0.,1.); }`;
 const cellMat = new THREE.ShaderMaterial({
   defines: { SX, SY, NRAMP: RAMP.length, NEDGE: EDGE.length, NRUNE: RUNE.length },
-  uniforms: { tScene: { value: null }, tDesc: { value: desc }, uDir: { value: SHAPES.length }, uRuneIdx: { value: RUNE_IDX }, uRampIdx: { value: RAMP_IDX }, uEdgeIdx: { value: EDGE_IDX }, uTime: U.uTime },
+  uniforms: { tScene: { value: null }, tDesc: { value: desc }, uDir: { value: SHAPES.length }, uRuneIdx: { value: RUNE_IDX }, uRampIdx: { value: RAMP_IDX }, uEdgeIdx: { value: EDGE_IDX }, uTime: U.uTime, uExpo: { value: 1 } },
   vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: /* glsl */`
-  uniform sampler2D tScene; uniform highp sampler2D tDesc; uniform float uDir, uTime; uniform float uRuneIdx[NRUNE]; uniform float uRampIdx[NRAMP]; uniform float uEdgeIdx[NEDGE];
+  uniform sampler2D tScene; uniform highp sampler2D tDesc; uniform float uDir, uTime; uniform float uRuneIdx[NRUNE]; uniform float uExpo; uniform float uRampIdx[NRAMP]; uniform float uEdgeIdx[NEDGE];
   void main(){
     ivec2 cell = ivec2(gl_FragCoord.xy);
     ivec2 b = cell*ivec2(SX,SY);
@@ -1032,7 +1428,7 @@ const cellMat = new THREE.ShaderMaterial({
     float sub[9];
     for(int k=0;k<9;k++) sub[k] = 0.;
     for(int j=0;j<SY;j++) for(int i=0;i<SX;i++){
-      vec4 t = texelFetch(tScene, b+ivec2(i,j), 0);
+      vec4 t = texelFetch(tScene, b+ivec2(i,j), 0); t.rgb *= uExpo;
       sum += t.rgb; float l = dot(t.rgb, vec3(.3,.59,.11));
       if(l>bl){ bl=l; best=t; }
       sub[(2-(j*3)/SY)*3 + (i*3)/SX] += l;
@@ -1177,7 +1573,7 @@ function render() {
   }
   finalMat.uniforms.tCell.value = cellRT.texture; finalMat.uniforms.tBloom.value = bA.texture; pass(finalMat, null);
   // tags
-  placeTag(P.tag, P.x, 2.75, P.z, P.sayT, P.say);
+  placeTag(P.tag, P.x, P.cls === 'knight' && knight.ready ? 2.35 : 2.75, P.z, P.sayT, P.say);
   if (zone === 'forest') for (const n of NPCS) placeTag(n.tag, n.x, 2.75, n.z, n.sayT, n.say);
 }
 
@@ -1192,7 +1588,7 @@ function frame(now) {
   }
   requestAnimationFrame(frame);
 }
-resize(); hud(); viewBtns(); toast('Шепчущий лес');
+resize(); hud(); viewBtns(); heroBtn(); setHero(P.cls, true); toast('Шепчущий лес');
 say('Система', 'добро пожаловать в Шепчущий лес. Руины — по тропе вправо.', '#9ab');
 window.__game = { P, setWx, enter: z => enterZone(z), cast: () => cast(null), get zone() { return zone; } };
 requestAnimationFrame(frame);

@@ -5,7 +5,7 @@ description: Work on ASCII World (/ascii) — the Three.js game rendered as ASCI
 
 # ASCII World (`ascii/`)
 
-Files: `ascii/index.html` (HUD, buttons, CSS; loads `./game.js?v=N` — **bump N on every change** so phones/raw.githack/Pages do not serve a stale script), `ascii/game.js` (everything else, ES module), `ascii/vendor/three.module.min.js` (Three.js r160, vendored).
+Files: `ascii/models/knight.glb` (KayKit Adventurers Knight, CC0, 76 animations, license next to it), `ascii/vendor/addons/` (GLTFLoader, SkeletonUtils — resolved via the import map in index.html), `ascii/index.html` (HUD, buttons, CSS; loads `./game.js?v=N` — **bump N on every change** so phones/raw.githack/Pages do not serve a stale script), `ascii/game.js` (everything else, ES module), `ascii/vendor/three.module.min.js` (Three.js r160, vendored).
 
 ## Render pipeline (per frame, `render()`)
 
@@ -34,6 +34,11 @@ Camera aspect is `cols*cellW / rows*cellH` (the grid overhangs the screen by < 1
 - Weather presets `WX` (keys 1–5): rain/snow instanced streaks wrapped around the camera, lightning `flash`, fog. Values are lerped into `Wc`.
 - Dungeon: 48×48 tile map (`TS = 2` m), instanced floor/walls, braziers, monsters with glowing eyes, exit ring `D.exit`.
 - Characters: `makeCharacter()` builds the low-poly mage (robe, mantle, cloak, beard, hat with bent tip, sleeves, hands, boots, staff + crystal `orbM`). `animChar()` animates walk, cast (right arm), cloak and hat tip. Player and NPCs share it; colours via options.
+
+## Knight & Night City
+
+- `P.cls` = `'mage' | 'knight'` (button «маг/рыцарь», key **C**, saved in `localStorage['ascii-hero']`). Knight = skinned glTF with `skinMat` (custom skinning shader, writes alpha 1). Base loop via `setHeroBase` (Idle / Walking_A / Running_A), one-shots via `heroOnce` (attack combo `knightAttack` → `knightSlash` hits monsters in an arc, Hit_A, Death_A, Cheer **E**, Block **F**). Hidden props listed in `KNIGHT_KEEP_HIDDEN`.
+- Zone `'city'` (button «карта», key **M**): procedural district in `buildCity()` — instanced buildings with window/neon shader (`aB` = y0, h, hue, seed), blade signs, rooftop holograms (rune glyphs), lamps, flying cars, steam vents, sidewalks/crosswalks/wet-neon puddles on the ground shader. Pedestrians are knight clones (`SkeletonUtils.clone`) walking around blocks. Buildings in front of the player are cut away (`uPN`). City-specific: farther camera, `cityWx()` lighting, `cellMat.uExpo = 2.1`.
 
 ## Checklist for changes
 
