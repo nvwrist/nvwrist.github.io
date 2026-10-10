@@ -24,7 +24,7 @@ Camera: third person behind the hero (`pitch .6`, dist ≈10.5 on phones, fov 58
 
 - All meshes use `stdMat({color, emis, rim, pat, sway, fill, mode})` (custom GLSL, flat normals via `dFdx/dFdy`). `pat`: 1 bricks, 2 floor slabs, 3 leafy noise. `emis > 1` blooms.
 - Lighting = `uAmb` + moon (`uMoonDir/uMoonCol`) + up to `MAXL = 8` point lights. Each frame call `L(x,y,z,radius,r,g,b)`; `pushLights()` keeps the 8 nearest the player.
-- Glyph brightness curve lives in `cellMat` (`v*1.7`, `pow(…,1.1)` per sub-zone; edge threshold `.22`; ramp kept unless an edge glyph fits better than `ramp cost × 1.15`) and colour normalisation (`.22 + m*1.5`). Tune there for a globally brighter/denser look; tune per-object colour for local changes.
+- Glyph brightness curve lives in `asciiOut` (`lum = pow(max*1.3, .78)`, colour normalisation `.3 + m*1.5`) and the ramp jitter in `glyphAt`. Tune there for a globally brighter/denser look; tune per-object colour or `cell` for local changes.
 
 ## World
 
