@@ -35,7 +35,7 @@ const canHalf = renderer.extensions.has('EXT_color_buffer_float') || renderer.ex
 const SX = 3, SY = 6;                         // scene texels per glyph cell (3×3 sub-zones of 1×2 texels)
 let W, H, DPR, quality = 1, qLevel = 2, qMode = 'auto', asciiOn = true, detail = 1, rawRT = null;
 const DETAIL = { big: [9, 6, 5, 4], small: [8, 5, 4, 3], names: ['крупно', 'средне', 'мелко', 'ультра'] };
-try { const v = JSON.parse(localStorage.getItem('ascii-view5') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 3) detail = v.detail; } catch (_) { }
+try { const v = JSON.parse(localStorage.getItem('ascii-view6') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 3) detail = v.detail; } catch (_) { }
 let sceneRT, ovRT, cellRT, bA, bB, cellW = 5, cellH = 8.75, cols = 1, rows = 1, sScale = 1;
 /* quality presets for weak phones: pixel ratio, grass share, prop draw radius, glyph overlap, bloom passes, particles */
 const QUAL = [
@@ -188,7 +188,7 @@ vec3 lightAt(vec3 p, vec3 n){
     float nd=max(dot(n,d/max(dist,1e-3)),0.)*.7+.3; c+=uLC[i]*a*nd; }
   return c;
 }
-vec3 fogIt(vec3 c, vec3 p){ float d=length(p-cameraPosition); float f=1.-exp(-max(d-10.,0.)*uFogD); return mix(c,uFogCol,f); }
+vec3 fogIt(vec3 c, vec3 p){ float d=length(p-cameraPosition); float f=1.-exp(-max(d-17.,0.)*uFogD); return mix(c,uFogCol,f); }
 float pathZ(float x){ return sin(x*.05)*6.+sin(x*.13)*1.5; }
 `;
 
@@ -380,7 +380,6 @@ const grass = (() => {
     fragmentShader: COMMON + OVF + /* glsl */`
     varying vec3 vP; varying float vH; varying float vAng; varying float vVar; varying float vGust; varying vec2 vRoot;
     void main(){
-      if(behindScene()) discard;
       vec3 tipc = vVar < .33 ? vec3(.24,.46,.28) : vVar < .66 ? vec3(.34,.56,.33) : vec3(.46,.6,.34);
       // meadow patches: lush / dry / dark clumps
       float mpatch = noise(vRoot*.07 + 11.), clump = noise(vRoot*.6);
@@ -393,11 +392,11 @@ const grass = (() => {
       vec3 c = base*Lc*1.2 + vec3(.55,.7,.6)*sheen*(uAmb*2. + .12) + tipc*vH*vH*uMoonCol*.25;
       // contact shadow under the hero
       float sh = smoothstep(1.1, .25, length(vRoot - uPlayer.xz)); c *= 1. - sh*.45*(1. - vH*.5);
-      c = uAscii > .5 ? pow(c*3.1, vec3(.85)) : c;
-      gl_FragColor = vec4(fogIt(c,vP), 1.);
+      c = uAscii > .5 ? pow(c*3.1, vec3(.85))*vec3(.72, 1.1, .66) : c;
+      gl_FragColor = vec4(fogIt(c,vP), .1 + .8*clamp(vAng, 0., .999));
     }`,
   });
-  const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; mesh.layers.set(1);
+  const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false;
   forest.add(mesh);
   return { mesh, geo, mat, N };
 })();
@@ -858,7 +857,7 @@ const rain = (() => {
       vec3 rr = normalize(cross(d, vd));
       float vis = smoothstep(9., 12., length(p - cameraPosition));   // no giant drops right at the camera
       float len = (.7 + aO.w*.6)*vis;
-      vec3 wp = p + d*(position.y-.5)*len + rr*position.x*.012*vis;
+      vec3 wp = p + d*(position.y-.5)*len + rr*position.x*.03*vis;
       vec4 c0 = projectionMatrix*viewMatrix*vec4(p,1.), c1 = projectionMatrix*viewMatrix*vec4(p+d,1.);
       vec2 dd = (c1.xy/c1.w - c0.xy/c0.w)*uRes; float ang = atan(dd.y,dd.x); if(ang<0.) ang += 3.14159265;
       vAng = ang/3.14159265; vB = .55 + aO.w*.45 + uFlash; vP = wp;
@@ -867,12 +866,11 @@ const rain = (() => {
     fragmentShader: COMMON + OVF + /* glsl */`
     varying float vAng; varying float vB; varying vec3 vP;
     void main(){
-      if(behindScene()) discard;
-      vec3 c = vec3(.50,.58,.72)*vB*(.55 + .7*min(lightAt(vP,vec3(0,1,0)), vec3(1.6)));
-      gl_FragColor = vec4(fogIt(c, vP), 1.);
+      vec3 c = vec3(.62,.68,.8)*vB*(.55 + .7*min(lightAt(vP,vec3(0,1,0)), vec3(1.6)));
+      gl_FragColor = vec4(fogIt(c, vP), .1 + .8*clamp(vAng, 0., .999));
     }`,
   });
-  const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; mesh.layers.set(1); weatherG.add(mesh);
+  const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; weatherG.add(mesh);
   return { geo, mat };
 })();
 const SNOW_MAX = 2500;
@@ -1109,7 +1107,7 @@ function qBtn() { $('bQ').textContent = '⚙ ' + (qMode === 'auto' ? 'авто �
 function setView(a, d) {
   asciiOn = a; detail = d; resize(); viewBtns();
   toast(asciiOn ? 'ASCII · ' + DETAIL.names[detail] : 'без ASCII');
-  try { localStorage.setItem('ascii-view5', JSON.stringify({ ascii: asciiOn, detail })); } catch (_) { }
+  try { localStorage.setItem('ascii-view6', JSON.stringify({ ascii: asciiOn, detail })); } catch (_) { }
 }
 function viewBtns() { $('bAscii').textContent = asciiOn ? '▦ ASCII: вкл' : '▦ ASCII: выкл'; $('bDet').textContent = '◫ ' + DETAIL.names[detail]; $('bDet').style.display = asciiOn ? '' : 'none'; }
 canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -1803,7 +1801,7 @@ function update(dt, rdt = dt) {
   U.uFogCol.value.setRGB(...Wc.fogc); U.uFogD.value = Wc.fog;
   U.uWindS.value = Wc.wind;
   const wa = -2.6 + Math.sin(T * .05) * .3; U.uWind.value.set(Math.cos(wa), Math.sin(wa) * .5).normalize();
-  rain.geo.instanceCount = zone !== 'dungeon' ? Math.floor(RAIN_MAX * Wc.rain * Q().rain) : 0;
+  rain.geo.instanceCount = zone !== 'dungeon' ? Math.floor(RAIN_MAX * .45 * Wc.rain * Q().rain) : 0;
   U.uWet.value = Wc.rain;
   rain.mat.uniforms.uFlash.value = fl; rain.mat.uniforms.uRainH.value = 1;
   snow.geo.instanceCount = zone !== 'dungeon' ? Math.floor(SNOW_MAX * Wc.snow) : 0;
@@ -1982,6 +1980,9 @@ const cellMat = new THREE.ShaderMaterial({
       float hw = hsh(vec2(cell) + vec2(floor(uTime*2.), 0.));
       g = wl < .12 ? (hw < .5 ? 14. : 0.) : wl < .3 ? 13. : wl < .6 ? 94. : (hw < .5 ? 29. : 94.);
       col = mix(avg, best.rgb, .5);
+    } else if(best.a < .9){                   // grass blade / rain: one stroke, angle stored in the glyph code (200…250)
+      g = 200. + floor(clamp((best.a - .1)/.8, 0., 1.)*50. + .5);
+      col = mix(avg, best.rgb, .6)*1.8;
     } else {                                  // foliage: round glyphs . : o O 0 Q @ 8 by light
       float k = clamp(dot(avg, vec3(.3,.59,.11))*2.9, 0., 1.) + (hv-.5)*.3;
       g = k < .16 ? 14. : k < .3 ? 26. : k < .5 ? 79. : k < .68 ? (hv < .5 ? 47. : 16.) : k < .85 ? (hv < .5 ? 49. : 16.) : (hv < .6 ? 32. : 24.);
@@ -2010,20 +2011,39 @@ const blurMat = new THREE.ShaderMaterial({
 });
 const finalMat = new THREE.ShaderMaterial({
   uniforms: { tCell: { value: null }, tOv: { value: null }, tRaw: { value: null }, tBloom: { value: null }, tAtlas: { value: atlas }, uRaw: { value: 0 }, uBloomK: { value: .8 },
-    uCellPx: { value: new THREE.Vector2() }, uGridPx: { value: new THREE.Vector2() }, uGlyphN: { value: GLYPHS.length }, uBg: { value: new THREE.Color(.04, .046, .09) } },
+    uCellPx: { value: new THREE.Vector2() }, uGridPx: { value: new THREE.Vector2() }, uGlyphN: { value: GLYPHS.length }, uDirV: { value: SHAPES.length + 2 }, uT: U.uTime, uBg: { value: new THREE.Color(.04, .046, .09) } },
   vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: /* glsl */`
-  uniform sampler2D tCell, tOv, tRaw, tBloom, tAtlas; uniform float uRaw, uBloomK, uGlyphN; uniform vec2 uCellPx, uGridPx; uniform vec3 uBg;
+  uniform sampler2D tCell, tOv, tRaw, tBloom, tAtlas; uniform float uRaw, uBloomK, uGlyphN, uDirV, uT; uniform vec2 uCellPx, uGridPx; uniform vec3 uBg;
   void main(){
     vec2 fc = gl_FragCoord.xy, uv = fc/uGridPx;
     vec3 c;
     if(uRaw > .5){ c = texture2D(tRaw, uv).rgb; c = 1. - exp(-c*2.6); c = pow(c, vec3(.85)); }
     else {
-      vec2 cf = fc/uCellPx; vec2 lc = fract(cf);
-      vec4 cv = texelFetch(tCell, ivec2(floor(cf)), 0);
-      float g = floor(cv.a*255. + .5), m = 0.;
-      if(g > .5) m = textureGrad(tAtlas, vec2((g + lc.x)/uGlyphN, lc.y), vec2(1./(uCellPx.x*uGlyphN), 0.), vec2(0., 1./uCellPx.y)).r;
-      c = uBg + cv.rgb*m;
+      ivec2 cell = ivec2(floor(fc/uCellPx)), gmax = ivec2(ceil(uGridPx/uCellPx)) - 1;
+      vec3 acc = vec3(0.);
+      for(int dy=-1; dy<=1; dy++) for(int dx=-1; dx<=1; dx++){
+        ivec2 nc = cell + ivec2(dx, dy);
+        if(nc.x < 0 || nc.y < 0 || nc.x > gmax.x || nc.y > gmax.y) continue;
+        vec4 cv = texelFetch(tCell, nc, 0);
+        float g = floor(cv.a*255. + .5);
+        if(g < .5) continue;
+        bool stroke = g > 199.5;
+        float h1 = fract(sin(dot(vec2(nc), vec2(12.9898,78.233)))*43758.5453), h2 = fract(h1*91.7 + .13);
+        vec2 jit; float rot; vec2 sc;
+        if(stroke){ rot = (g - 200.)/50.*3.14159265 - 1.5707963; g = uDirV; jit = vec2(0.); sc = vec2(1., .82 + h1*.38); }
+        else { jit = (vec2(h1,h2)-.5)*vec2(.14,.09) + vec2(sin(uT*.9 + h2*40.), cos(uT*1.1 + h1*27.))*.03; rot = (h2-.5)*.1 + sin(uT*1.3 + h1*31.)*.03; sc = vec2(1.); }
+        vec2 d = fc - (vec2(nc) + .5 + jit)*uCellPx;
+        float cs = cos(rot), sn = sin(rot);
+        mat2 R = mat2(cs, -sn, sn, cs);
+        vec2 k = 1./(uCellPx*sc);
+        vec2 lp = (R*d)*k + .5;
+        if(lp.x < 0. || lp.y < 0. || lp.x > 1. || lp.y > 1.) continue;
+        vec2 ddx = (R*vec2(1.,0.))*k, ddy = (R*vec2(0.,1.))*k;
+        float m = textureGrad(tAtlas, vec2((g + lp.x)/uGlyphN, lp.y), vec2(ddx.x/uGlyphN, ddx.y), vec2(ddy.x/uGlyphN, ddy.y)).r;
+        acc = max(acc, cv.rgb*(stroke ? .7 + .8*h2 : 1.)*m);
+      }
+      c = uBg + acc;
       float l = dot(c, vec3(.3,.59,.11)); c = mix(vec3(l), c, .72)*vec3(.95,1.,1.03);
       vec4 ov = texture2D(tOv, uv);
       c = c*(1. - ov.a) + ov.rgb;
@@ -2039,7 +2059,7 @@ function makeRT(w, h, opts) { return new THREE.WebGLRenderTarget(Math.max(1, w),
 const rtDispose = r => { if (r) { r.depthTexture?.dispose(); r.dispose(); } };
 function resize() {
   W = innerWidth; H = innerHeight;
-  DPR = Math.min(Q().dpr, devicePixelRatio || 1);
+  DPR = Math.min(2, devicePixelRatio || 1);           // glyphs are always drawn at the full device resolution
   renderer.setPixelRatio(DPR); renderer.setSize(W, H, false);
   const small = Math.min(W, H) < 600;
   cellW = (small ? DETAIL.small : DETAIL.big)[detail]; cellH = cellW * 1.75;
@@ -2050,8 +2070,9 @@ function resize() {
   const hf = canHalf ? THREE.HalfFloatType : THREE.UnsignedByteType;
   // scene (solid objects) at a modest resolution — it is quantised into glyph cells anyway; its depth occludes the overlay
   sceneRT = makeRT(sw, sh, { depthBuffer: true, depthTexture: new THREE.DepthTexture(sw, sh), type: hf, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
-  // overlay (grass, rain, snow, sparks) at full resolution, drawn as real thin geometry on top of the glyphs
-  ovRT = makeRT(db.x, db.y, { depthBuffer: true, samples: Q().msaa, type: hf, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+  // overlay (snow, sparks, editor rings): glyph sprites on top; its resolution follows the quality preset
+  const os = Math.min(1, Q().dpr / DPR), ow = Math.round(db.x * os), oh = Math.round(db.y * os);
+  ovRT = makeRT(ow, oh, { depthBuffer: true, samples: Q().msaa, type: hf, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
   cellRT = makeRT(cols, rows, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
   bA = makeRT(Math.ceil(sw / 3), Math.ceil(sh / 3), { type: hf, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
   bB = makeRT(Math.ceil(sw / 3), Math.ceil(sh / 3), { type: hf, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
@@ -2060,7 +2081,7 @@ function resize() {
   camera.fov = camera.aspect < 1 ? 42 : 34;
   camera.updateProjectionMatrix();
   U.uRes.value.set(W, H); U.uAscii.value = asciiOn ? 1 : 0;
-  U.tSD.value = sceneRT.depthTexture; U.uOvRes.value.set(db.x, db.y); U.uCN.value = camera.near; U.uCF.value = camera.far;
+  U.tSD.value = sceneRT.depthTexture; U.uOvRes.value.set(ow, oh); U.uCN.value = camera.near; U.uCF.value = camera.far;
   cellMat.uniforms.uCellPx.value.set(cellW * sScale, cellH * sScale); cellMat.uniforms.uSize.value.set(sw, sh);
   finalMat.uniforms.uCellPx.value.set(cellW * db.x / W, cellH * db.y / H); finalMat.uniforms.uGridPx.value.set(db.x, db.y);
   finalMat.uniforms.uRaw.value = asciiOn ? 0 : 1;
