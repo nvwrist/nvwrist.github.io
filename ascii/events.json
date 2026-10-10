@@ -1,0 +1,108 @@
+[
+  {
+    "id": "intro",
+    "on": "start",
+    "once": true,
+    "do": [
+      { "wait": 1.5 },
+      { "log": "У костра стоит Мира — кажется, ей нужна помощь.", "who": "Подсказка", "color": "#f2c45a" }
+    ]
+  },
+  {
+    "id": "mira_offer",
+    "on": "talk",
+    "npc": "Mira",
+    "if": [{ "quest": "apples", "is": "none" }],
+    "do": [
+      { "say": "Ох, путник! Ручей разлился, и до сада мне теперь не дойти.", "who": "Mira" },
+      { "ask": "Принесёшь мне 3 яблока? Они растут у тропы.", "who": "Mira", "options": [
+        { "text": "Конечно, принесу", "do": [
+          { "quest": "apples", "set": "active", "title": "Яблоки для Миры", "note": "Собери 3 яблока у тропы и вернись к Мире" },
+          { "say": "Спасибо! Я буду ждать у костра.", "who": "Mira" }
+        ] },
+        { "text": "Не сейчас", "do": [{ "say": "Ну ладно… если передумаешь — я тут.", "who": "Mira" }] }
+      ] }
+    ]
+  },
+  {
+    "id": "mira_wait",
+    "on": "talk",
+    "npc": "Mira",
+    "if": [{ "quest": "apples", "is": "active" }, { "not": { "has": "apple", "n": 3 } }],
+    "do": [{ "say": "Мне нужно 3 яблока. Они лежат вдоль тропы, чуть правее костра.", "who": "Mira" }]
+  },
+  {
+    "id": "mira_done",
+    "on": "talk",
+    "npc": "Mira",
+    "if": [{ "quest": "apples", "is": "active" }, { "has": "apple", "n": 3 }],
+    "do": [
+      { "take": "apple", "n": 3 },
+      { "say": "Какие спелые! Вот, возьми — заслужил.", "who": "Mira" },
+      { "give": "coin", "n": 15 },
+      { "give": "potion", "n": 1 },
+      { "quest": "apples", "set": "done" },
+      { "say": "Говорят, с вершины горы на западе видно весь лес. Сходи, не пожалеешь.", "who": "Mira" },
+      { "quest": "summit", "set": "active", "title": "Вершина горы", "note": "Поднимись на гору к западу от ручья" }
+    ]
+  },
+  {
+    "id": "mira_after",
+    "on": "talk",
+    "npc": "Mira",
+    "if": [{ "quest": "apples", "is": "done" }],
+    "do": [{ "say": "Ещё раз спасибо за яблоки!", "who": "Mira" }]
+  },
+  {
+    "id": "summit_reached",
+    "on": "enter",
+    "area": "summit",
+    "once": true,
+    "do": [
+      { "fx": "arcane" },
+      { "toast": "Вершина Шепчущей горы" },
+      { "say": "Отсюда видно весь лес: ручей, деревню и руины на востоке. В камнях что-то блестит…", "who": "Странник" },
+      { "give": "crystal", "n": 1 },
+      { "quest": "summit", "set": "done", "title": "Вершина горы" }
+    ]
+  },
+  {
+    "id": "stream_first",
+    "on": "enter",
+    "area": "stream",
+    "once": true,
+    "do": [{ "log": "Холодная вода журчит по камням. В ручье идти медленнее.", "who": "Подсказка", "color": "#7fc8ff" }]
+  },
+  {
+    "id": "kael_talk",
+    "on": "talk",
+    "npc": "Kael",
+    "do": [{ "say": "Я слышал, в руинах на востоке водятся тени. Без магии туда лучше не соваться.", "who": "Kael" }]
+  },
+  {
+    "id": "oru_talk",
+    "on": "talk",
+    "npc": "Oru",
+    "if": [{ "not": { "flag": "oru_herb" } }],
+    "do": [
+      { "ask": "Травы ищешь? Целебная трава растёт у тропы. Дать совет?", "who": "Oru", "options": [
+        { "text": "Давай", "do": [{ "say": "Съешь яблоко, если ранен, а зелье береги для подземелья.", "who": "Oru" }, { "flag": "oru_herb", "set": true }, { "give": "herb", "n": 1 }] },
+        { "text": "Сам разберусь" }
+      ] }
+    ]
+  },
+  {
+    "id": "oru_after",
+    "on": "talk",
+    "npc": "Oru",
+    "if": [{ "flag": "oru_herb" }],
+    "do": [{ "say": "Как трава? Пригодилась?", "who": "Oru" }]
+  },
+  {
+    "id": "first_crystal",
+    "on": "pickup",
+    "item": "crystal",
+    "once": true,
+    "do": [{ "log": "Кристалл тёплый на ощупь. Наверное, он ещё пригодится.", "who": "Подсказка", "color": "#72e8ff" }]
+  }
+]
