@@ -68,7 +68,7 @@ const { atlas, desc } = (() => {
     const ch = GLYPHS[i], x0 = i * gw;
     if (i >= SHAPES.length) {
       // directional strokes: long thin lines, like blades of grass / rain
-      g.lineWidth = 3.6; g.lineCap = 'round'; g.beginPath();
+      g.lineWidth = 3.2; g.lineCap = 'round'; g.beginPath();
       const k = i - SHAPES.length, m = 6;
       if (k === 0) { g.moveTo(x0 + m, gh / 2); g.lineTo(x0 + gw - m, gh / 2); }
       if (k === 1) { g.moveTo(x0 + m, gh - m); g.lineTo(x0 + gw - m, m); }
@@ -208,7 +208,7 @@ const groundMat = new THREE.ShaderMaterial({
       float d=length(pt-fg); if(d<d1){d2=d1;d1=d;cid=ig+o;} else if(d<d2) d2=d;
     }
     float st = smoothstep(.02,.16,d2-d1);
-    vec3 stone = vec3(.24,.23,.21)*(.45+.7*hash(cid))*(.1+.9*st)*(.8+.4*noise(vP.xz*6.));
+    vec3 stone = vec3(.15,.145,.135)*(.45+.7*hash(cid))*(.1+.9*st)*(.8+.4*noise(vP.xz*6.));
     vec3 base = mix(soil,stone,pm);
     vec3 c = base*lightAt(vP,vec3(0,1,0));
     gl_FragColor = vec4(fogIt(c,vP),1.);
@@ -229,7 +229,7 @@ const grass = (() => {
   const t = (SEG - 1) * 2; idx.push(t, t + 1, t + 2);
   const geo = new THREE.InstancedBufferGeometry();
   geo.setIndex(idx); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  const N = 70000, aI = new Float32Array(N * 4), aV = new Float32Array(N);
+  const N = 90000, aI = new Float32Array(N * 4), aV = new Float32Array(N);
   for (let i = 0; i < N; i++) {
     aI[i * 4] = rnd() * GRASS_TILE; aI[i * 4 + 1] = rnd() * GRASS_TILE; aI[i * 4 + 2] = rnd() * TAU; aI[i * 4 + 3] = rnd();
     aV[i] = rnd();
@@ -247,7 +247,7 @@ const grass = (() => {
     void main(){
       vec2 c = uFocus.xz;
       vec2 root = c + mod(aI.xy - c + uTile*.5, uTile) - uTile*.5;
-      float h = .5 + aI.w*.8;
+      float h = .38 + aI.w*.45;
       h *= smoothstep(1.3, 2.3, abs(root.y - pathZ(root.x)));
       if(root.x>uB0.x && root.x<uB1.x && root.y>uB0.y && root.y<uB1.y) h = 0.;
       h *= smoothstep(1.2, 2.2, length(root-uCamp));
@@ -257,17 +257,17 @@ const grass = (() => {
       float y = position.y;
       // wind: travelling gusts + per-blade flutter
       float gust = noise(root*.11 - uWind*uTime*1.7);
-      gust = gust*gust*2.2;
-      float flutter = sin(uTime*(2.6+aV) + aV*6.28 + dot(root,vec2(.7,.4)))*.22;
+      gust = gust*gust*1.1;
+      float flutter = sin(uTime*(2.6+aV) + aV*6.28 + dot(root,vec2(.7,.4)))*.12;
       float bend = (gust + flutter + .2) * (.25 + uWindS) ;
-      vec2 bv = uWind*bend;
+      vec2 bv = uWind*bend*.4 + vec2(cos(aI.z*1.7), sin(aI.z*1.7))*(.04 + .12*aV);   // own random lean per blade
       // push away from the player
       vec2 dp = root - uPlayer.xz; float dl = length(dp);
       bv += (dl>1e-3 ? dp/dl : vec2(0.)) * clamp(1.-dl/1.4,0.,1.)*1.8;
       float bl = min(length(bv), 1.6);
       float droop = 1. - .38*bl;
       float ca = cos(aI.z), sa = sin(aI.z);
-      vec2 side = vec2(ca,sa) * position.x * .06 * (1.-y*.8);
+      vec2 side = vec2(ca,sa) * position.x * .11 * (1.-y*.7);
       vec3 wp = vec3(root.x + side.x + bv.x*y*y*h, y*h*droop, root.y + side.y + bv.y*y*y*h);
       vec3 tip = vec3(root.x + bv.x*h, h*droop, root.y + bv.y*h);
       vec4 c0 = projectionMatrix*viewMatrix*vec4(root.x,0.,root.y,1.);
@@ -280,8 +280,8 @@ const grass = (() => {
     fragmentShader: COMMON + /* glsl */`
     varying vec3 vP; varying float vH; varying float vAng; varying float vVar;
     void main(){
-      vec3 tipc = mix(vec3(.26,.46,.27), vec3(.40,.52,.30), vVar);
-      vec3 base = mix(vec3(.03,.07,.04), tipc, smoothstep(0.,1.,vH));
+      vec3 tipc = mix(vec3(.3,.58,.32), vec3(.45,.66,.38), vVar);
+      vec3 base = mix(vec3(.06,.13,.07), tipc, smoothstep(0.,.8,vH));
       vec3 c = base*lightAt(vP, vec3(0.,1.,0.))*1.2;
       gl_FragColor = vec4(fogIt(c,vP), .1 + .8*clamp(vAng,0.,.999));
     }`,
@@ -318,6 +318,7 @@ const propBoxes = [];
 const PGEO = {
   trunk: new THREE.CylinderGeometry(.16, .26, 1, 6).translate(0, .5, 0),
   ico: new THREE.IcosahedronGeometry(1, 0),
+  blob: new THREE.IcosahedronGeometry(1, 2),
   rock: new THREE.DodecahedronGeometry(1, 0),
   wall: new THREE.BoxGeometry(1, 1.7, 1).translate(0, .85, 0),
   crate: new THREE.BoxGeometry(.8, .8, .8).translate(0, .4, 0),
@@ -325,17 +326,21 @@ const PGEO = {
   bowl: new THREE.CylinderGeometry(.22, .12, .2, 6).translate(0, 1.55, 0),
 };
 const PMAT = {
-  trunk: stdMat({ color: [.5, .42, .34], pat: 3 }), leaf: stdMat({ color: [.8, .88, .82], pat: 3, sway: 1, rim: .6 }),
+  trunk: stdMat({ color: [.5, .42, .34], pat: 3 }), leaf: stdMat({ color: [.66, .76, .82], pat: 3, sway: 1, rim: .35, mode: .92 }),
   bush: stdMat({ color: [.42, .62, .45], pat: 3, sway: 1 }), rock: stdMat({ color: [.42, .42, .4], pat: 3 }),
   wall: stdMat({ color: [.5, .5, .47], pat: 1 }), crate: stdMat({ color: [.55, .4, .25], pat: 3 }),
   post: stdMat({ color: [.3, .22, .15] }), bowl: stdMat({ color: [.25, .2, .16], emis: [.5, .2, .05] }),
 };
 // each type → list of [geometry, material, (prop, m4) => fill matrix]
 const _q = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3(), _s = new THREE.Vector3();
+// canopy = cluster of round blobs (offset x, height, offset z, radius)
+const CANOPY = [[0, 3.2, 0, 1.45], [.95, 2.85, .35, .95], [-.85, 2.9, .45, 1.0], [.2, 2.75, -.95, .95], [-.35, 4.1, -.2, .95], [.55, 3.9, .6, .8]];
 const PPARTS = {
   tree: [[PGEO.trunk, PMAT.trunk, (p, m) => m.compose(_v.set(p.x, 0, p.z), _q.identity(), _s.set(p.s, 2.2 * p.s, p.s))],
-         [PGEO.ico, PMAT.leaf, (p, m) => m.compose(_v.set(p.x, 3.3 * p.s, p.z), _q.setFromEuler(_e.set(0, p.r, 0)), _s.set(1.7 * p.s, 1.35 * p.s, 1.7 * p.s))],
-         [PGEO.ico, PMAT.leaf, (p, m) => m.compose(_v.set(p.x + .3 * p.s, 4.6 * p.s, p.z - .2 * p.s), _q.setFromEuler(_e.set(0, p.r, 0)), _s.set(1.1 * p.s, p.s, 1.1 * p.s))]],
+         ...CANOPY.map(([ox, oy, oz, r]) => [PGEO.blob, PMAT.leaf, (p, m) => {
+           const c = Math.cos(p.r), sn = Math.sin(p.r);
+           return m.compose(_v.set(p.x + (ox * c - oz * sn) * p.s, oy * p.s, p.z + (ox * sn + oz * c) * p.s), _q.identity(), _s.set(r * p.s, r * .82 * p.s, r * p.s));
+         }])],
   bush: [[PGEO.ico, PMAT.bush, (p, m) => m.compose(_v.set(p.x, .4 * p.s, p.z), _q.setFromEuler(_e.set(0, p.r, 0)), _s.set(.75 * p.s, .55 * p.s, .75 * p.s))]],
   rock: [[PGEO.rock, PMAT.rock, (p, m) => m.compose(_v.set(p.x, p.s * .35, p.z), _q.setFromEuler(_e.set(p.r * .7, p.r * 3, p.r * .4)), _s.set(p.s, p.s * .7, p.s))]],
   wall: [[PGEO.wall, PMAT.wall, (p, m) => m.compose(_v.set(p.x, 0, p.z), _q.identity(), _s.set(1, 1, 1))]],
@@ -1416,6 +1421,13 @@ const cellMat = new THREE.ShaderMaterial({
         }
       }
       col = mix(avg, best.rgb, .55);
+    } else if(best.a > .905){
+      // foliage: uniform round glyphs, density by light, a little per-cell variety
+      float fl = clamp(dot(avg, vec3(.3,.59,.11))*2.2, 0., 1.);
+      float hv = fract(sin(dot(vec2(cell), vec2(27.1,61.7)))*5317.3);
+      float k = fl + (hv-.5)*.22;
+      g = k < .16 ? 14. : k < .3 ? 26. : k < .5 ? 79. : k < .68 ? (hv < .5 ? 47. : 16.) : k < .85 ? (hv < .5 ? 49. : 16.) : (hv < .6 ? 32. : 24.); // . : o O0 Q0 @8
+      col = mix(avg, best.rgb, .4);
     } else if(best.a < .035 && bl > .02){
       float hs = fract(sin(dot(vec2(cell), vec2(41.3,17.7)))*9137.1);
       g = hs < .45 ? 10. : hs < .75 ? 79. : hs < .9 ? 14. : 11.;   // * o . +
@@ -1423,7 +1435,7 @@ const cellMat = new THREE.ShaderMaterial({
     } else if(best.a > .09){
       float a = (best.a-.1)/.8;
       g = uDir + mod(floor(a*4.+.5), 4.);
-      col = best.rgb;
+      col = best.rgb*1.7;
     } else {
       float h = fract(sin(dot(vec2(cell)+floor(uTime*9.), vec2(12.9898,78.233)))*43758.5453);
       int ri = int(floor(h*float(NRUNE)));
@@ -1454,7 +1466,7 @@ const auxMat = new THREE.ShaderMaterial({
       gx += l*(float(i)-float(SX-1)*.5); gy += l*(float(j)-float(SY-1)*.5); tot += l;
     }
     float rot = 0., kind = 0., str = 0.;
-    if(best.a > .09 && best.a <= .95){
+    if(best.a > .09 && best.a <= .9){
       float ang = (best.a-.1)/.8*3.14159265;       // blade / rain direction, 0 = horizontal
       rot = ang - 1.5707963; kind = 1.;
     } else if(tot > 1e-4){
@@ -1511,7 +1523,7 @@ const finalMat = new THREE.ShaderMaterial({
       float rot = (ax.r-.5)*3.14159265 + (stroke ? 0. : (h2-.5)*.12 + sin(uT*1.3 + h1*31.)*.035);
       jit += stroke ? vec2(0.) : vec2(sin(uT*.9 + h2*40.), cos(uT*1.1 + h1*27.))*.035;
       if(stroke) g = uDirV;
-      vec2 sc = stroke ? vec2(1.1, 2.0) : vec2(1.0, 1.0);
+      vec2 sc = stroke ? vec2(1.05, 1.45) : vec2(1.0, 1.0);
       vec2 d = fc - (vec2(nc) + .5 + jit)*uCellPx;
       float cs = cos(rot), sn = sin(rot);
       mat2 R = mat2(cs, -sn, sn, cs);               // rotate into glyph space
