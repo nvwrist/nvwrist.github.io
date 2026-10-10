@@ -201,12 +201,12 @@ void main(){
   float leafK = 1.;
   if(uMode > .905 && uMode < .935){
     // foliage is not a solid blob: 3D noise cuts it into leaf clumps with gaps (see-through, like the reference)
-    vec3 q = vP*1.9 + vec3(uWind.x, 0., uWind.y)*uTime*.25*(.3 + uWindS);
-    float c = vnoise3(q)*.65 + vnoise3(q*2.3 + 7.1)*.35;
+    vec3 q = vP*3.1 + vec3(uWind.x, 0., uWind.y)*uTime*.25*(.3 + uWindS);
+    float c = vnoise3(q*.45)*.45 + vnoise3(q)*.35 + vnoise3(q*2.3 + 7.1)*.2;
     float edge = 1. - abs(dot(n, V));
-    float th = .56 + edge*.25;
+    float th = .47 + edge*.3;
     if(c < th) discard;
-    leafK = .35 + 2.6*(c - th);                       // clump centres brighter, edges darker
+    leafK = .85 + 1.6*(c - th);                       // clump centres brighter, edges darker
   }
   vec3 base = uColor;
   if(uPat>.5 && uPat<1.5){            // bricks
@@ -405,9 +405,10 @@ const PGEO = {
   fpost: new THREE.BoxGeometry(.13, .95, .13).translate(0, .47, 0),
   frail: new THREE.BoxGeometry(2, .09, .06),
   ring: new THREE.RingGeometry(.94, 1, 40).rotateX(-Math.PI / 2),
+  branch: new THREE.CylinderGeometry(.06, .13, 1, 5).translate(0, .5, 0),
 };
 const PMAT = {
-  trunk: stdMat({ color: [.5, .42, .34], pat: 3 }), leaf: stdMat({ color: [.62, .74, .78], pat: 3, sway: 1, rim: .2, mode: .92 }),
+  trunk: stdMat({ color: [.66, .58, .5], pat: 3, rim: .6 }), leaf: stdMat({ color: [.62, .74, .78], pat: 3, sway: 1, rim: .2, mode: .92 }),
   bush: stdMat({ color: [.42, .62, .45], pat: 3, sway: 1 }), rock: stdMat({ color: [.42, .42, .4], pat: 3 }),
   wall: stdMat({ color: [.5, .5, .47], pat: 1 }), crate: stdMat({ color: [.55, .4, .25], pat: 3 }),
   post: stdMat({ color: [.3, .22, .15] }), bowl: stdMat({ color: [.25, .2, .16], emis: [.5, .2, .05] }),
@@ -419,9 +420,19 @@ const PMAT = {
 const _q = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3(), _s = new THREE.Vector3(), _m = new THREE.Matrix4();
 const loc = (x, y, z, sx = 1, sy = 1, sz = 1, q = null) => (p, m) => m.compose(_v.set(x, y, z), q ? q(p) : _q.identity(), _s.set(sx, sy, sz));
 // canopy = cluster of round blobs (offset x, height, offset z, radius)
-const CANOPY = [[0, 3.2, 0, 1.45], [.95, 2.85, .35, .95], [-.85, 2.9, .45, 1.0], [.2, 2.75, -.95, .95], [-.35, 4.1, -.2, .95], [.55, 3.9, .6, .8]];
+// tree species: trunk height, branches [yaw, tilt, length, base height], crown blobs [x, y, z, r]
+const TREES = [
+  { name: 'Дуб', trunk: 3.0, tw: .85, br: [[0, .9, 1.9, 2.0], [2.1, .85, 1.7, 2.3], [4.2, .95, 1.8, 1.8], [1.0, .6, 1.4, 2.7]],
+    crown: [[0, 4.3, 0, 1.55], [1.5, 3.8, .3, 1.15], [-1.4, 3.9, .6, 1.2], [.3, 3.7, -1.45, 1.1], [-.6, 5.2, -.3, 1.05], [.8, 5.0, .8, .95], [-1.0, 3.5, -1.0, .9], [1.2, 3.4, -.9, .85]] },
+  { name: 'Тополь', trunk: 4.6, tw: .6, br: [[.5, .45, 1.2, 3.4], [3.5, .5, 1.1, 4.0]],
+    crown: [[0, 5.4, 0, 1.05], [.4, 6.5, .2, .95], [-.3, 7.4, -.1, .85], [0, 8.2, .1, .65], [.5, 5.0, -.5, .8], [-.6, 5.9, .4, .8]] },
+  { name: 'Молодое', trunk: 1.7, tw: .45, br: [[1, .8, .7, 1.3]],
+    crown: [[0, 2.3, 0, .85], [.55, 2.05, .25, .6], [-.5, 2.15, .3, .62], [.1, 2.8, -.2, .55]] },
+  { name: 'Старое', trunk: 3.4, tw: .95, br: [[.3, 1.0, 2.4, 2.2], [2.4, 1.05, 2.2, 2.6], [4.5, .95, 2.3, 2.0], [3.4, .7, 1.6, 3.0], [5.6, .75, 1.5, 3.1]],
+    crown: [[2.0, 3.5, .55, .85], [-1.0, 3.9, 1.6, .8], [-1.1, 3.4, -1.7, .9], [.2, 4.6, .9, .7], [1.1, 4.4, -1.1, .65], [-.4, 4.9, -.2, .6]] },
+];
+const treeKind = p => p.v ?? (p.id % 4 === 3 && h2(p.id, 9) < .5 ? 0 : p.id % 4);
 const PPARTS = {
-  tree: [[PGEO.trunk, PMAT.trunk, loc(0, 0, 0, 1, 2.2, 1)], ...CANOPY.map(([x, y, z, r]) => [PGEO.blob, PMAT.leaf, loc(x, y, z, r, r * .82, r)])],
   bush: [[PGEO.ico, PMAT.bush, loc(0, .4, 0, .75, .55, .75)]],
   rock: [[PGEO.rock, PMAT.rock, loc(0, .35, 0, 1, .7, 1, p => _q.setFromEuler(_e.set(h2(p.id, 1) * 3, 0, h2(p.id, 2) * 3)))]],
   house: [[PGEO.hbody, PMAT.hwall, loc(0, 0, 0)], [PGEO.hroof, PMAT.hroof, loc(0, 0, 0, 1, 1, .82)], [PGEO.hdoor, PMAT.dark, loc(0, 0, 0)],
@@ -432,6 +443,14 @@ const PPARTS = {
   crate: [[PGEO.crate, PMAT.crate, loc(0, 0, 0)]],
   torch: [[PGEO.post, PMAT.post, loc(0, 0, 0)], [PGEO.bowl, PMAT.bowl, loc(0, 0, 0)]],
 };
+TREES.forEach((T_, k) => {
+  PPARTS['tree:' + k] = [
+    [PGEO.trunk, PMAT.trunk, loc(0, 0, 0, T_.tw, T_.trunk, T_.tw)],
+    ...T_.br.map(([yaw, tilt, len, y]) => [PGEO.branch, PMAT.trunk, loc(0, y, 0, T_.tw * .8, len, T_.tw * .8, () => _q.setFromEuler(_e.set(tilt, yaw, 0, 'YXZ')))]),
+    ...T_.crown.map(([x, y, z, r]) => [PGEO.blob, PMAT.leaf, loc(x, y, z, r, r * .85, r)]),
+  ];
+});
+const partsOf = p => PPARTS[p.t === 'tree' ? 'tree:' + treeKind(p) : p.t];
 const propBase = (p, m) => m.compose(_v.set(p.x, terH(p.x, p.z) + (p.y || 0), p.z), _q.setFromEuler(_e.set(p.rx || 0, p.r || 0, p.rz || 0, 'YXZ')), _s.set(p.s || 1, p.s || 1, p.s || 1));
 function propMatrix(p, fill, out) { const base = propBase(p, new THREE.Matrix4()); fill(p, _m); return out.multiplyMatrices(base, _m); }
 
@@ -515,7 +534,7 @@ function rebuildProps(exclude = null) {
     const def = PROP[p.t]; if (!def || (p.tag && hiddenTags[p.tag])) continue;
     if (def.area) { const r = new THREE.Mesh(PGEO.ring, PMAT.area); r.position.set(p.x, terH(p.x, p.z) + .08, p.z); r.scale.setScalar(p.s || 3); areaG.add(r); continue; }
     if (p === exclude) continue;
-    (byT[p.t] ||= []).push(p);
+    (byT[p.t === 'tree' ? 'tree:' + treeKind(p) : p.t] ||= []).push(p);
     if ((p.y || 0) > 2) continue;                    // floating things do not block
     const sc = p.s || 1;
     if (def.box) propBoxes.push({ x: p.x, z: p.z, c: Math.cos(p.r || 0), s: Math.sin(p.r || 0), hx: def.box[0] * sc, hz: def.box[1] * sc });
@@ -530,11 +549,11 @@ function rebuildProps(exclude = null) {
 /* the selected prop is drawn on its own so moving / rotating it is cheap */
 function buildSel(p) {
   for (const c of [...selG.children]) selG.remove(c);
-  if (!p || !PPARTS[p.t]) return;
-  for (const [geo, mat] of PPARTS[p.t]) { const m = new THREE.Mesh(geo, mat); m.matrixAutoUpdate = false; m.frustumCulled = false; selG.add(m); }
+  if (!p || !partsOf(p)) return;
+  for (const [geo, mat] of partsOf(p)) { const m = new THREE.Mesh(geo, mat); m.matrixAutoUpdate = false; m.frustumCulled = false; selG.add(m); }
   updateSel(p);
 }
-function updateSel(p) { if (!p || !PPARTS[p.t]) return; PPARTS[p.t].forEach(([, , fill], i) => { const m = selG.children[i]; if (m) propMatrix(p, fill, m.matrix); }); }
+function updateSel(p) { if (!p || !partsOf(p)) return; partsOf(p).forEach(([, , fill], i) => { const m = selG.children[i]; if (m) propMatrix(p, fill, m.matrix); }); }
 let mapSaveT = 0;
 function saveMap() {
   clearTimeout(mapSaveT);
@@ -1320,6 +1339,7 @@ function renderInsp() {
   <label><span>наклон X</span><input type="range" data-k="rx" min="-90" max="90" step="${st}" value="${Math.round((p.rx || 0) * 180 / Math.PI)}"><em>${Math.round((p.rx || 0) * 180 / Math.PI)}°</em></label>
   <label><span>наклон Z</span><input type="range" data-k="rz" min="-90" max="90" step="${st}" value="${Math.round((p.rz || 0) * 180 / Math.PI)}"><em>${Math.round((p.rz || 0) * 180 / Math.PI)}°</em></label>
   <label><span>высота</span><input type="range" data-k="y" min="-3" max="15" step=".05" value="${p.y || 0}"><em>${(p.y || 0).toFixed(2)}</em></label>`}
+  ${p.t === 'tree' ? `<div class="row">${TREES.map((T_, k) => `<button data-a="kind${k}" style="${treeKind(p) === k ? 'border-color:#f2c45a' : ''}">${T_.name}</button>`).join('')}</div>` : ''}
   <label><span>${def.area ? 'радиус' : 'размер'}</span><input type="range" data-k="s" min="${def.area ? 1 : .2}" max="${def.area ? 15 : 5}" step=".05" value="${p.s || 1}"><em>${(p.s || 1).toFixed(2)}</em></label>
   <label><span>метка</span><input type="text" data-k="tag" value="${(p.tag || '').replace(/"/g, '')}" placeholder="${def.area ? 'нужна для событий' : 'для событий (необяз.)'}"></label>
   <div class="row"><button data-a="dup">⎘ копия</button><button data-a="del">🗑 удалить</button></div>`;
@@ -1339,6 +1359,7 @@ function renderInsp() {
     recordProp(p);
     if (a === 'r-') p.r = (p.r || 0) - stp; if (a === 'r+') p.r = (p.r || 0) + stp;
     if (a === 'ground') { p.y = 0; p.rx = 0; p.rz = 0; }
+    if (a.startsWith('kind')) { p.v = +a.slice(4); buildSel(p); }
     edChanged(p); renderInsp();
   });
 }
