@@ -152,6 +152,10 @@ vec2 terS(vec2 xz){
   return mix(mix(a,b,f.x), mix(c,d,f.x), f.y);
 }
 float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float hash3(vec3 p){ return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453); }
+float vnoise3(vec3 p){ vec3 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
+  return mix(mix(mix(hash3(i),hash3(i+vec3(1,0,0)),f.x), mix(hash3(i+vec3(0,1,0)),hash3(i+vec3(1,1,0)),f.x), f.y),
+             mix(mix(hash3(i+vec3(0,0,1)),hash3(i+vec3(1,0,1)),f.x), mix(hash3(i+vec3(0,1,1)),hash3(i+vec3(1,1,1)),f.x), f.y), f.z); }
 float noise(vec2 p){ vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.-2.*f);
   return mix(mix(hash(i),hash(i+vec2(1,0)),u.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),u.x), u.y); }
 vec3 lightAt(vec3 p, vec3 n){
@@ -194,6 +198,16 @@ void main(){
   vec3 n = normalize(cross(dFdx(vP),dFdy(vP)));
   vec3 V = normalize(cameraPosition-vP);
   if(dot(n,V)<0.) n=-n;
+  float leafK = 1.;
+  if(uMode > .905 && uMode < .935){
+    // foliage is not a solid blob: 3D noise cuts it into leaf clumps with gaps (see-through, like the reference)
+    vec3 q = vP*1.9 + vec3(uWind.x, 0., uWind.y)*uTime*.25*(.3 + uWindS);
+    float c = vnoise3(q)*.65 + vnoise3(q*2.3 + 7.1)*.35;
+    float edge = 1. - abs(dot(n, V));
+    float th = .56 + edge*.25;
+    if(c < th) discard;
+    leafK = .35 + 2.6*(c - th);                       // clump centres brighter, edges darker
+  }
   vec3 base = uColor;
   if(uPat>.5 && uPat<1.5){            // bricks
     vec2 q = vec2(vP.x+vP.z, vP.y); float row=floor(q.y/.42); float off=mod(row,2.)*.45;
@@ -207,6 +221,7 @@ void main(){
   } else if(uPat>2.5){                // leafy / bark noise
     base *= .55+.9*noise(vP.xz*2.6+vP.y*3.1);
   }
+  base *= leafK;
   vec3 L = lightAt(vP,n) + uFill;
   float rim = pow(1.-max(dot(n,V),0.),2.)*uRim;
   vec3 c = base*L + uEmis + rim*(base+.15)*(uAmb*3.+.25);
@@ -392,7 +407,7 @@ const PGEO = {
   ring: new THREE.RingGeometry(.94, 1, 40).rotateX(-Math.PI / 2),
 };
 const PMAT = {
-  trunk: stdMat({ color: [.5, .42, .34], pat: 3 }), leaf: stdMat({ color: [.66, .76, .82], pat: 3, sway: 1, rim: .35, mode: .92 }),
+  trunk: stdMat({ color: [.5, .42, .34], pat: 3 }), leaf: stdMat({ color: [.62, .74, .78], pat: 3, sway: 1, rim: .2, mode: .92 }),
   bush: stdMat({ color: [.42, .62, .45], pat: 3, sway: 1 }), rock: stdMat({ color: [.42, .42, .4], pat: 3 }),
   wall: stdMat({ color: [.5, .5, .47], pat: 1 }), crate: stdMat({ color: [.55, .4, .25], pat: 3 }),
   post: stdMat({ color: [.3, .22, .15] }), bowl: stdMat({ color: [.25, .2, .16], emis: [.5, .2, .05] }),

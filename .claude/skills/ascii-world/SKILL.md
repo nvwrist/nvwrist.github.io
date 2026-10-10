@@ -13,7 +13,7 @@ Files: `ascii/index.html` (HUD, buttons, CSS; loads `./game.js?v=N` — **bump N
    - `a ≈ 1` → hybrid glyph choice: flat cells use the density ramp `RAMP`; cells with contrast inside (max−min of the 3×3 sub-zone luminance > 0.22) are matched by **shape** against `EDGE` glyphs (`_ - / \ | ( ) < > [ ] ' , ^ L J 7 T …`) using 3×3 coverage descriptors (`desc` DataTexture, computed from the atlas at startup). This is what makes silhouettes and edges detailed;
    - `0.1…0.9` → directional stroke `- / | \`, angle = screen-space direction (grass blades, rain);
    - `0.935…0.95` (`.945`) → water `. - ~ =`;
-   - `0.905…0.935` (`mode: .92`) → foliage: round glyphs `. : o O 0 Q @ 8` by light (tree canopies = clusters of round blobs, `CANOPY`);
+   - `0.905…0.935` (`mode: .92`) → foliage: round glyphs `. : o O 0 Q @ 8` by light (tree canopies = clusters of round blobs, `CANOPY`, cut into see-through leaf clumps by 3D noise `vnoise3` in `STD_FS`);
    - `< 0.09` (`RUNEM = .05`) → random rune glyphs (spell particles, portal motes).
 2. **`cellMat` → `cellRT`** (one texel per cell): reads the SX×SY block with `texelFetch`, builds the 3×3 sub-luminances, averages colour, takes the brightest texel's code, stores colour + glyph index (`a = index/255`). Glyph indices refer to `GLYPHS` = all printable ASCII (`SHAPES`, index = charCode−32) + 4 custom strokes (`DIRG`).
 3. **Bloom**: `brightMat` (threshold 1.0 on half-float — only emissive > 1 glows) → 2× separable `blurMat`.
