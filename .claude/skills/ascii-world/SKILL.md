@@ -7,17 +7,19 @@ description: Work on ASCII World (/ascii) — the Three.js game rendered as ASCI
 
 Files: `ascii/index.html` (HUD, buttons, CSS; loads `./game.js?v=N` — **bump N on every change** so phones/raw.githack/Pages do not serve a stale script), `ascii/game.js` (everything else, ES module), `ascii/vendor/three.module.min.js` (Three.js r160, vendored).
 
-## Render pipeline — screen-space ASCII + real-geometry overlay (matches the reference)
+## Render pipeline — everything is ASCII on a screen grid
 
-Glyphs sit in **horizontal rows on a screen grid** (cell `cellW × cellW*1.75` CSS px, `DETAIL.small/big` per «детали» level, default 5 px on phones ≈ 80 columns); only **solid** things are turned into glyphs. Grass, rain, snow, sparks and editor rings are drawn as **real thin geometry on top** — that is what makes the reference look soft.
+Glyphs sit in **horizontal rows on a screen grid** (cell `cellW × cellW*1.75` CSS px, `DETAIL.small/big` per «детали» level, default 5 px on phones ≈ 80 columns). Everything in the world becomes glyphs; nothing is drawn as plain 3D.
 
-1. **Scene pass** (`camera.layers = 0`) → `sceneRT` at `W×H × Q().ss` (1–1.5), half-float, `DepthTexture`. Materials write alpha as a glyph-set code: `1` solid (density ramp `WRAMP` sorted by real ink coverage + 3×3 shape match against `EDGE` for contrasty cells), `.92` foliage (`. : o O 0 Q @ 8`), `.945` water (`. - ~ =`).
-2. **Overlay pass** (`layers = 1`: grass mesh, rain, snow, particles `pMesh`, cursor/selRing, area rings) → `ovRT` at full drawing-buffer size with MSAA, cleared to transparent. Overlay fragment shaders include `OVF.behindScene()`: they compare their linear depth with `sceneRT.depthTexture` and discard when hidden behind a solid object (trees hide grass etc.). Opaque overlay (grass, rain) writes alpha 1; additive glyph billboards use `ADD_KEEP_ALPHA` (colour adds, alpha untouched).
-3. **`cellMat` → `cellRT`** (one texel per cell): 3×6 samples of `sceneRT` per cell → avg colour, brightest texel's code, 3×3 zone luminance → glyph index (`a = index/255`) + normalised colour.
-4. **Bloom** from scene + overlay (`brightMat`, threshold .82) → separable blur.
-5. **`finalMat`**: glyph atlas sampled per screen cell over the navy background `uBg`, calm grade, then `ascii*(1-ov.a) + ov.rgb`, + bloom, vignette. «ASCII: выкл» renders both layers into `rawRT` (MSAA) and tone-maps it.
+1. **Scene pass** (`camera.layers = 0`) → `sceneRT` at `W×H × Q().ss`, half-float, `DepthTexture`. Materials write alpha as a glyph-set code: `1` solid (density ramp `WRAMP` sorted by real ink coverage + 3×3 shape match against `EDGE` for contrasty cells), `.945` water (`. - ~ =`), `.905–.935` foliage (`. : o O 0 Q @ 8`), `.1–.9` **stroke** = grass blades and rain, value = screen angle of the blade (`vAng`).
+2. **`cellMat` → `cellRT`** (one texel per cell): 3×6 samples per cell → avg colour, brightest texel's code, 3×3 zone luminance → glyph index `a = index/255`. Strokes are stored as `200 + angle*50`.
+3. **Overlay pass** (`layers = 1`: snow and particle glyph sprites, editor rings) → `ovRT` (resolution follows the quality preset). Sprites test against the scene depth (`OVF.behindScene()`) and add with `ADD_KEEP_ALPHA`.
+4. **Bloom** from scene + overlay.
+5. **`finalMat`** at the **full device resolution** (always `min(2, devicePixelRatio)`, so the quality preset never blurs glyphs): for each pixel it looks at the 3×3 neighbouring cells; letters get a tiny floating jitter/lean, strokes (`uDirV` glyph) are rotated to the blade angle and stretched `.82–1.2` so they overlap like grass. Then calm grade over the navy `uBg`, overlay composite, bloom, vignette. «ASCII: выкл» renders both layers into `rawRT` and tone-maps it.
 
-Camera: high and centred on the hero like the reference — forest pitch .98 rad (~56°), dungeon 1.22, distance 18 (portrait) / 16, fov 42 / 34; editor lerps to pitch 1.15, distance 22 × zoom. Follow uses the real frame time (`fdt`), so it never lags on slow phones. Generated forests have clearings (`keepTree` noise; old maps migrated once via `MAP.groves`).
+Quality presets (`QUAL`) only change scene resolution (`ss`), grass count, overlay resolution/MSAA, bloom passes and particle caps — never the glyph grid or the final resolution.
+
+Camera: high and centred on the hero like the reference — forest pitch .98 rad (~56°), dungeon 1.22, distance 18 (portrait) / 16, fov 42 / 34; editor lerps to pitch 1.15, distance 22 × zoom. Follow uses the real frame time (`fdt`). Fog starts 17 m from the camera. Generated forests have clearings (`keepTree` noise; old maps migrated once via `MAP.groves`).
 
 ## Materials / lighting
 
