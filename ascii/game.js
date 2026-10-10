@@ -70,13 +70,13 @@ const { atlas, desc } = (() => {
     const ch = GLYPHS[i], x0 = i * gw;
     if (i >= SHAPES.length) {
       // directional strokes: long thin lines, like blades of grass / rain
-      g.lineWidth = 3.2; g.lineCap = 'round'; g.beginPath();
+      g.lineWidth = 2.3; g.lineCap = 'round'; g.shadowColor = '#fff'; g.shadowBlur = 3; g.beginPath();
       const k = i - SHAPES.length, m = 6;
       if (k === 0) { g.moveTo(x0 + m, gh / 2); g.lineTo(x0 + gw - m, gh / 2); }
       if (k === 1) { g.moveTo(x0 + m, gh - m); g.lineTo(x0 + gw - m, m); }
       if (k === 2) { g.moveTo(x0 + gw / 2, m); g.lineTo(x0 + gw / 2, gh - m); }
       if (k === 3) { g.moveTo(x0 + m, m); g.lineTo(x0 + gw - m, gh - m); }
-      g.stroke();
+      g.stroke(); g.shadowBlur = 0;
     } else g.fillText(ch, x0 + gw / 2, gh * .54);
   }
   // 3×3 coverage per shape glyph (row 0 = top)
@@ -332,8 +332,8 @@ const grass = (() => {
     fragmentShader: COMMON + /* glsl */`
     varying vec3 vP; varying float vH; varying float vAng; varying float vVar;
     void main(){
-      vec3 tipc = mix(vec3(.3,.58,.32), vec3(.45,.66,.38), vVar);
-      vec3 base = mix(vec3(.06,.13,.07), tipc, smoothstep(0.,.8,vH));
+      vec3 tipc = vVar < .33 ? vec3(.24,.46,.28) : vVar < .66 ? vec3(.34,.56,.33) : vec3(.46,.6,.34);
+      vec3 base = mix(vec3(.04,.09,.05), tipc, smoothstep(.05,.9,vH));
       vec3 c = base*lightAt(vP, vec3(0.,1.,0.))*1.2;
       gl_FragColor = vec4(fogIt(c,vP), .1 + .8*clamp(vAng,0.,.999));
     }`,
@@ -1868,7 +1868,7 @@ const cellMat = new THREE.ShaderMaterial({
     } else if(best.a > .09){
       float a = (best.a-.1)/.8;
       g = uDir + mod(floor(a*4.+.5), 4.);
-      col = best.rgb*1.7;
+      col = mix(avg, best.rgb, .6)*1.8;
     } else {
       float h = fract(sin(dot(vec2(cell)+floor(uTime*9.), vec2(12.9898,78.233)))*43758.5453);
       int ri = int(floor(h*float(NRUNE)));
@@ -1956,7 +1956,7 @@ const finalMat = new THREE.ShaderMaterial({
       float rot = (ax.r-.5)*3.14159265 + (stroke ? 0. : (h2-.5)*.12 + sin(uT*1.3 + h1*31.)*.035);
       jit += stroke ? vec2(0.) : vec2(sin(uT*.9 + h2*40.), cos(uT*1.1 + h1*27.))*.035;
       if(stroke) g = uDirV;
-      vec2 sc = stroke ? vec2(1.05, 1.45) : vec2(1.0, 1.0);
+      vec2 sc = stroke ? vec2(1.0, 1.12 + h1*.25) : vec2(1.0, 1.0);
       vec2 d = fc - (vec2(nc) + .5 + jit)*uCellPx;
       float cs = cos(rot), sn = sin(rot);
       mat2 R = mat2(cs, -sn, sn, cs);               // rotate into glyph space
@@ -1965,7 +1965,7 @@ const finalMat = new THREE.ShaderMaterial({
       if(lp.x < 0. || lp.y < 0. || lp.x > 1. || lp.y > 1.) continue;
       vec2 ddx = (R*vec2(1.,0.))*k, ddy = (R*vec2(0.,1.))*k;
       float m = textureGrad(tAtlas, vec2((g+lp.x)/uGlyphN, lp.y), vec2(ddx.x/uGlyphN, ddx.y), vec2(ddy.x/uGlyphN, ddy.y)).r;
-      vec3 col = cv.rgb*(stroke ? .9 : 1.);
+      vec3 col = cv.rgb*(stroke ? .7 + .8*h2 : 1.);
       acc = max(acc, col*m);
     }
     // calm palette: soften saturation and highlights
