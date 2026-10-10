@@ -39,9 +39,9 @@ try { const v = JSON.parse(localStorage.getItem('ascii-view6') || '{}'); if (typ
 let sceneRT, ovRT, cellRT, bA, bB, cellW = 5, cellH = 8.75, cols = 1, rows = 1, sScale = 1;
 /* quality presets for weak phones: pixel ratio, grass share, prop draw radius, glyph overlap, bloom passes, particles */
 const QUAL = [
-  { name: 'низкое',  dpr: 1,   ss: 1,    msaa: 0, grass: .12, view: 38, nb: 0, bloom: 1, rain: .4, parts: 1500 },
-  { name: 'среднее', dpr: 1.5, ss: 1.25, msaa: 4, grass: .2, view: 52, nb: 1, bloom: 1, rain: .7, parts: 3000 },
-  { name: 'высокое', dpr: 2,   ss: 1.5,  msaa: 4, grass: .3, view: 70, nb: 1, bloom: 2, rain: 1,  parts: 5000 },
+  { name: 'низкое',  dpr: 1,   ss: 1,    msaa: 0, grass: .35, view: 38, nb: 0, bloom: 1, rain: .4, parts: 1500 },
+  { name: 'среднее', dpr: 1.5, ss: 1.25, msaa: 4, grass: .65, view: 52, nb: 1, bloom: 1, rain: .7, parts: 3000 },
+  { name: 'высокое', dpr: 2,   ss: 1.5,  msaa: 4, grass: 1,   view: 70, nb: 1, bloom: 2, rain: 1,  parts: 5000 },
 ];
 try { const q = localStorage.getItem('ascii-quality'); if (q && q !== 'auto') { qMode = 'fixed'; qLevel = clamp(+q | 0, 0, 2); } } catch (_) { }
 if (qMode === 'auto') {                                   // first guess from the device, then adapt to the measured frame time
@@ -122,7 +122,7 @@ const U = {
   tSD: { value: null }, uOvRes: { value: new THREE.Vector2(1, 1) }, uDT: { value: 0 }, uCN: { value: .3 }, uCF: { value: 200 },
   uTime: { value: 0 },
   // grass settings (see GR_UI): shape / wind / patches, shading, extras; stroke look shared with rain
-  uGA: { value: new THREE.Vector4() }, uGB: { value: new THREE.Vector4() }, uGC: { value: new THREE.Vector4() }, uGD: { value: new THREE.Vector4() }, uGE: { value: new THREE.Vector4() },
+  uGA: { value: new THREE.Vector4() }, uGB: { value: new THREE.Vector4() }, uGC: { value: new THREE.Vector4() }, uGD: { value: new THREE.Vector4() }, uGE: { value: new THREE.Vector4() }, uGF: { value: new THREE.Vector4() },
   uSt: { value: new THREE.Vector4() }, uStW: { value: 1 }, uJit: { value: 1 }, uStGain: { value: 1.8 },
   uAmb: { value: new THREE.Color(.1, .12, .18) },
   uMoonDir: { value: new THREE.Vector3(.35, .85, .4).normalize() },
@@ -352,7 +352,7 @@ const grass = (() => {
       vec2 c = uFocus.xz + uGOff;
       vec2 root = c + mod(aI.xy - c + uTile*.5, uTile) - uTile*.5;
       vec2 tsw = terS(root); float ty = tsw.x;
-      float h = (.24 + aI.w*.28*uGA.y)*uGA.x;
+      float h = (.38 + aI.w*.45*uGA.y)*uGA.x;
       h *= 1. - smoothstep(.12, .4, tsw.y);
       h *= smoothstep(1.3, 2.3, abs(root.y - pathZ(root.x)));
       if(root.x>uB0.x && root.x<uB1.x && root.y>uB0.y && root.y<uB1.y) h = 0.;
@@ -363,18 +363,18 @@ const grass = (() => {
       float y = position.y;
       // wind: slow travelling gusts, no per-blade flutter (it made the strokes shimmer)
       float gust = noise(root*.11 - uWind*uTime*1.7*uGB.y);
-      gust = gust*gust*.7;
+      gust = gust*gust*1.1;
       float flutter = sin(uTime*.9 + dot(root,vec2(.12,.08)))*.06*uGB.z
         + sin(uTime*(2.6+aV) + aV*6.28 + dot(root,vec2(.7,.4)))*.12*uGE.w;   // slow shared wave + optional per-blade flutter
       float bend = (gust + flutter + .2) * (.25 + uWindS) * uGB.x;
-      vec2 bv = uWind*bend*.4 + vec2(cos(aI.z*1.7), sin(aI.z*1.7))*(.02 + .05*aV)*uGA.w;   // own random lean per blade
+      vec2 bv = uWind*bend*.4 + vec2(cos(aI.z*1.7), sin(aI.z*1.7))*(.04 + .12*aV)*uGA.w;   // own random lean per blade
       // push away from the player
       vec2 dp = root - uPlayer.xz; float dl = length(dp);
       bv += (dl>1e-3 ? dp/dl : vec2(0.)) * clamp(1.-dl/1.4,0.,1.)*1.8*uGB.w;
       float bl = min(length(bv), 1.6);
       float droop = 1. - .38*bl;
       float ca = cos(aI.z), sa = sin(aI.z);
-      vec2 side = vec2(ca,sa) * position.x * .026 * uGA.z * (1.-y*.6);
+      vec2 side = vec2(ca,sa) * position.x * .11 * uGA.z * (1.-y*.7);
       vec3 wp = vec3(root.x + side.x + bv.x*y*y*h, ty + y*h*droop, root.y + side.y + bv.y*y*y*h);
       vec3 tip = vec3(root.x + bv.x*h, ty + h*droop, root.y + bv.y*h);
       vec4 c0 = projectionMatrix*viewMatrix*vec4(root.x,ty,root.y,1.);
@@ -386,7 +386,7 @@ const grass = (() => {
     }`,
     fragmentShader: COMMON + OVF + /* glsl */`
     varying vec3 vP; varying float vH; varying float vAng; varying float vVar; varying float vGust; varying vec2 vRoot;
-    uniform vec4 uGC, uGD, uGE;
+    uniform vec4 uGC, uGD, uGE, uGF;
     void main(){
       vec3 tipc = vVar < .33 ? vec3(.24,.46,.28) : vVar < .66 ? vec3(.34,.56,.33) : vec3(.46,.6,.34);
       // meadow patches: lush / dry / dark clumps
@@ -401,9 +401,9 @@ const grass = (() => {
       // contact shadow under the hero
       float sh = smoothstep(1.1, .25, length(vRoot - uPlayer.xz)); c *= 1. - sh*uGE.y*(1. - vH*.5);
       c *= uGD.x; c = mix(vec3(dot(c, vec3(.3,.59,.11))), c, uGE.x);
-      c = uAscii > .5 ? pow(c*2.4, vec3(uGD.y))*vec3(.72, 1.1, .66) : c;
-      // stroke angle in a few steps: small wind changes no longer flip the glyph every frame
-      float qa = (floor(clamp(vAng, 0., .999)*uGE.z) + .5)/uGE.z;
+      c = pow(max(c, vec3(0.)), vec3(uGD.y))*mix(vec3(1.), vec3(.72, 1.1, .66), uGF.x);
+      // stroke angle: continuous (50 steps) by default, or a few steps so small wind changes do not flip the glyph
+      float qa = uGE.z > 49.5 ? clamp(vAng, 0., .999) : (floor(clamp(vAng, 0., .999)*uGE.z) + .5)/uGE.z;
       gl_FragColor = vec4(fogIt(c,vP), .1 + .8*qa);
     }`,
   });
@@ -420,13 +420,13 @@ grass.mat.uniforms.uB0.value.set(BLD.x0 - .4, BLD.z0 - .4);
 grass.mat.uniforms.uB1.value.set(BLD.x1 + .4, BLD.z1 + .4);
 grass.mat.uniforms.uCamp.value.set(CAMP.x, CAMP.z);
 
-/* grass settings (panel «🌿 трава»), stored in localStorage['ascii-grass-v3'].
+/* grass settings (panel «🌿 трава»), stored in localStorage['ascii-grass-v4'].
    Each row: key, label, min, max, step, default, hint. Defaults = the current look. */
 const GR_UI = [
   ['Форма', [
-    ['dens', 'количество', 0, 1, .01, .4, 'доля от 90 000 травинок (на слабых устройствах ещё меньше)'],
+    ['dens', 'количество', 0, 1, .01, 1, 'доля от 90 000 травинок (на слабых устройствах ещё меньше)'],
     ['radius', 'дальность', .3, 1, .02, 1, 'радиус, в котором рисуется трава'],
-    ['h', 'высота', .2, 3, .05, 1.3, 'общий множитель высоты'],
+    ['h', 'высота', .2, 3, .05, 1, 'общий множитель высоты'],
     ['hVar', 'разброс высоты', 0, 3, .05, 1, '0 — все одинаковые'],
     ['width', 'толщина', .3, 4, .05, 1, 'ширина основания травинки'],
     ['lean', 'случайный наклон', 0, 4, .05, 1, 'у каждой травинки свой наклон'],
@@ -435,42 +435,43 @@ const GR_UI = [
   ['Ветер', [
     ['wind', 'сила ветра', 0, 3, .05, 1, 'амплитуда колебаний'],
     ['gustSpd', 'скорость порывов', 0, 4, .05, 1, 'как быстро бегут волны'],
-    ['flutter', 'общая волна', 0, 4, .05, 1, 'медленное общее покачивание'],
-    ['jitter', 'дрожание', 0, 2, .05, 0, 'индивидуальное дрожание каждой травинки (рябь!)'],
+    ['flutter', 'общая волна', 0, 4, .05, 0, 'медленное общее покачивание'],
+    ['jitter', 'дрожание', 0, 2, .05, 1, 'индивидуальное дрожание каждой травинки (рябь!)'],
     ['push', 'отталкивание', 0, 3, .05, 1, 'как сильно героя «раздвигает» траву'],
   ]],
   ['Цвет и свет', [
-    ['br', 'яркость', .2, 3, .05, 1.9, ''],
-    ['gamma', 'гамма', .5, 1.5, .02, .8, 'ниже — светлее и контрастнее, выше — темнее'],
+    ['br', 'яркость', .2, 3, .05, 1, ''],
+    ['gamma', 'гамма', .5, 1.5, .02, 1, 'ниже — светлее и контрастнее, выше — темнее'],
     ['sat', 'насыщенность', 0, 2, .05, 1, '0 — серая'],
-    ['base', 'яркость корня', 0, 3, .05, 1.6, 'тёмный низ травинок'],
+    ['base', 'яркость корня', 0, 3, .05, 1, 'тёмный низ травинок'],
     ['sheen', 'блики ветра', 0, 3, .05, 1, 'светлые кончики в порывах'],
+    ['tint', 'зелёный оттенок', 0, 1, .05, 0, '0 — как в PR #9, 1 — насыщенно-зелёная'],
     ['dry', 'сухие пятна', 0, 1.5, .05, .6, 'жёлто-сухие участки'],
     ['clump', 'пятнистость', 0, 2, .05, 1, 'тёмные/светлые комки'],
     ['shadow', 'тень героя', 0, 1, .05, .45, ''],
   ]],
   ['Штрихи (трава и дождь)', [
-    ['steps', 'углов штриха', 2, 50, 1, 4, 'меньше — спокойнее, 50 — плавно (мерцает)'],
-    ['stGain', 'яркость штриха', .3, 4, .05, 2.4, 'в ячейке сетки'],
-    ['stBr', 'штрих: база', .1, 2, .05, .85, 'яркость поверх букв'],
-    ['stVar', 'штрих: разброс', 0, 1.5, .05, .3, 'случайная яркость'],
-    ['stLen', 'длина штриха', .3, 2.5, .05, 1, ''],
-    ['stLenVar', 'длина: разброс', 0, 1.5, .05, 0, ''],
+    ['steps', 'углов штриха', 2, 50, 1, 50, 'меньше — спокойнее, 50 — плавно (мерцает)'],
+    ['stGain', 'яркость штриха', .3, 4, .05, 1.8, 'в ячейке сетки'],
+    ['stBr', 'штрих: база', .1, 2, .05, .7, 'яркость поверх букв'],
+    ['stVar', 'штрих: разброс', 0, 1.5, .05, .8, 'случайная яркость'],
+    ['stLen', 'длина штриха', .3, 2.5, .05, 1.12, ''],
+    ['stLenVar', 'длина: разброс', 0, 1.5, .05, .25, ''],
     ['stW', 'ширина штриха', .3, 3, .05, 1, ''],
     ['jit', 'плавание букв', 0, 3, .05, 1, 'лёгкое дрожание обычных букв'],
   ]],
 ];
 const GR_DEF = {}; for (const [, rows] of GR_UI) for (const r of rows) GR_DEF[r[0]] = r[5];
 const GR = { ...GR_DEF };
-try { const v = JSON.parse(localStorage.getItem('ascii-grass-v3') || '{}'); for (const k in GR_DEF) if (typeof v[k] === 'number' && isFinite(v[k])) GR[k] = v[k]; } catch (_) { }
+try { const v = JSON.parse(localStorage.getItem('ascii-grass-v4') || '{}'); for (const k in GR_DEF) if (typeof v[k] === 'number' && isFinite(v[k])) GR[k] = v[k]; } catch (_) { }
 function applyGrass() {
   U.uGA.value.set(GR.h, GR.hVar, GR.width, GR.lean);
   U.uGB.value.set(GR.wind, GR.gustSpd, GR.flutter, GR.push);
   U.uGC.value.set(GR.radius, GR.patch, GR.dry, GR.clump);
   U.uGD.value.set(GR.br, GR.gamma, GR.base, GR.sheen);
-  U.uGE.value.set(GR.sat, GR.shadow, Math.max(2, Math.round(GR.steps)), GR.jitter);
+  U.uGE.value.set(GR.sat, GR.shadow, Math.max(2, Math.round(GR.steps)), GR.jitter); U.uGF.value.set(GR.tint, 0, 0, 0);
   U.uSt.value.set(GR.stBr, GR.stVar, GR.stLen, GR.stLenVar); U.uStW.value = GR.stW; U.uJit.value = GR.jit; U.uStGain.value = GR.stGain;
-  grass.geo.instanceCount = Math.min(grass.N, Math.floor(grass.N * GR.dens * Q().grass / .3 * (Math.min(innerWidth, innerHeight) < 600 ? .8 : 1)));
+  grass.geo.instanceCount = Math.min(grass.N, Math.floor(grass.N * GR.dens * Q().grass * (Math.min(innerWidth, innerHeight) < 600 ? .7 : 1)));
 }
 applyGrass();
 
@@ -1170,7 +1171,7 @@ $('bQ').onclick = () => {
 };
 {
   const box = $('grBody'), fmt = (v, st) => (st >= 1 ? String(Math.round(v)) : v.toFixed(2));
-  const save = () => { try { localStorage.setItem('ascii-grass-v3', JSON.stringify(GR)); } catch (_) { } };
+  const save = () => { try { localStorage.setItem('ascii-grass-v4', JSON.stringify(GR)); } catch (_) { } };
   const ins = [];
   for (const [title, rows] of GR_UI) {
     const hd = document.createElement('h4'); hd.textContent = title; box.appendChild(hd);
@@ -1185,7 +1186,7 @@ $('bQ').onclick = () => {
   }
   $('bGr').onclick = () => { const g = $('gr'); g.style.display = g.style.display === 'block' ? 'none' : 'block'; };
   $('grClose').onclick = () => { $('gr').style.display = 'none'; };
-  $('grReset').onclick = () => { Object.assign(GR, GR_DEF); ins.forEach(f => f()); applyGrass(); try { localStorage.removeItem('ascii-grass-v3'); } catch (_) { } };
+  $('grReset').onclick = () => { Object.assign(GR, GR_DEF); ins.forEach(f => f()); applyGrass(); try { localStorage.removeItem('ascii-grass-v4'); } catch (_) { } };
   $('grCopy').onclick = async () => {
     const t = JSON.stringify(GR);
     try { await navigator.clipboard.writeText(t); toast('настройки травы скопированы'); } catch (_) { prompt('Настройки травы (JSON):', t); }
