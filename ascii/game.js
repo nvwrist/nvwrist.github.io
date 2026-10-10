@@ -33,10 +33,22 @@ renderer.setClearColor(0x000000, 1);
 const canHalf = renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float');
 
 const SX = 3, SY = 6;                         // scene texels per glyph cell (3×3 sub-zones of 1×2 texels)
-let W, H, DPR, cellW, cellH, cols, rows, quality = 1, asciiOn = true, detail = 1, rawRT = null;
+let W, H, DPR, cellW, cellH, cols, rows, quality = 1, qLevel = 2, qMode = 'auto', asciiOn = true, detail = 1, rawRT = null;
 const DETAIL = { big: [9, 6, 5, 4], small: [8, 5, 4, 3], names: ['крупно', 'средне', 'мелко', 'ультра'] };
 try { const v = JSON.parse(localStorage.getItem('ascii-view3') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 3) detail = v.detail; } catch (_) { }
 let sceneRT, cellRT, auxRT, bA, bB;
+/* quality presets for weak phones: pixel ratio, grass share, prop draw radius, glyph overlap, bloom passes, particles */
+const QUAL = [
+  { name: 'низкое',  dpr: 1,   grass: .35, view: 38, nb: 0, bloom: 1, rain: .4, parts: 1500 },
+  { name: 'среднее', dpr: 1.5, grass: .65, view: 52, nb: 1, bloom: 1, rain: .7, parts: 3000 },
+  { name: 'высокое', dpr: 2,   grass: 1,   view: 70, nb: 1, bloom: 2, rain: 1,  parts: 5000 },
+];
+try { const q = localStorage.getItem('ascii-quality'); if (q && q !== 'auto') { qMode = 'fixed'; qLevel = clamp(+q | 0, 0, 2); } } catch (_) { }
+if (qMode === 'auto') {                                   // first guess from the device, then adapt to the measured frame time
+  const mem = navigator.deviceMemory || 8, cores = navigator.hardwareConcurrency || 8, px = screen.width * screen.height * (devicePixelRatio || 1) ** 2;
+  qLevel = mem <= 2 || cores <= 2 ? 0 : mem <= 4 || cores <= 4 || px > 3.5e6 ? 1 : 2;
+}
+const Q = () => QUAL[qLevel];
 
 /* ---------- glyph atlas ---------- */
 // Shape glyphs = all printable ASCII. Each glyph gets a 3×3 coverage descriptor;
@@ -274,6 +286,7 @@ const groundMat = new THREE.ShaderMaterial({
     float steep = smoothstep(.22, .5, 1. - nrm.y);                      // rocky cliffs on steep slopes
     base = mix(base, vec3(.16,.16,.15)*(.5+.9*noise(vP.xz*1.7 + vP.y*2.)), steep);
     base = mix(base, vec3(.05,.07,.06), smoothstep(.1,.45,tw.y));       // wet banks
+    base *= 1. - smoothstep(1.1, .2, length(vP.xz - uPlayer.xz))*.5;
     vec3 c = base*lightAt(vP,nrm);
     gl_FragColor = vec4(fogIt(c,vP),1.);
   }`,
@@ -308,7 +321,7 @@ const grass = (() => {
     vertexShader: COMMON + /* glsl */`
     attribute vec4 aI; attribute float aV;
     uniform float uTile; uniform vec2 uB0, uB1, uCamp;
-    varying vec3 vP; varying float vH; varying float vAng; varying float vVar;
+    varying vec3 vP; varying float vH; varying float vAng; varying float vVar; varying float vGust; varying vec2 vRoot;
     void main(){
       vec2 c = uFocus.xz;
       vec2 root = c + mod(aI.xy - c + uTile*.5, uTile) - uTile*.5;
@@ -341,15 +354,24 @@ const grass = (() => {
       vec4 c1 = projectionMatrix*viewMatrix*vec4(tip,1.);
       vec2 dd = (c1.xy/c1.w - c0.xy/c0.w)*uRes;
       float ang = atan(dd.y, dd.x); if(ang<0.) ang += 3.14159265;
-      vAng = ang/3.14159265; vP = wp; vH = y; vVar = aV;
+      vAng = ang/3.14159265; vP = wp; vH = y; vVar = aV; vGust = gust; vRoot = root;
       gl_Position = projectionMatrix*viewMatrix*vec4(wp,1.);
     }`,
     fragmentShader: COMMON + /* glsl */`
-    varying vec3 vP; varying float vH; varying float vAng; varying float vVar;
+    varying vec3 vP; varying float vH; varying float vAng; varying float vVar; varying float vGust; varying vec2 vRoot;
     void main(){
       vec3 tipc = vVar < .33 ? vec3(.24,.46,.28) : vVar < .66 ? vec3(.34,.56,.33) : vec3(.46,.6,.34);
-      vec3 base = mix(vec3(.04,.09,.05), tipc, smoothstep(.05,.9,vH));
-      vec3 c = base*lightAt(vP, vec3(0.,1.,0.))*1.2;
+      // meadow patches: lush / dry / dark clumps
+      float mpatch = noise(vRoot*.07 + 11.), clump = noise(vRoot*.6);
+      tipc = mix(tipc, vec3(.5,.58,.3), smoothstep(.62,.85,mpatch)*.6);
+      tipc *= .75 + .45*clump;
+      vec3 base = mix(vec3(.03,.07,.04), tipc, smoothstep(.0,.95,vH));
+      // light: lamps/moon + wind sheen on bent tips + soft back-light at the tips
+      vec3 Lc = lightAt(vP, normalize(vec3(uWind.x*.3, 1., uWind.y*.3)));
+      float sheen = smoothstep(.5, 1.6, vGust) * vH * vH * .55;
+      vec3 c = base*Lc*1.2 + vec3(.55,.7,.6)*sheen*(uAmb*2. + .12) + tipc*vH*vH*uMoonCol*.25;
+      // contact shadow under the hero
+      float sh = smoothstep(1.1, .25, length(vRoot - uPlayer.xz)); c *= 1. - sh*.45*(1. - vH*.5);
       gl_FragColor = vec4(fogIt(c,vP), .1 + .8*clamp(vAng,0.,.999));
     }`,
   });
@@ -391,7 +413,7 @@ const propBoxes = [];
 const PGEO = {
   trunk: new THREE.CylinderGeometry(.16, .26, 1, 6).translate(0, .5, 0),
   ico: new THREE.IcosahedronGeometry(1, 0),
-  blob: new THREE.IcosahedronGeometry(1, 2),
+  blob: new THREE.IcosahedronGeometry(1, 1),
   rock: new THREE.DodecahedronGeometry(1, 0),
   wall: new THREE.BoxGeometry(1, 1.7, 1).translate(0, .85, 0),
   crate: new THREE.BoxGeometry(.8, .8, .8).translate(0, .4, 0),
@@ -529,16 +551,27 @@ function rebuildProps(exclude = null) {
   for (const c of [...propG.children, ...areaG.children]) { c.parent.remove(c); c.dispose?.(); }
   circles.clear(); for (const c of staticCircles) addCircle(c.x, c.z, c.r);
   propBoxes.length = 0;
-  const byT = {}, m4 = new THREE.Matrix4();
   for (const p of MAP.props) {
     const def = PROP[p.t]; if (!def || (p.tag && hiddenTags[p.tag])) continue;
     if (def.area) { const r = new THREE.Mesh(PGEO.ring, PMAT.area); r.position.set(p.x, terH(p.x, p.z) + .08, p.z); r.scale.setScalar(p.s || 3); areaG.add(r); continue; }
     if (p === exclude) continue;
-    (byT[p.t === 'tree' ? 'tree:' + treeKind(p) : p.t] ||= []).push(p);
     if ((p.y || 0) > 2) continue;                    // floating things do not block
     const sc = p.s || 1;
     if (def.box) propBoxes.push({ x: p.x, z: p.z, c: Math.cos(p.r || 0), s: Math.sin(p.r || 0), hx: def.box[0] * sc, hz: def.box[1] * sc });
     else if (def.r && !(p.t === 'rock' && sc < .55)) addCircle(p.x, p.z, def.r * (p.t === 'torch' ? 1 : sc * .8));
+  }
+  propExclude = exclude; buildPropMeshes();
+}
+/* only props within the view radius are turned into instanced meshes; rebuilt when the camera moves far enough */
+let propCenter = null, propExclude = null; const viewC = { x: 0, z: 3 };
+function buildPropMeshes() {
+  for (const c of [...propG.children]) { propG.remove(c); c.dispose?.(); }
+  const cx = viewC.x, cz = viewC.z, R = Q().view, byT = {}, m4 = new THREE.Matrix4();
+  propCenter = { x: cx, z: cz };
+  for (const p of MAP.props) {
+    const def = PROP[p.t]; if (!def || def.area || p === propExclude || (p.tag && hiddenTags[p.tag])) continue;
+    if (Math.abs(p.x - cx) > R || Math.abs(p.z - cz) > R * .9) continue;
+    (byT[p.t === 'tree' ? 'tree:' + treeKind(p) : p.t] ||= []).push(p);
   }
   for (const t in byT) for (const [geo, mat, fill] of PPARTS[t] || []) {
     const list = byT[t], im = new THREE.InstancedMesh(geo, mat, list.length);
@@ -546,6 +579,7 @@ function rebuildProps(exclude = null) {
     im.frustumCulled = false; propG.add(im);
   }
 }
+function updatePropView() { viewC.x = focus.x; viewC.z = focus.z; if (zone === 'forest' && (!propCenter || Math.hypot(focus.x - propCenter.x, focus.z - propCenter.z) > Q().view * .3)) buildPropMeshes(); }
 /* the selected prop is drawn on its own so moving / rotating it is cheap */
 function buildSel(p) {
   for (const c of [...selG.children]) selG.remove(c);
@@ -720,7 +754,7 @@ const pMesh = new THREE.Mesh(pGeo, new THREE.ShaderMaterial({
 pMesh.frustumCulled = false; scene.add(pMesh);
 const RUNEM = .05;
 function emit(o) {
-  if (parts.length >= PMAX) return;
+  if (parts.length >= Q().parts) return;
   o.vx ??= 0; o.vy ??= 0; o.vz ??= 0; o.grav ??= 0; o.drag ??= 0; o.mode ??= 1; o.size ??= .1; o.life ??= 1;
   o.max = o.life; parts.push(o);
 }
@@ -1013,6 +1047,12 @@ $('bWx').onclick = () => setWx((wxIdx + 1) % WX.length);
 $('bSp').onclick = () => { P.spell = (P.spell + 1) % SP.length; hud(); };
 $('bAscii').onclick = () => setView(!asciiOn, detail);
 $('bDet').onclick = () => setView(asciiOn, (detail + 1) % 4);
+$('bQ').onclick = () => {
+  if (qMode === 'auto') { qMode = 'fixed'; qLevel = 0; } else if (qLevel < 2) qLevel++; else qMode = 'auto';
+  try { localStorage.setItem('ascii-quality', qMode === 'auto' ? 'auto' : String(qLevel)); } catch (_) { }
+  resize(); qBtn(); toast('качество: ' + (qMode === 'auto' ? 'авто' : Q().name));
+};
+function qBtn() { $('bQ').textContent = '⚙ ' + (qMode === 'auto' ? 'авто · ' : '') + Q().name; }
 function setView(a, d) {
   asciiOn = a; detail = d; resize(); viewBtns();
   toast(asciiOn ? 'ASCII · ' + DETAIL.names[detail] : 'без ASCII');
@@ -1707,7 +1747,7 @@ function update(dt, rdt = dt) {
   U.uFogCol.value.setRGB(...Wc.fogc); U.uFogD.value = Wc.fog;
   U.uWindS.value = Wc.wind;
   const wa = -2.6 + Math.sin(T * .05) * .3; U.uWind.value.set(Math.cos(wa), Math.sin(wa) * .5).normalize();
-  rain.geo.instanceCount = zone !== 'dungeon' ? Math.floor(RAIN_MAX * Wc.rain * quality) : 0;
+  rain.geo.instanceCount = zone !== 'dungeon' ? Math.floor(RAIN_MAX * Wc.rain * Q().rain) : 0;
   U.uWet.value = Wc.rain;
   rain.mat.uniforms.uFlash.value = fl; rain.mat.uniforms.uRainH.value = 1;
   snow.geo.instanceCount = zone !== 'dungeon' ? Math.floor(SNOW_MAX * Wc.snow) : 0;
@@ -1813,6 +1853,7 @@ function update(dt, rdt = dt) {
     for (let k = 0; k < 3; k++) emit({ x: p.x + (rnd() - .5) * .3, y: p.y + (rnd() - .5) * .3, z: p.z + (rnd() - .5) * .3, vx: (rnd() - .5) * .8, vy: (rnd() - .5) * .8, vz: (rnd() - .5) * .8, r: c[0], g: c[1], b: c[2], size: .08, life: .3 + rnd() * .3, mode: k ? RUNEM : 1 });
   }
 
+  updatePropView();
   updateItems(dt);
   updateEditor(dt);
   updateEvents(dt);
@@ -1962,10 +2003,10 @@ const blurMat = new THREE.ShaderMaterial({
   }`,
 });
 const finalMat = new THREE.ShaderMaterial({
-  uniforms: { tCell: { value: null }, tAux: { value: null }, uDirV: { value: SHAPES.length + 2 }, uT: U.uTime, tRaw: { value: null }, uRaw: { value: 0 }, tAtlas: { value: atlas }, tBloom: { value: null }, uCellPx: { value: new THREE.Vector2() }, uGridPx: { value: new THREE.Vector2() }, uGlyphN: { value: GLYPHS.length }, uBloomK: { value: .95 } },
+  uniforms: { tCell: { value: null }, tAux: { value: null }, uDirV: { value: SHAPES.length + 2 }, uT: U.uTime, uNb: { value: 1 }, tRaw: { value: null }, uRaw: { value: 0 }, tAtlas: { value: atlas }, tBloom: { value: null }, uCellPx: { value: new THREE.Vector2() }, uGridPx: { value: new THREE.Vector2() }, uGlyphN: { value: GLYPHS.length }, uBloomK: { value: .95 } },
   vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: /* glsl */`
-  uniform sampler2D tCell, tAtlas, tBloom, tRaw, tAux; uniform vec2 uCellPx, uGridPx; uniform float uGlyphN, uBloomK, uRaw, uDirV, uT;
+  uniform sampler2D tCell, tAtlas, tBloom, tRaw, tAux; uniform vec2 uCellPx, uGridPx; uniform float uGlyphN, uBloomK, uRaw, uDirV, uT; uniform int uNb;
   void main(){
     vec2 fc = gl_FragCoord.xy, cf = fc/uCellPx;
     if(uRaw > .5){
@@ -1978,6 +2019,7 @@ const finalMat = new THREE.ShaderMaterial({
     ivec2 gmax = ivec2(uGridPx/uCellPx) - 1;
     vec3 acc = vec3(0.);
     for(int dy=-1; dy<=1; dy++) for(int dx=-1; dx<=1; dx++){
+      if(abs(dx) > uNb || abs(dy) > uNb) continue;
       ivec2 nc = cell + ivec2(dx,dy);
       if(nc.x<0 || nc.y<0 || nc.x>gmax.x || nc.y>gmax.y) continue;
       vec4 cv = texelFetch(tCell, nc, 0);
@@ -2020,7 +2062,7 @@ function pass(mat, target) { quad.material = mat; renderer.setRenderTarget(targe
 function makeRT(w, h, opts) { return new THREE.WebGLRenderTarget(Math.max(1, w), Math.max(1, h), Object.assign({ depthBuffer: false }, opts)); }
 function resize() {
   W = innerWidth; H = innerHeight;
-  DPR = Math.min(2, devicePixelRatio || 1) * (quality < 1 ? .75 : 1);
+  DPR = Math.min(Q().dpr, devicePixelRatio || 1);
   renderer.setPixelRatio(DPR); renderer.setSize(W, H, false);
   const small = Math.min(W, H) < 600;
   cellW = (small ? DETAIL.small : DETAIL.big)[detail]; cellH = Math.round(cellW * 1.75);
@@ -2038,7 +2080,9 @@ function resize() {
   U.uRes.value.set(cols * cellW, rows * cellH);
   finalMat.uniforms.uCellPx.value.set(cellW * DPR, cellH * DPR);
   finalMat.uniforms.uGridPx.value.set(cols * cellW * DPR, rows * cellH * DPR);
-  grass.geo.instanceCount = Math.floor(grass.N * (small ? .55 : 1) * quality);
+  grass.geo.instanceCount = Math.floor(grass.N * (small ? .7 : 1) * Q().grass);
+  finalMat.uniforms.uNb.value = Q().nb;
+  propCenter = null;
   if (!asciiOn) {
     const rs = Math.min(1, 1.6 / DPR);
     // 8-bit + MSAA works everywhere (half-float MSAA is not supported on some iPhones)
@@ -2061,7 +2105,7 @@ function render() {
     finalMat.uniforms.tRaw.value = rawRT.texture;
   }
   const bw = bA.width, bh = bA.height;
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < Q().bloom; i++) {
     blurMat.uniforms.tSrc.value = bA.texture; blurMat.uniforms.uDir.value.set((1 + i) / bw, 0); pass(blurMat, bB);
     blurMat.uniforms.tSrc.value = bB.texture; blurMat.uniforms.uDir.value.set(0, (1 + i) / bh); pass(blurMat, bA);
   }
@@ -2072,19 +2116,24 @@ function render() {
 }
 
 /* ---------- loop with simple adaptive quality ---------- */
-let last0 = performance.now(), last = performance.now(), perfT = 0, perfN = 0, perfSum = 0;
+let last0 = performance.now(), last = performance.now(), perfT = 0, perfN = 0, perfSum = 0, qUp = 0;
 function frame(now) {
   const dt = clamp((now - last) / 1000, 0, .05); last = now;
   update(dt, clamp((now - last0) / 1000, 0, .2)); last0 = now; render();
-  if (quality === 1 && T > 2) {
+  if (qMode === 'auto' && T > 2 && !document.hidden) {     // step quality down while frames are slow (>33 ms), up if very fast
     perfT += dt; perfN++; perfSum += dt;
-    if (perfT > 3) { if (perfSum / perfN > .034) { quality = .55; resize(); } perfT = perfN = perfSum = 0; if (T > 12) perfT = -1e9; }
+    if (perfT > 2.5) {
+      const avg = perfSum / perfN;
+      if (avg > .034 && qLevel > 0) { qLevel--; resize(); qBtn(); }
+      else if (avg < .019 && qLevel < 2 && qUp++ < 2) { qLevel++; resize(); qBtn(); }
+      perfT = perfN = perfSum = 0;
+    }
   }
   requestAnimationFrame(frame);
 }
 evLoad(MAP.events || DEFAULT_EVENTS);
 loadGame(); renderInv(); renderQuests(); rebuildProps();
-resize(); hud(); viewBtns(); toast('Шепчущий лес');
+resize(); hud(); viewBtns(); qBtn(); toast('Шепчущий лес');
 say('Система', 'добро пожаловать в Шепчущий лес. Руины — по тропе вправо.', '#9ab');
 setTimeout(() => emitEvent('start'), 600);
 window.__game = { emitEvent, EV, MAP: () => MAP, select: id => select(MAP.props.find(p => p.id === id) || null), setEditor, terH, items: () => worldItems.map(plainItem), propsCount: () => MAP.props.length, P, setWx, enter: z => enterZone(z), cast: () => cast(null), get zone() { return zone; } };
