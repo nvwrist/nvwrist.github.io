@@ -32,7 +32,7 @@ Camera: high and centred on the hero like the reference — forest pitch .98 rad
 - Trees: 4 species in `TREES` (oak, poplar, young, old) — trunk + branches + crown blobs, chosen by `treeKind(p)` (`p.v` or id-based, switchable in the inspector). Crowns are cut into see-through leaf clumps by 3D noise (`vnoise3` in `STD_FS`) and printed with the foliage glyph set.
 
 - Forest: `pathZ(x)` path (same formula in JS and GLSL), trees/rocks instanced, collision via `circles` (spatial hash) + `boxes`. Ruins door at `DOOR`, campfire at `CAMP`.
-- Grass: 70k instanced blades wrapped around `uFocus` in a `GRASS_TILE` square; wind = travelling noise gusts + flutter, pushed away from `uPlayer`. Excluded on the path, ruins box and campfire.
+- Grass: 90k instanced blades (only 12–30 % drawn per `QUAL.grass`), short and soft: wind = slow travelling gusts + one shared wave (no per-blade flutter), stroke angle quantised to 4 steps, strokes dimmer than letters. Wrapped around `uFocus` in a `GRASS_TILE` square, pushed away from `uPlayer`. Excluded on the path, ruins box and campfire.
 - Weather presets `WX` (keys 1–5): rain/snow instanced streaks wrapped around the camera, lightning `flash`, fog. Values are lerped into `Wc`.
 - Dungeon: 48×48 tile map (`TS = 2` m), instanced floor/walls, braziers, monsters with glowing eyes, exit ring `D.exit`.
 - Characters: `makeCharacter()` builds the low-poly mage (robe, mantle, cloak, beard, hat with bent tip, sleeves, hands, boots, staff + crystal `orbM`). `animChar()` animates walk, cast (right arm), cloak and hat tip. Player and NPCs share it; colours via options.

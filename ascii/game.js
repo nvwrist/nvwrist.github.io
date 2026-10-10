@@ -39,9 +39,9 @@ try { const v = JSON.parse(localStorage.getItem('ascii-view6') || '{}'); if (typ
 let sceneRT, ovRT, cellRT, bA, bB, cellW = 5, cellH = 8.75, cols = 1, rows = 1, sScale = 1;
 /* quality presets for weak phones: pixel ratio, grass share, prop draw radius, glyph overlap, bloom passes, particles */
 const QUAL = [
-  { name: 'низкое',  dpr: 1,   ss: 1,    msaa: 0, grass: .35, view: 38, nb: 0, bloom: 1, rain: .4, parts: 1500 },
-  { name: 'среднее', dpr: 1.5, ss: 1.25, msaa: 4, grass: .65, view: 52, nb: 1, bloom: 1, rain: .7, parts: 3000 },
-  { name: 'высокое', dpr: 2,   ss: 1.5,  msaa: 4, grass: 1,   view: 70, nb: 1, bloom: 2, rain: 1,  parts: 5000 },
+  { name: 'низкое',  dpr: 1,   ss: 1,    msaa: 0, grass: .12, view: 38, nb: 0, bloom: 1, rain: .4, parts: 1500 },
+  { name: 'среднее', dpr: 1.5, ss: 1.25, msaa: 4, grass: .2, view: 52, nb: 1, bloom: 1, rain: .7, parts: 3000 },
+  { name: 'высокое', dpr: 2,   ss: 1.5,  msaa: 4, grass: .3, view: 70, nb: 1, bloom: 2, rain: 1,  parts: 5000 },
 ];
 try { const q = localStorage.getItem('ascii-quality'); if (q && q !== 'auto') { qMode = 'fixed'; qLevel = clamp(+q | 0, 0, 2); } } catch (_) { }
 if (qMode === 'auto') {                                   // first guess from the device, then adapt to the measured frame time
@@ -346,7 +346,7 @@ const grass = (() => {
       vec2 c = uFocus.xz + uGOff;
       vec2 root = c + mod(aI.xy - c + uTile*.5, uTile) - uTile*.5;
       vec2 tsw = terS(root); float ty = tsw.x;
-      float h = .36 + aI.w*.5;
+      float h = .24 + aI.w*.28;
       h *= 1. - smoothstep(.12, .4, tsw.y);
       h *= smoothstep(1.3, 2.3, abs(root.y - pathZ(root.x)));
       if(root.x>uB0.x && root.x<uB1.x && root.y>uB0.y && root.y<uB1.y) h = 0.;
@@ -355,12 +355,12 @@ const grass = (() => {
       float edge = smoothstep(uTile*.5, uTile*.36, length(root-c));
       h *= edge;
       float y = position.y;
-      // wind: travelling gusts + per-blade flutter
+      // wind: slow travelling gusts, no per-blade flutter (it made the strokes shimmer)
       float gust = noise(root*.11 - uWind*uTime*1.7);
-      gust = gust*gust*1.1;
-      float flutter = sin(uTime*(2.6+aV) + aV*6.28 + dot(root,vec2(.7,.4)))*.12;
+      gust = gust*gust*.7;
+      float flutter = sin(uTime*.9 + dot(root,vec2(.12,.08)))*.06;   // one slow wave shared by neighbours
       float bend = (gust + flutter + .2) * (.25 + uWindS) ;
-      vec2 bv = uWind*bend*.4 + vec2(cos(aI.z*1.7), sin(aI.z*1.7))*(.04 + .12*aV);   // own random lean per blade
+      vec2 bv = uWind*bend*.4 + vec2(cos(aI.z*1.7), sin(aI.z*1.7))*(.02 + .05*aV);   // own random lean per blade
       // push away from the player
       vec2 dp = root - uPlayer.xz; float dl = length(dp);
       bv += (dl>1e-3 ? dp/dl : vec2(0.)) * clamp(1.-dl/1.4,0.,1.)*1.8;
@@ -392,8 +392,10 @@ const grass = (() => {
       vec3 c = base*Lc*1.2 + vec3(.55,.7,.6)*sheen*(uAmb*2. + .12) + tipc*vH*vH*uMoonCol*.25;
       // contact shadow under the hero
       float sh = smoothstep(1.1, .25, length(vRoot - uPlayer.xz)); c *= 1. - sh*.45*(1. - vH*.5);
-      c = uAscii > .5 ? pow(c*3.1, vec3(.85))*vec3(.72, 1.1, .66) : c;
-      gl_FragColor = vec4(fogIt(c,vP), .1 + .8*clamp(vAng, 0., .999));
+      c = uAscii > .5 ? pow(c*2.4, vec3(.9))*vec3(.72, 1.1, .66) : c;
+      // stroke angle in 4 steps: small wind changes no longer flip the glyph every frame
+      float qa = (floor(clamp(vAng, 0., .999)*4.) + .5)/4.;
+      gl_FragColor = vec4(fogIt(c,vP), .1 + .8*qa);
     }`,
   });
   const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false;
@@ -2031,7 +2033,7 @@ const finalMat = new THREE.ShaderMaterial({
         bool stroke = g > 199.5;
         float h1 = fract(sin(dot(vec2(nc), vec2(12.9898,78.233)))*43758.5453), h2 = fract(h1*91.7 + .13);
         vec2 jit; float rot; vec2 sc;
-        if(stroke){ rot = (g - 200.)/50.*3.14159265 - 1.5707963; g = uDirV; jit = vec2(0.); sc = vec2(1., .82 + h1*.38); }
+        if(stroke){ rot = (g - 200.)/50.*3.14159265 - 1.5707963; g = uDirV; jit = vec2(0.); sc = vec2(1.); }
         else { jit = (vec2(h1,h2)-.5)*vec2(.14,.09) + vec2(sin(uT*.9 + h2*40.), cos(uT*1.1 + h1*27.))*.03; rot = (h2-.5)*.1 + sin(uT*1.3 + h1*31.)*.03; sc = vec2(1.); }
         vec2 d = fc - (vec2(nc) + .5 + jit)*uCellPx;
         float cs = cos(rot), sn = sin(rot);
@@ -2041,7 +2043,7 @@ const finalMat = new THREE.ShaderMaterial({
         if(lp.x < 0. || lp.y < 0. || lp.x > 1. || lp.y > 1.) continue;
         vec2 ddx = (R*vec2(1.,0.))*k, ddy = (R*vec2(0.,1.))*k;
         float m = textureGrad(tAtlas, vec2((g + lp.x)/uGlyphN, lp.y), vec2(ddx.x/uGlyphN, ddx.y), vec2(ddy.x/uGlyphN, ddy.y)).r;
-        acc = max(acc, cv.rgb*(stroke ? .7 + .8*h2 : 1.)*m);
+        acc = max(acc, cv.rgb*(stroke ? .55 + .3*h2 : 1.)*m);
       }
       c = uBg + acc;
       float l = dot(c, vec3(.3,.59,.11)); c = mix(vec3(l), c, .72)*vec3(.95,1.,1.03);
