@@ -27,6 +27,8 @@ Camera: high and centred on the hero like the reference — forest pitch .98 rad
 
 ## World
 
+- Trees: 4 species in `TREES` (oak, poplar, young, old) — trunk + branches + crown blobs, chosen by `treeKind(p)` (`p.v` or id-based, switchable in the inspector). Crowns are cut into see-through leaf clumps by 3D noise (`vnoise3` in `STD_FS`) and printed with the foliage glyph set.
+
 - Forest: `pathZ(x)` path (same formula in JS and GLSL), trees/rocks instanced, collision via `circles` (spatial hash) + `boxes`. Ruins door at `DOOR`, campfire at `CAMP`.
 - Grass: 70k instanced blades wrapped around `uFocus` in a `GRASS_TILE` square; wind = travelling noise gusts + flutter, pushed away from `uPlayer`. Excluded on the path, ruins box and campfire.
 - Weather presets `WX` (keys 1–5): rain/snow instanced streaks wrapped around the camera, lightning `flash`, fog. Values are lerped into `Wc`.
