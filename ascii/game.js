@@ -420,12 +420,12 @@ grass.mat.uniforms.uB0.value.set(BLD.x0 - .4, BLD.z0 - .4);
 grass.mat.uniforms.uB1.value.set(BLD.x1 + .4, BLD.z1 + .4);
 grass.mat.uniforms.uCamp.value.set(CAMP.x, CAMP.z);
 
-/* grass settings (panel «🌿 трава»), stored in localStorage['ascii-grass-v4'].
+/* grass settings (panel «🌿 трава»), stored in localStorage['ascii-grass-v5'].
    Each row: key, label, min, max, step, default, hint. Defaults = the current look. */
 const GR_UI = [
   ['Форма', [
-    ['dens', 'количество', 0, 1, .01, 1, 'доля от 90 000 травинок (на слабых устройствах ещё меньше)'],
-    ['radius', 'дальность', .3, 1, .02, 1, 'радиус, в котором рисуется трава'],
+    ['dens', 'количество', 0, 1, .01, .31, 'доля от 90 000 травинок (на слабых устройствах ещё меньше)'],
+    ['radius', 'дальность', .3, 1, .02, .38, 'радиус, в котором рисуется трава'],
     ['h', 'высота', .2, 3, .05, 1, 'общий множитель высоты'],
     ['hVar', 'разброс высоты', 0, 3, .05, 1, '0 — все одинаковые'],
     ['width', 'толщина', .3, 4, .05, 1, 'ширина основания травинки'],
@@ -440,7 +440,7 @@ const GR_UI = [
     ['push', 'отталкивание', 0, 3, .05, 1, 'как сильно героя «раздвигает» траву'],
   ]],
   ['Цвет и свет', [
-    ['br', 'яркость', .2, 3, .05, 1, ''],
+    ['br', 'яркость', .2, 3, .05, 2.5, ''],
     ['gamma', 'гамма', .5, 1.5, .02, 1, 'ниже — светлее и контрастнее, выше — темнее'],
     ['sat', 'насыщенность', 0, 2, .05, 1, '0 — серая'],
     ['base', 'яркость корня', 0, 3, .05, 1, 'тёмный низ травинок'],
@@ -463,7 +463,7 @@ const GR_UI = [
 ];
 const GR_DEF = {}; for (const [, rows] of GR_UI) for (const r of rows) GR_DEF[r[0]] = r[5];
 const GR = { ...GR_DEF };
-try { const v = JSON.parse(localStorage.getItem('ascii-grass-v4') || '{}'); for (const k in GR_DEF) if (typeof v[k] === 'number' && isFinite(v[k])) GR[k] = v[k]; } catch (_) { }
+try { const v = JSON.parse(localStorage.getItem('ascii-grass-v5') || '{}'); for (const k in GR_DEF) if (typeof v[k] === 'number' && isFinite(v[k])) GR[k] = v[k]; } catch (_) { }
 function applyGrass() {
   U.uGA.value.set(GR.h, GR.hVar, GR.width, GR.lean);
   U.uGB.value.set(GR.wind, GR.gustSpd, GR.flutter, GR.push);
@@ -1171,7 +1171,7 @@ $('bQ').onclick = () => {
 };
 {
   const box = $('grBody'), fmt = (v, st) => (st >= 1 ? String(Math.round(v)) : v.toFixed(2));
-  const save = () => { try { localStorage.setItem('ascii-grass-v4', JSON.stringify(GR)); } catch (_) { } };
+  const save = () => { try { localStorage.setItem('ascii-grass-v5', JSON.stringify(GR)); } catch (_) { } };
   const ins = [];
   for (const [title, rows] of GR_UI) {
     const hd = document.createElement('h4'); hd.textContent = title; box.appendChild(hd);
@@ -1186,7 +1186,7 @@ $('bQ').onclick = () => {
   }
   $('bGr').onclick = () => { const g = $('gr'); g.style.display = g.style.display === 'block' ? 'none' : 'block'; };
   $('grClose').onclick = () => { $('gr').style.display = 'none'; };
-  $('grReset').onclick = () => { Object.assign(GR, GR_DEF); ins.forEach(f => f()); applyGrass(); try { localStorage.removeItem('ascii-grass-v4'); } catch (_) { } };
+  $('grReset').onclick = () => { Object.assign(GR, GR_DEF); ins.forEach(f => f()); applyGrass(); try { localStorage.removeItem('ascii-grass-v5'); } catch (_) { } };
   $('grCopy').onclick = async () => {
     const t = JSON.stringify(GR);
     try { await navigator.clipboard.writeText(t); toast('настройки травы скопированы'); } catch (_) { prompt('Настройки травы (JSON):', t); }
