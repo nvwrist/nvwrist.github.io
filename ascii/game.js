@@ -33,15 +33,15 @@ renderer.setClearColor(0x000000, 1);
 const canHalf = renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float');
 
 const SX = 3, SY = 6;                         // scene texels per glyph cell (3×3 sub-zones of 1×2 texels)
-let W, H, DPR, cellW, cellH, cols, rows, quality = 1, qLevel = 2, qMode = 'auto', asciiOn = true, detail = 1, rawRT = null;
-const DETAIL = { names: ['крупно', 'средне', 'мелко', 'ультра'] }, CELLK = [1.45, 1, .74, .55];
-try { const v = JSON.parse(localStorage.getItem('ascii-view4') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 3) detail = v.detail; } catch (_) { }
-let sceneRT, bA, bB;
+let W, H, DPR, quality = 1, qLevel = 2, qMode = 'auto', asciiOn = true, detail = 1, rawRT = null;
+const DETAIL = { big: [9, 6, 5, 4], small: [8, 5, 4, 3], names: ['крупно', 'средне', 'мелко', 'ультра'] };
+try { const v = JSON.parse(localStorage.getItem('ascii-view5') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 3) detail = v.detail; } catch (_) { }
+let sceneRT, ovRT, cellRT, bA, bB, cellW = 5, cellH = 8.75, cols = 1, rows = 1, sScale = 1;
 /* quality presets for weak phones: pixel ratio, grass share, prop draw radius, glyph overlap, bloom passes, particles */
 const QUAL = [
-  { name: 'низкое',  dpr: 1,   msaa: 0, grass: .35, view: 38, nb: 0, bloom: 1, rain: .4, parts: 1500 },
-  { name: 'среднее', dpr: 1.5, msaa: 4, grass: .65, view: 52, nb: 1, bloom: 1, rain: .7, parts: 3000 },
-  { name: 'высокое', dpr: 2,   msaa: 4, grass: 1,   view: 70, nb: 1, bloom: 2, rain: 1,  parts: 5000 },
+  { name: 'низкое',  dpr: 1,   ss: 1,    msaa: 0, grass: .35, view: 38, nb: 0, bloom: 1, rain: .4, parts: 1500 },
+  { name: 'среднее', dpr: 1.5, ss: 1.25, msaa: 4, grass: .65, view: 52, nb: 1, bloom: 1, rain: .7, parts: 3000 },
+  { name: 'высокое', dpr: 2,   ss: 1.5,  msaa: 4, grass: 1,   view: 70, nb: 1, bloom: 2, rain: 1,  parts: 5000 },
 ];
 try { const q = localStorage.getItem('ascii-quality'); if (q && q !== 'auto') { qMode = 'fixed'; qLevel = clamp(+q | 0, 0, 2); } } catch (_) { }
 if (qMode === 'auto') {                                   // first guess from the device, then adapt to the measured frame time
@@ -116,11 +116,10 @@ const MAXL = 8;
 const RAMP_SRC = " .`',:;-~=+*ivxcunoszeawrdbpqgkhyQO0&%$#8@WM";
 const WRAMP = [...new Set(RAMP_SRC)].map(c => SHAPES.indexOf(c)).sort((a, b) => cover[a] - cover[b]);
 const GI = c => SHAPES.indexOf(c);
-const LEAFG = [...'.:oO0Q@8'].map(GI), FIREG = [...'@$&%#*'].map(GI), SMALLG = [...'*.+o'].map(GI);
+const FIREG = [...'@$&%#*'].map(GI), SMALLG = [...'*.+o'].map(GI);
 const U = {
-  tGlyph: { value: atlas }, uGlyphN: { value: GLYPHS.length }, uAscii: { value: 1 }, uCellK: { value: 1 },
-  uRamp: { value: WRAMP.concat(new Array(48 - WRAMP.length).fill(0)) }, uRampN: { value: WRAMP.length }, uLeafG: { value: LEAFG },
-  uBg: { value: new THREE.Color(.012, .015, .03) },
+  tGlyph: { value: atlas }, uGlyphN: { value: GLYPHS.length }, uAscii: { value: 1 },
+  tSD: { value: null }, uOvRes: { value: new THREE.Vector2(1, 1) }, uDT: { value: 0 }, uCN: { value: .3 }, uCF: { value: 200 },
   uTime: { value: 0 },
   uAmb: { value: new THREE.Color(.1, .12, .18) },
   uMoonDir: { value: new THREE.Vector3(.35, .85, .4).normalize() },
@@ -169,7 +168,7 @@ uniform vec3 uLP[${MAXL}]; uniform vec3 uLC[${MAXL}]; uniform float uLR[${MAXL}]
 uniform vec3 uFogCol; uniform float uFogD; uniform vec2 uWind; uniform float uWindS;
 uniform vec3 uPlayer; uniform vec3 uFocus; uniform vec2 uRes; uniform float uWet; uniform vec3 uPN;
 uniform highp sampler2D tTer;
-uniform sampler2D tGlyph; uniform float uGlyphN, uAscii, uCellK; uniform float uRamp[48]; uniform int uRampN; uniform float uLeafG[8]; uniform vec3 uBg;
+uniform sampler2D tGlyph; uniform float uGlyphN, uAscii;
 vec2 terS(vec2 xz){
   vec2 g = clamp(xz + 128., 0., 255.999); ivec2 i = ivec2(floor(g)); vec2 f = fract(g);
   vec2 a = texelFetch(tTer, i, 0).rg, b = texelFetch(tTer, i+ivec2(1,0), 0).rg, c = texelFetch(tTer, i+ivec2(0,1), 0).rg, d = texelFetch(tTer, i+ivec2(1,1), 0).rg;
@@ -193,32 +192,10 @@ vec3 fogIt(vec3 c, vec3 p){ float d=length(p-cameraPosition); float f=1.-exp(-ma
 float pathZ(float x){ return sin(x*.05)*6.+sin(x*.13)*1.5; }
 `;
 
-const GLYPHF = /* glsl */`
-// glyph cell on a surface: triplanar world grid, returns grid coords; cen = cell centre (shading is done there,
-// so every glyph has one flat colour like a real character)
-vec2 cellGrid(vec3 p, vec3 n, float k, out vec3 cen){
-  vec2 cs = vec2(.085, .15)*k*uCellK; vec3 a = abs(n);
-  if(a.y >= a.x && a.y >= a.z){ cs.y *= 1.5; vec2 w = vec2(p.x, -p.z)/cs; vec2 cw = (floor(w)+.5)*cs; cen = vec3(cw.x, p.y, -cw.y); return w; }
-  if(a.x >= a.z){ float s = n.x >= 0. ? 1. : -1.; vec2 w = vec2(-p.z*s, p.y)/cs; vec2 cw = (floor(w)+.5)*cs; cen = vec3(p.x, cw.y, -cw.x*s); return w; }
-  float s = n.z >= 0. ? 1. : -1.; vec2 w = vec2(p.x*s, p.y)/cs; vec2 cw = (floor(w)+.5)*cs; cen = vec3(cw.x*s, cw.y, p.z); return w;
-}
-float glyphAt(vec2 w, float lum, int set){
-  vec2 dx = dFdx(w), dy = dFdy(w);
-  vec2 id = floor(w), f = fract(w);
-  float h = hash(id + 3.7), g;
-  if(set == 1){ g = uLeafG[int(clamp(lum*7.4 + (h-.5)*2.2, 0., 7.) + .5)]; if(lum < .06) g = 0.; }
-  else if(set == 2){ g = lum < .12 ? 0. : lum < .3 ? 14. : lum < .55 ? 13. : (h < .5 ? 94. : 29.); }
-  else { float mx = float(uRampN - 1); g = uRamp[int(clamp(lum*mx + (h-.5)*3.5, 0., mx) + .5)]; if(lum < (set == 3 ? .2 : .03)) g = 0.; }
-  if(g < .5) return 0.;
-  return textureGrad(tGlyph, vec2((g + f.x)/uGlyphN, f.y), vec2(dx.x/uGlyphN, dx.y), vec2(dy.x/uGlyphN, dy.y)).r;
-}
-vec3 asciiOut(vec3 c, vec2 w, int set){
-  float m = max(max(c.r,c.g),c.b);
-  float lum = clamp(pow(m*1.3, .78), 0., 1.);
-  float gm = glyphAt(w, lum, set);
-  vec3 cn = m > 1e-4 ? c/m*min(1.25, .3 + m*1.5) : c;
-  return mix(uBg, cn, gm);
-}
+const OVF = /* glsl */`
+uniform highp sampler2D tSD; uniform vec2 uOvRes; uniform float uDT, uCN, uCF;
+float linZ(float z){ return uCN*uCF/(uCF - z*(uCF - uCN)); }
+bool behindScene(){ if(uDT < .5) return false; float d = texture2D(tSD, gl_FragCoord.xy/uOvRes).r; return linZ(gl_FragCoord.z) > linZ(d) + .15; }
 `;
 const STD_VS = COMMON + /* glsl */`
 uniform float uSway;
@@ -238,7 +215,7 @@ void main(){
   vec4 vp = viewMatrix*wp; vVD = -vp.z; vCl = projectionMatrix*vp;
   gl_Position = vCl;
 }`;
-const STD_FS = COMMON + GLYPHF + /* glsl */`
+const STD_FS = COMMON + /* glsl */`
 uniform vec3 uColor; uniform vec3 uEmis; uniform float uRim; uniform float uMode; uniform float uPat; uniform vec3 uFill; uniform float uCellS; uniform float uPlain;
 varying vec3 vP; varying vec4 vCl; varying float vVD;
 void main(){
@@ -250,9 +227,7 @@ void main(){
   vec3 n = normalize(cross(dFdx(vP),dFdy(vP)));
   vec3 V = normalize(cameraPosition-vP);
   if(dot(n,V)<0.) n=-n;
-  bool asc = uAscii > .5 && uPlain < .5;
-  vec3 Pc = vP; vec2 gw = vec2(0.);
-  if(asc) gw = cellGrid(vP, n, uCellS, Pc);
+  vec3 Pc = vP;
   float leafK = 1.;
   bool leaf = uMode > .905 && uMode < .935;
   if(leaf){
@@ -262,7 +237,7 @@ void main(){
     float edge = 1. - abs(dot(n, V));
     float th = .47 + edge*.3;
     if(c < th) discard;
-    leafK = .85 + 1.6*(c - th);                       // clump centres brighter, edges darker
+    leafK = .45 + 2.8*(c - th);                       // clump centres brighter, edges darker
   }
   vec3 base = uColor;
   if(uPat>.5 && uPat<1.5){            // bricks
@@ -281,9 +256,8 @@ void main(){
   vec3 L = lightAt(Pc,n) + uFill;
   float rim = pow(1.-max(dot(n,V),0.),2.)*uRim;
   vec3 c = base*L + uEmis + rim*(base+.15)*(uAmb*3.+.25);
-  if(asc) c = asciiOut(c, gw, leaf ? 1 : 0);
   c = fogIt(c,vP);
-  gl_FragColor = vec4(c,1.);
+  gl_FragColor = vec4(c,uMode);
 }`;
 function stdMat({ color = [1, 1, 1], emis = [0, 0, 0], rim = 0, mode = 1, pat = 0, sway = 0, fill = [0, 0, 0], cell = 1, plain = false } = {}) {
   return new THREE.ShaderMaterial({
@@ -303,20 +277,18 @@ dungeon.visible = false;
 const groundMat = new THREE.ShaderMaterial({
   uniforms: { ...U },
   vertexShader: COMMON + `varying vec3 vP; void main(){ vec4 wp=modelMatrix*vec4(position,1.); wp.y = terS(wp.xz).x; vP=wp.xyz; gl_Position=projectionMatrix*viewMatrix*wp; }`,
-  fragmentShader: COMMON + GLYPHF + /* glsl */`
+  fragmentShader: COMMON + /* glsl */`
   varying vec3 vP;
   void main(){
     vec2 tw = terS(vP.xz);
     vec3 nrm = normalize(cross(dFdx(vP), dFdy(vP))); if(nrm.y < 0.) nrm = -nrm;
-    vec3 Pc = vP; vec2 gw = vec2(0.);
-    if(uAscii > .5) gw = cellGrid(vP, nrm, 1.15, Pc);
+    vec3 Pc = vP;
     if(tw.y > .45){
       // water: drifting ripples, moon glints
       float rip = noise(vec2(Pc.x*1.3 + uTime*.5, Pc.z*2.4 - uTime*1.2))*.6 + noise(Pc.xz*4.1 + uTime*vec2(.4,-.9))*.4;
       vec3 wc = vec3(.05,.13,.22)*(.55 + 1.1*rip) + vec3(.3,.42,.6)*pow(rip, 5.)*2.;
       vec3 cw = wc*(lightAt(Pc, vec3(0,1,0))*2. + .15);
-      if(uAscii > .5) cw = asciiOut(cw*1.6, gw, 2);
-      gl_FragColor = vec4(fogIt(cw, vP), 1.); return;
+      gl_FragColor = vec4(fogIt(cw*1.4, vP), .945); return;
     }
     float dp = abs(Pc.z-pathZ(Pc.x));
     vec3 soil = vec3(.012,.022,.015)*(.4+.9*noise(Pc.xz*.8));
@@ -336,7 +308,6 @@ const groundMat = new THREE.ShaderMaterial({
     base = mix(base, vec3(.05,.07,.06), smoothstep(.1,.45,tw.y));       // wet banks
     base *= 1. - smoothstep(1.1, .2, length(Pc.xz - uPlayer.xz))*.5;
     vec3 c = base*lightAt(Pc,nrm);
-    if(uAscii > .5) c = asciiOut(c*1.5, gw, 3);
     gl_FragColor = vec4(fogIt(c,vP),1.);
   }`,
 });
@@ -406,9 +377,10 @@ const grass = (() => {
       vAng = ang/3.14159265; vP = wp; vH = y; vVar = aV; vGust = gust; vRoot = root;
       gl_Position = projectionMatrix*viewMatrix*vec4(wp,1.);
     }`,
-    fragmentShader: COMMON + /* glsl */`
+    fragmentShader: COMMON + OVF + /* glsl */`
     varying vec3 vP; varying float vH; varying float vAng; varying float vVar; varying float vGust; varying vec2 vRoot;
     void main(){
+      if(behindScene()) discard;
       vec3 tipc = vVar < .33 ? vec3(.24,.46,.28) : vVar < .66 ? vec3(.34,.56,.33) : vec3(.46,.6,.34);
       // meadow patches: lush / dry / dark clumps
       float mpatch = noise(vRoot*.07 + 11.), clump = noise(vRoot*.6);
@@ -425,7 +397,7 @@ const grass = (() => {
       gl_FragColor = vec4(fogIt(c,vP), 1.);
     }`,
   });
-  const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false;
+  const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; mesh.layers.set(1);
   forest.add(mesh);
   return { mesh, geo, mat, N };
 })();
@@ -480,7 +452,7 @@ const PGEO = {
   branch: new THREE.CylinderGeometry(.06, .13, 1, 5).translate(0, .5, 0),
 };
 const PMAT = {
-  trunk: stdMat({ color: [.66, .58, .5], pat: 3, rim: .6 }), leaf: stdMat({ color: [.62, .74, .78], pat: 3, sway: 1, rim: .2, mode: .92, cell: .72 }),
+  trunk: stdMat({ color: [.66, .58, .5], pat: 3, rim: .6 }), leaf: stdMat({ color: [.74, .8, .86], pat: 3, sway: 1, rim: .2, mode: .92, cell: .72 }),
   bush: stdMat({ color: [.42, .62, .45], pat: 3, sway: 1 }), rock: stdMat({ color: [.42, .42, .4], pat: 3 }),
   wall: stdMat({ color: [.5, .5, .47], pat: 1 }), crate: stdMat({ color: [.55, .4, .25], pat: 3 }),
   post: stdMat({ color: [.3, .22, .15] }), bowl: stdMat({ color: [.25, .2, .16], emis: [.5, .2, .05] }),
@@ -556,6 +528,8 @@ function smoothstep(a, b, x) { const t = clamp((x - a) / (b - a), 0, 1); return 
 function defaultAreas(id) {
   return [{ id: id++, t: 'area', x: MOUNT.x, z: MOUNT.z, s: 3.5, r: 0, tag: 'summit' }, { id: id++, t: 'area', x: -13.6, z: pathZ(-13.6), s: 3, r: 0, tag: 'stream' }];
 }
+// clearings between groves (like the reference: tree clusters with open meadows)
+const keepTree = (x, z) => vn(x * .085 + 7, z * .085 + 3) * .7 + vn(x * .21 + 1, z * .21 + 9) * .3 > .4;
 function defaultMap() {
   genTerrain();
   const props = [], items = [], R = mulberry(77);
@@ -566,6 +540,7 @@ function defaultMap() {
     if (h2(gx * 7 + 1, gz * 7) > (d - .47) * 3.4 + .06) continue;
     if (Math.abs(z - pathZ(x)) < 3.2 || Math.hypot(x - 1, z - 1) < 6.5 || terW(x, z) > .05 || Math.hypot(x - MOUNT.x, z - MOUNT.z) < 4) continue;
     if (x > BLD.x0 - 6 && x < BLD.x1 + 6 && z > BLD.z0 - 5 && z < BLD.z1 + 6) continue;
+    if (!keepTree(x, z)) continue;
     props.push({ id: id++, t: 'tree', x: +x.toFixed(2), z: +z.toFixed(2), s: +(.75 + h2(gx, gz * 3) * .75).toFixed(2), r: +(h2(gz, gx) * TAU).toFixed(2) });
   }
   for (let i = 0; i < 260; i++) {
@@ -584,7 +559,7 @@ function defaultMap() {
     const x = -4 + j * 3.6 + (R() - .5) * 3, z = pathZ(x) + (R() < .5 ? -1 : 1) * (2 + R() * 2.5);
     items.push({ uid: 'm' + j + '_' + q, d, n, x: +x.toFixed(2), z: +z.toFixed(2), zone: 'forest' });
   } });
-  return { v: 1, nextId: id, props, items, ter: terPack() };
+  return { v: 1, groves: 1, nextId: id, props, items, ter: terPack() };
 }
 let MAP;
 try { MAP = JSON.parse(localStorage.getItem('ascii-map-v1') || 'null'); } catch (_) { MAP = null; }
@@ -594,6 +569,10 @@ else if (!MAP.ter) {                               // older saves: add the mount
   MAP.props = MAP.props.filter(p => !(p.t === 'tree' && terW(p.x, p.z) > .05));
   if (!MAP.props.some(p => p.t === 'area')) { MAP.props.push(...defaultAreas(MAP.nextId)); MAP.nextId += 2; }
 } else terUnpack(MAP.ter);
+if (!MAP.groves) {                                  // once: open clearings in generated forests (user-placed trees have ids above the generated range)
+  MAP.props = MAP.props.filter(p => !(p.t === 'tree' && !p.tag && p.id < 3200 && !keepTree(p.x, p.z)));
+  MAP.groves = 1;
+}
 let staticCircles = null;
 const hiddenTags = {};                             // set by events: show/hide props by tag
 function rebuildProps(exclude = null) {
@@ -603,7 +582,7 @@ function rebuildProps(exclude = null) {
   propBoxes.length = 0;
   for (const p of MAP.props) {
     const def = PROP[p.t]; if (!def || (p.tag && hiddenTags[p.tag])) continue;
-    if (def.area) { const r = new THREE.Mesh(PGEO.ring, PMAT.area); r.position.set(p.x, terH(p.x, p.z) + .08, p.z); r.scale.setScalar(p.s || 3); areaG.add(r); continue; }
+    if (def.area) { const r = new THREE.Mesh(PGEO.ring, PMAT.area); r.position.set(p.x, terH(p.x, p.z) + .08, p.z); r.scale.setScalar(p.s || 3); r.layers.set(1); areaG.add(r); continue; }
     if (p === exclude) continue;
     if ((p.y || 0) > 2) continue;                    // floating things do not block
     const sc = p.s || 1;
@@ -774,6 +753,9 @@ function animChar(c, dt, moving, speed) {
 }
 const orbWorld = (c, out) => c.orbM.getWorldPosition(out);
 /* ---------- particles (billboards, instanced) ---------- */
+// additive colour, alpha untouched: the overlay's alpha stays a pure "opaque geometry" mask for compositing
+const ADD_KEEP_ALPHA = { transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
+  blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor };
 const PMAX = 5000;
 const parts = [];
 const pGeo = new THREE.InstancedBufferGeometry();
@@ -799,19 +781,20 @@ const pMesh = new THREE.Mesh(pGeo, new THREE.ShaderMaterial({
     vC = iCol.rgb; vM = iMode; vQ = position.xy; vG = iG;
     gl_Position = projectionMatrix*viewMatrix*vec4(wp,1.);
   }`,
-  fragmentShader: /* glsl */`
+  fragmentShader: OVF + /* glsl */`
   uniform sampler2D tGlyph; uniform float uGlyphN, uAscii;
   varying vec3 vC; varying float vM; varying vec2 vQ; varying float vG;
   void main(){
+    if(behindScene()) discard;
     float m;
     if(uAscii > .5){ vec2 lp = vQ*.5 + .5; m = texture2D(tGlyph, vec2((vG + lp.x)/uGlyphN, lp.y)).r; }
     else m = 1. - smoothstep(.55, 1., length(vQ));
     if(m < .04) discard;
     gl_FragColor = vec4(vC*m, 1.);
   }`,
-  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  ...ADD_KEEP_ALPHA,
 }));
-pMesh.frustumCulled = false; scene.add(pMesh);
+pMesh.frustumCulled = false; pMesh.layers.set(1); scene.add(pMesh);
 const RUNEM = .05;
 function emit(o) {
   if (parts.length >= Q().parts) return;
@@ -873,21 +856,23 @@ const rain = (() => {
       vec3 d = normalize(vel);
       vec3 vd = normalize(cameraPosition - p);
       vec3 rr = normalize(cross(d, vd));
-      float len = .7 + aO.w*.6;
-      vec3 wp = p + d*(position.y-.5)*len + rr*position.x*.007;
+      float vis = smoothstep(9., 12., length(p - cameraPosition));   // no giant drops right at the camera
+      float len = (.7 + aO.w*.6)*vis;
+      vec3 wp = p + d*(position.y-.5)*len + rr*position.x*.012*vis;
       vec4 c0 = projectionMatrix*viewMatrix*vec4(p,1.), c1 = projectionMatrix*viewMatrix*vec4(p+d,1.);
       vec2 dd = (c1.xy/c1.w - c0.xy/c0.w)*uRes; float ang = atan(dd.y,dd.x); if(ang<0.) ang += 3.14159265;
       vAng = ang/3.14159265; vB = .55 + aO.w*.45 + uFlash; vP = wp;
       gl_Position = projectionMatrix*viewMatrix*vec4(wp,1.);
     }`,
-    fragmentShader: COMMON + /* glsl */`
+    fragmentShader: COMMON + OVF + /* glsl */`
     varying float vAng; varying float vB; varying vec3 vP;
     void main(){
+      if(behindScene()) discard;
       vec3 c = vec3(.50,.58,.72)*vB*(.55 + .7*min(lightAt(vP,vec3(0,1,0)), vec3(1.6)));
       gl_FragColor = vec4(fogIt(c, vP), 1.);
     }`,
   });
-  const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; weatherG.add(mesh);
+  const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; mesh.layers.set(1); weatherG.add(mesh);
   return { geo, mat };
 })();
 const SNOW_MAX = 2500;
@@ -912,14 +897,15 @@ const snow = (() => {
       vec3 r = vec3(viewMatrix[0][0],viewMatrix[1][0],viewMatrix[2][0]);
       vec3 u = vec3(viewMatrix[0][1],viewMatrix[1][1],viewMatrix[2][1]);
       vQ = position.xy;
-      float sz = (uAscii > .5 ? .09 + aO.w*.07 : .04 + aO.w*.04) * smoothstep(3., 5., length(p - cameraPosition));
+      float sz = (uAscii > .5 ? .09 + aO.w*.07 : .04 + aO.w*.04) * smoothstep(9., 12., length(p - cameraPosition));
       gl_Position = projectionMatrix*viewMatrix*vec4(p + (r*position.x*(uAscii > .5 ? .6 : 1.)+u*position.y)*sz,1.);
     }`,
-    fragmentShader: `uniform sampler2D tGlyph; uniform float uGlyphN, uAscii; varying vec2 vQ; varying float vSG;
-      void main(){ float m; if(uAscii > .5){ vec2 lp = vQ*.5+.5; float g = vSG < .55 ? 10. : vSG < .85 ? 79. : 14.; m = texture2D(tGlyph, vec2((g+lp.x)/uGlyphN, lp.y)).r; } else m = 1.-step(1., dot(vQ,vQ));
+    fragmentShader: OVF + `uniform sampler2D tGlyph; uniform float uGlyphN, uAscii; varying vec2 vQ; varying float vSG;
+      void main(){ if(behindScene()) discard; float m; if(uAscii > .5){ vec2 lp = vQ*.5+.5; float g = vSG < .55 ? 10. : vSG < .85 ? 79. : 14.; m = texture2D(tGlyph, vec2((g+lp.x)/uGlyphN, lp.y)).r; } else m = 1.-step(1., dot(vQ,vQ));
         if(m < .1) discard; gl_FragColor = vec4(vec3(.85,.9,1.)*m, 1.); }`,
+    ...ADD_KEEP_ALPHA,
   });
-  const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; weatherG.add(mesh);
+  const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; mesh.layers.set(1); weatherG.add(mesh);
   return { geo };
 })();
 
@@ -951,9 +937,9 @@ const D = { map: null, start: new THREE.Vector3(), exit: new THREE.Vector3(), br
     if (near) walls.push(t2w(x, y));
   }
   const m4 = new THREE.Matrix4();
-  const fl = new THREE.InstancedMesh(new THREE.BoxGeometry(TS, .2, TS), stdMat({ color: [.75, .8, .72], pat: 2 }), floors.length);
+  const fl = new THREE.InstancedMesh(new THREE.BoxGeometry(TS, .2, TS), stdMat({ color: [1.25, 1.35, 1.15], pat: 2 }), floors.length);
   floors.forEach(([x, z], i) => { m4.makeTranslation(x, -.1, z); fl.setMatrixAt(i, m4); });
-  const wl = new THREE.InstancedMesh(new THREE.BoxGeometry(TS, 2.8, TS), stdMat({ color: [.75, .8, .72], pat: 1 }), walls.length);
+  const wl = new THREE.InstancedMesh(new THREE.BoxGeometry(TS, 2.8, TS), stdMat({ color: [1.1, 1.2, 1.05], pat: 1 }), walls.length);
   walls.forEach(([x, z], i) => { m4.makeTranslation(x, 1.4, z); wl.setMatrixAt(i, m4); });
   fl.frustumCulled = wl.frustumCulled = false; dungeon.add(fl, wl);
   const [sx, sz] = t2w(...cen(rooms[0]));
@@ -1123,7 +1109,7 @@ function qBtn() { $('bQ').textContent = '⚙ ' + (qMode === 'auto' ? 'авто �
 function setView(a, d) {
   asciiOn = a; detail = d; resize(); viewBtns();
   toast(asciiOn ? 'ASCII · ' + DETAIL.names[detail] : 'без ASCII');
-  try { localStorage.setItem('ascii-view4', JSON.stringify({ ascii: asciiOn, detail })); } catch (_) { }
+  try { localStorage.setItem('ascii-view5', JSON.stringify({ ascii: asciiOn, detail })); } catch (_) { }
 }
 function viewBtns() { $('bAscii').textContent = asciiOn ? '▦ ASCII: вкл' : '▦ ASCII: выкл'; $('bDet').textContent = '◫ ' + DETAIL.names[detail]; $('bDet').style.display = asciiOn ? '' : 'none'; }
 canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -1395,9 +1381,9 @@ document.querySelectorAll('.edTabs button').forEach(b => b.onclick = () => {
   ED.tab = b.dataset.tab; if (ED.tab === 'ter') select(null); edRenderTools();
 });
 const cursor = new THREE.Mesh(PGEO.ring, stdMat({ color: [0, 0, 0], emis: [.4, 1.4, 1.2], plain: true }));
-cursor.material.depthTest = false; cursor.renderOrder = 10; cursor.visible = false; scene.add(cursor);
+cursor.material.depthTest = false; cursor.renderOrder = 10; cursor.visible = false; cursor.layers.set(1); scene.add(cursor);
 const selRing = new THREE.Mesh(PGEO.ring, stdMat({ color: [0, 0, 0], emis: [1.6, 1.3, .3], plain: true }));
-selRing.material.depthTest = false; selRing.renderOrder = 10; selRing.visible = false; scene.add(selRing);
+selRing.material.depthTest = false; selRing.renderOrder = 10; selRing.visible = false; selRing.layers.set(1); scene.add(selRing);
 function setEditor(on) {
   if (on && zone !== 'forest') { toast('редактор работает в лесу'); return; }
   ED.on = on; document.body.classList.toggle('editing', on);
@@ -1750,7 +1736,7 @@ function pushLights() {
 
 /* ---------- update ---------- */
 function turn(a, b, k) { let d = b - a; d = Math.atan2(Math.sin(d), Math.cos(d)); return a + d * k; }
-const emitAcc = { v: 0 }; let edZoom = 1, edPitch = 0;
+const emitAcc = { v: 0 }; let edZoom = 1, edPitch = 0; const clearCol = new THREE.Color();
 function update(dt, rdt = dt) {
   T += dt; U.uTime.value = T;
   P.cd -= dt; P.sayT -= dt; P.inv -= dt; P.hurt -= dt;
@@ -1786,19 +1772,19 @@ function update(dt, rdt = dt) {
     if (zone === 'dungeon' && Math.hypot(P.x - D.exit.x, P.z - D.exit.z) < .8) startTransition('forest');
   }
 
-  /* camera */
-  const fk = 1 - Math.exp(-dt * 4.5);
+  /* camera (real frame time, so it never lags behind on slow phones) */
+  const fk = 1 - Math.exp(-fdt * 4.5);
   focus.x = lerp(focus.x, ED.on ? ED.fx : P.x, fk); focus.z = lerp(focus.z, ED.on ? ED.fz : P.z, fk);
   U.uFocus.value.copy(focus);
   const aspect = W / H;
   edZoom = lerp(edZoom, ED.on ? ED.zoom : 1, fk);
   edPitch = lerp(edPitch, ED.on ? 1 : 0, fk);
   focus.y = lerp(focus.y, groundY(focus.x, focus.z), fk);
-  const dist = lerp(aspect < 1 ? 10.5 : 9.5, 14, edPitch) * edZoom, pitch = lerp(zone === 'dungeon' ? .8 : .6, 1.0, edPitch);
-  camera.position.set(focus.x, focus.y + Math.sin(pitch) * dist + .6, focus.z + Math.cos(pitch) * dist);
-  camera.lookAt(focus.x, focus.y + 1.3 - edPitch * .3, focus.z);
-  grass.mat.uniforms.uGOff.value.set(0, -9 * (1 - edPitch));
-  renderer.setClearColor(new THREE.Color(...Wc.fogc), 1);
+  const dist = lerp(aspect < 1 ? 18 : 16, 22, edPitch) * edZoom, pitch = lerp(zone === 'dungeon' ? 1.22 : .98, 1.15, edPitch);
+  camera.position.set(focus.x, focus.y + Math.sin(pitch) * dist, focus.z + Math.cos(pitch) * dist);
+  camera.lookAt(focus.x, focus.y + .9, focus.z);
+  grass.mat.uniforms.uGOff.value.set(0, -1.5);
+  clearCol.setRGB(...Wc.fogc);
   ground.position.set(Math.round(focus.x), 0, Math.round(focus.z));
   camera.updateMatrixWorld(); tmpV.set(P.x, P.y + 1, P.z).project(camera);
   { const vz = tmpV2.set(P.x, P.y + 1, P.z).applyMatrix4(camera.matrixWorldInverse).z; U.uPN.value.set(tmpV.x, tmpV.y, -vz); }
@@ -1862,7 +1848,7 @@ function update(dt, rdt = dt) {
   hero.g.updateMatrixWorld(true);
   const ob = orbWorld(hero, tmpV2), lf = flick(1, 8);
   const dun = zone === 'dungeon';
-  if (dun) { hero.mOrb.uniforms.uEmis.value.setRGB(1.1, 2.2, .5); L(ob.x, ob.y + .4, ob.z, 9, 1.05 * lf, 1.55 * lf, .45 * lf); }
+  if (dun) { hero.mOrb.uniforms.uEmis.value.setRGB(1.1, 2.2, .5); L(ob.x, ob.y + .4, ob.z, 8.5, 1.5 * lf, 2.3 * lf, .65 * lf); }
   else { hero.mOrb.uniforms.uEmis.value.setRGB(2.2, 1.4, .6); L(ob.x, ob.y + .4, ob.z, 7, .85 * lf, .58 * lf, .32 * lf); }
   if (rnd() < dt * 14) emit({ x: ob.x + (rnd() - .5) * .15, y: ob.y, z: ob.z + (rnd() - .5) * .15, vy: .7, r: dun ? 1 : 2, g: dun ? 2 : 1.3, b: .5, size: .035, life: .6 });
 
@@ -1945,10 +1931,72 @@ function placeTag(el, x, y, z, sayT, txt) {
 const postScene = new THREE.Scene(), postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2)); quad.frustumCulled = false; postScene.add(quad);
 const QUAD_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy,0.,1.); }`;
+const EDGE_IDX2 = [...EDGE].map(GI);
+// one texel per glyph cell: sample the cell (3×6 points = 3×3 zones), choose the glyph, store colour + glyph index
+const cellMat = new THREE.ShaderMaterial({
+  defines: { NRAMP: WRAMP.length, NEDGE: EDGE.length },
+  uniforms: { tScene: { value: null }, tDesc: { value: desc }, uRampIdx: { value: WRAMP }, uEdgeIdx: { value: EDGE_IDX2 }, uCellPx: { value: new THREE.Vector2() }, uSize: { value: new THREE.Vector2() }, uTime: U.uTime },
+  vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
+  fragmentShader: /* glsl */`
+  uniform sampler2D tScene; uniform highp sampler2D tDesc; uniform float uRampIdx[NRAMP]; uniform float uEdgeIdx[NEDGE]; uniform vec2 uCellPx, uSize; uniform float uTime;
+  float hsh(vec2 p){ return fract(sin(dot(p, vec2(27.1,61.7)))*5317.3); }
+  void main(){
+    ivec2 cell = ivec2(gl_FragCoord.xy);
+    vec2 o = vec2(cell)*uCellPx; ivec2 mx = ivec2(uSize) - 1;
+    vec3 sum = vec3(0.); float bl = -1.; vec4 best = vec4(0.);
+    float sub[9]; for(int k=0;k<9;k++) sub[k] = 0.;
+    for(int j=0;j<6;j++) for(int i=0;i<3;i++){
+      ivec2 q = ivec2(o + (vec2(float(i), float(j)) + .5)/vec2(3.,6.)*uCellPx);
+      vec4 t = texelFetch(tScene, clamp(q, ivec2(0), mx), 0);
+      sum += t.rgb; float l = dot(t.rgb, vec3(.3,.59,.11));
+      if(l > bl){ bl = l; best = t; }
+      sub[(2 - j/2)*3 + i] += l*.5;
+    }
+    vec3 avg = sum/18.; float hv = hsh(vec2(cell));
+    float g = 0.; vec3 col;
+    if(best.a > .95){
+      vec3 t0, t1, t2;
+      for(int k=0;k<3;k++){
+        vec3 v = pow(clamp(vec3(sub[k*3], sub[k*3+1], sub[k*3+2])*1.7, 0., 1.), vec3(1.1));
+        if(k==0) t0=v; else if(k==1) t1=v; else t2=v;
+      }
+      float mean = (dot(t0,vec3(1.))+dot(t1,vec3(1.))+dot(t2,vec3(1.)))/9.;
+      float hi = max(max(max(t0.x,t0.y),max(t0.z,t1.x)),max(max(t1.y,t1.z),max(t2.x,max(t2.y,t2.z))));
+      float lo = min(min(min(t0.x,t0.y),min(t0.z,t1.x)),min(min(t1.y,t1.z),min(t2.x,min(t2.y,t2.z))));
+      float ri = clamp(floor(mean*float(NRAMP-1) + (hv-.5)*2.6 + .5), 1., float(NRAMP-1));
+      for(int k=0;k<NRAMP;k++) if(float(k)==ri) g = uRampIdx[k];
+      if(hi - lo > .34){                      // contrast inside the cell: contour glyph whose 3×3 shape fits best
+        int gi = int(g);
+        vec3 a0 = texelFetch(tDesc, ivec2(gi,0), 0).rgb - t0, a1 = texelFetch(tDesc, ivec2(gi,1), 0).rgb - t1, a2 = texelFetch(tDesc, ivec2(gi,2), 0).rgb - t2;
+        float bc = (dot(a0,a0)+dot(a1,a1)+dot(a2,a2))*.85;
+        for(int k=0;k<NEDGE;k++){
+          int sI = int(uEdgeIdx[k]);
+          vec3 d0 = texelFetch(tDesc, ivec2(sI,0), 0).rgb - t0, d1 = texelFetch(tDesc, ivec2(sI,1), 0).rgb - t1, d2 = texelFetch(tDesc, ivec2(sI,2), 0).rgb - t2;
+          float c = dot(d0,d0) + dot(d1,d1) + dot(d2,d2);
+          if(c < bc){ bc = c; g = uEdgeIdx[k]; }
+        }
+      }
+      col = mix(avg, best.rgb, .55);
+    } else if(best.a > .935){                 // water . - ~ =
+      float wl = clamp(dot(avg, vec3(.3,.59,.11))*3., 0., 1.);
+      float hw = hsh(vec2(cell) + vec2(floor(uTime*2.), 0.));
+      g = wl < .12 ? (hw < .5 ? 14. : 0.) : wl < .3 ? 13. : wl < .6 ? 94. : (hw < .5 ? 29. : 94.);
+      col = mix(avg, best.rgb, .5);
+    } else {                                  // foliage: round glyphs . : o O 0 Q @ 8 by light
+      float k = clamp(dot(avg, vec3(.3,.59,.11))*2.9, 0., 1.) + (hv-.5)*.3;
+      g = k < .16 ? 14. : k < .3 ? 26. : k < .5 ? 79. : k < .68 ? (hv < .5 ? 47. : 16.) : k < .85 ? (hv < .5 ? 49. : 16.) : (hv < .6 ? 32. : 24.);
+      col = mix(avg, best.rgb, .5)*1.25;
+    }
+    if(bl < .016 || (best.a > .95 && bl < .05)) g = 0.;
+    float m = max(max(col.r,col.g),col.b);
+    vec3 cc = m > 0. ? col/m * min(1.2, .24 + m*1.55) : col;
+    gl_FragColor = vec4(min(cc, vec3(1.)), g/255.);
+  }`,
+});
 const brightMat = new THREE.ShaderMaterial({
-  uniforms: { tScene: { value: null }, uTh: { value: canHalf ? 1.0 : .82 } }, vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
-  fragmentShader: `uniform sampler2D tScene; uniform float uTh; varying vec2 vUv;
-  void main(){ vec3 c = texture2D(tScene, vUv).rgb; float l = max(max(c.r,c.g),c.b); gl_FragColor = vec4(c*smoothstep(uTh, uTh+.6, l), 1.); }`,
+  uniforms: { tScene: { value: null }, tOv: { value: null }, uOv: { value: 1 }, uTh: { value: .82 } }, vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
+  fragmentShader: `uniform sampler2D tScene, tOv; uniform float uTh, uOv; varying vec2 vUv;
+  void main(){ vec3 c = texture2D(tScene, vUv).rgb + (uOv > .5 ? texture2D(tOv, vUv).rgb : vec3(0.)); float l = max(max(c.r,c.g),c.b); gl_FragColor = vec4(c*smoothstep(uTh, uTh+.6, l), 1.); }`,
 });
 const blurMat = new THREE.ShaderMaterial({
   uniforms: { tSrc: { value: null }, uDir: { value: new THREE.Vector2() } }, vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
@@ -1961,55 +2009,89 @@ const blurMat = new THREE.ShaderMaterial({
   }`,
 });
 const finalMat = new THREE.ShaderMaterial({
-  uniforms: { tScene: { value: null }, tBloom: { value: null }, uBloomK: { value: .7 }, uRaw: { value: 0 } },
+  uniforms: { tCell: { value: null }, tOv: { value: null }, tRaw: { value: null }, tBloom: { value: null }, tAtlas: { value: atlas }, uRaw: { value: 0 }, uBloomK: { value: .8 },
+    uCellPx: { value: new THREE.Vector2() }, uGridPx: { value: new THREE.Vector2() }, uGlyphN: { value: GLYPHS.length }, uBg: { value: new THREE.Color(.04, .046, .09) } },
   vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: /* glsl */`
-  uniform sampler2D tScene, tBloom; uniform float uBloomK, uRaw; varying vec2 vUv;
+  uniform sampler2D tCell, tOv, tRaw, tBloom, tAtlas; uniform float uRaw, uBloomK, uGlyphN; uniform vec2 uCellPx, uGridPx; uniform vec3 uBg;
   void main(){
-    vec3 c = texture2D(tScene, vUv).rgb;
-    if(uRaw > .5){ c = 1. - exp(-c*2.6); c = pow(c, vec3(.85)); }
-    else { float l = dot(c, vec3(.3,.59,.11)); c = mix(vec3(l), c, .74)*vec3(.95,1.,1.02); }
-    c += texture2D(tBloom, vUv).rgb*uBloomK;
-    vec2 q = vUv - .5; c *= 1. - dot(q,q)*.6;
+    vec2 fc = gl_FragCoord.xy, uv = fc/uGridPx;
+    vec3 c;
+    if(uRaw > .5){ c = texture2D(tRaw, uv).rgb; c = 1. - exp(-c*2.6); c = pow(c, vec3(.85)); }
+    else {
+      vec2 cf = fc/uCellPx; vec2 lc = fract(cf);
+      vec4 cv = texelFetch(tCell, ivec2(floor(cf)), 0);
+      float g = floor(cv.a*255. + .5), m = 0.;
+      if(g > .5) m = textureGrad(tAtlas, vec2((g + lc.x)/uGlyphN, lc.y), vec2(1./(uCellPx.x*uGlyphN), 0.), vec2(0., 1./uCellPx.y)).r;
+      c = uBg + cv.rgb*m;
+      float l = dot(c, vec3(.3,.59,.11)); c = mix(vec3(l), c, .72)*vec3(.95,1.,1.03);
+      vec4 ov = texture2D(tOv, uv);
+      c = c*(1. - ov.a) + ov.rgb;
+    }
+    c += texture2D(tBloom, uv).rgb*uBloomK;
+    vec2 q = uv - .5; c *= 1. - dot(q,q)*.55;
     gl_FragColor = vec4(c, 1.);
   }`,
 });
 function pass(mat, target) { quad.material = mat; renderer.setRenderTarget(target); renderer.render(postScene, postCam); }
 
 function makeRT(w, h, opts) { return new THREE.WebGLRenderTarget(Math.max(1, w), Math.max(1, h), Object.assign({ depthBuffer: false }, opts)); }
+const rtDispose = r => { if (r) { r.depthTexture?.dispose(); r.dispose(); } };
 function resize() {
   W = innerWidth; H = innerHeight;
   DPR = Math.min(Q().dpr, devicePixelRatio || 1);
   renderer.setPixelRatio(DPR); renderer.setSize(W, H, false);
   const small = Math.min(W, H) < 600;
-  [sceneRT, bA, bB].forEach(r => r && r.dispose());
-  const pw = Math.round(W * DPR), ph = Math.round(H * DPR);
-  // 8-bit + MSAA works everywhere (half-float MSAA is not supported on some iPhones)
-  sceneRT = makeRT(pw, ph, { depthBuffer: true, samples: Q().msaa, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
-  bA = makeRT(Math.ceil(pw / 4), Math.ceil(ph / 4), { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
-  bB = makeRT(Math.ceil(pw / 4), Math.ceil(ph / 4), { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+  cellW = (small ? DETAIL.small : DETAIL.big)[detail]; cellH = cellW * 1.75;
+  cols = Math.ceil(W / cellW); rows = Math.ceil(H / cellH);
+  sScale = Math.min(Q().ss, Math.max(1, devicePixelRatio || 1));
+  [sceneRT, ovRT, cellRT, bA, bB, rawRT].forEach(rtDispose); rawRT = null;
+  const sw = Math.round(W * sScale), sh = Math.round(H * sScale), db = renderer.getDrawingBufferSize(new THREE.Vector2());
+  const hf = canHalf ? THREE.HalfFloatType : THREE.UnsignedByteType;
+  // scene (solid objects) at a modest resolution — it is quantised into glyph cells anyway; its depth occludes the overlay
+  sceneRT = makeRT(sw, sh, { depthBuffer: true, depthTexture: new THREE.DepthTexture(sw, sh), type: hf, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+  // overlay (grass, rain, snow, sparks) at full resolution, drawn as real thin geometry on top of the glyphs
+  ovRT = makeRT(db.x, db.y, { depthBuffer: true, samples: Q().msaa, type: hf, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+  cellRT = makeRT(cols, rows, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+  bA = makeRT(Math.ceil(sw / 3), Math.ceil(sh / 3), { type: hf, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+  bB = makeRT(Math.ceil(sw / 3), Math.ceil(sh / 3), { type: hf, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+  if (!asciiOn) rawRT = makeRT(db.x, db.y, { depthBuffer: true, samples: 4, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
   camera.aspect = W / H;
-  camera.fov = camera.aspect < 1 ? 58 : 46;
+  camera.fov = camera.aspect < 1 ? 42 : 34;
   camera.updateProjectionMatrix();
-  U.uRes.value.set(W, H);
-  U.uAscii.value = asciiOn ? 1 : 0;
-  U.uCellK.value = CELLK[detail] * (small ? .9 : 1);
+  U.uRes.value.set(W, H); U.uAscii.value = asciiOn ? 1 : 0;
+  U.tSD.value = sceneRT.depthTexture; U.uOvRes.value.set(db.x, db.y); U.uCN.value = camera.near; U.uCF.value = camera.far;
+  cellMat.uniforms.uCellPx.value.set(cellW * sScale, cellH * sScale); cellMat.uniforms.uSize.value.set(sw, sh);
+  finalMat.uniforms.uCellPx.value.set(cellW * db.x / W, cellH * db.y / H); finalMat.uniforms.uGridPx.value.set(db.x, db.y);
+  finalMat.uniforms.uRaw.value = asciiOn ? 0 : 1;
   grass.geo.instanceCount = Math.floor(grass.N * (small ? .8 : 1) * Q().grass);
   propCenter = null;
-  finalMat.uniforms.uRaw.value = asciiOn ? 0 : 1;
-  brightMat.uniforms.uTh.value = .82;
 }
 addEventListener('resize', resize);
 
 function render() {
-  renderer.setRenderTarget(sceneRT); renderer.render(scene, camera);
-  brightMat.uniforms.tScene.value = sceneRT.texture; pass(brightMat, bA);
+  if (asciiOn) {
+    camera.layers.set(0); U.uDT.value = 0;
+    renderer.setClearColor(clearCol, 1); renderer.setRenderTarget(sceneRT); renderer.render(scene, camera);
+    camera.layers.set(1); U.uDT.value = 1;
+    renderer.setClearColor(0x000000, 0); renderer.setRenderTarget(ovRT); renderer.render(scene, camera);
+    camera.layers.set(0);
+    cellMat.uniforms.tScene.value = sceneRT.texture; pass(cellMat, cellRT);
+    brightMat.uniforms.tScene.value = sceneRT.texture; brightMat.uniforms.tOv.value = ovRT.texture; brightMat.uniforms.uOv.value = 1;
+  } else {
+    camera.layers.set(0); camera.layers.enable(1); U.uDT.value = 0;
+    renderer.setClearColor(clearCol, 1); renderer.setRenderTarget(rawRT); renderer.render(scene, camera);
+    camera.layers.set(0);
+    brightMat.uniforms.tScene.value = rawRT.texture; brightMat.uniforms.uOv.value = 0;
+  }
+  pass(brightMat, bA);
   const bw = bA.width, bh = bA.height;
   for (let i = 0; i < Q().bloom; i++) {
     blurMat.uniforms.tSrc.value = bA.texture; blurMat.uniforms.uDir.value.set((1 + i) / bw, 0); pass(blurMat, bB);
     blurMat.uniforms.tSrc.value = bB.texture; blurMat.uniforms.uDir.value.set(0, (1 + i) / bh); pass(blurMat, bA);
   }
-  finalMat.uniforms.tScene.value = sceneRT.texture; finalMat.uniforms.tBloom.value = bA.texture; pass(finalMat, null);
+  finalMat.uniforms.tCell.value = cellRT.texture; finalMat.uniforms.tOv.value = ovRT.texture; finalMat.uniforms.tRaw.value = rawRT?.texture || null;
+  finalMat.uniforms.tBloom.value = bA.texture; pass(finalMat, null);
   // tags
   placeTag(P.tag, P.x, P.y + 2.75, P.z, P.sayT, P.say);
   if (zone === 'forest') for (const n of NPCS) placeTag(n.tag, n.x, terH(n.x, n.z) + 2.75, n.z, n.sayT, n.say);
@@ -2036,5 +2118,5 @@ loadGame(); renderInv(); renderQuests(); rebuildProps();
 resize(); hud(); viewBtns(); qBtn(); toast('Шепчущий лес');
 say('Система', 'добро пожаловать в Шепчущий лес. Руины — по тропе вправо.', '#9ab');
 setTimeout(() => emitEvent('start'), 600);
-window.__game = { emitEvent, EV, MAP: () => MAP, select: id => select(MAP.props.find(p => p.id === id) || null), setEditor, terH, items: () => worldItems.map(plainItem), propsCount: () => MAP.props.length, P, setWx, enter: z => enterZone(z), cast: () => cast(null), get zone() { return zone; } };
+window.__game = { focus, camera, emitEvent, EV, MAP: () => MAP, select: id => select(MAP.props.find(p => p.id === id) || null), setEditor, terH, items: () => worldItems.map(plainItem), propsCount: () => MAP.props.length, P, setWx, enter: z => enterZone(z), cast: () => cast(null), get zone() { return zone; } };
 requestAnimationFrame(frame);

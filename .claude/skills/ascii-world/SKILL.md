@@ -7,24 +7,23 @@ description: Work on ASCII World (/ascii) — the Three.js game rendered as ASCI
 
 Files: `ascii/index.html` (HUD, buttons, CSS; loads `./game.js?v=N` — **bump N on every change** so phones/raw.githack/Pages do not serve a stale script), `ascii/game.js` (everything else, ES module), `ascii/vendor/three.module.min.js` (Three.js r160, vendored).
 
-## Render pipeline — world-space ASCII (like the reference)
+## Render pipeline — screen-space ASCII + real-geometry overlay (matches the reference)
 
-Glyphs are printed **on the surfaces in the 3D world**, not on a screen grid: near objects get big letters, far ones small, slanted with the surface; between glyphs is the dark background `uBg`.
+Glyphs sit in **horizontal rows on a screen grid** (cell `cellW × cellW*1.75` CSS px, `DETAIL.small/big` per «детали» level, default 5 px on phones ≈ 80 columns); only **solid** things are turned into glyphs. Grass, rain, snow, sparks and editor rings are drawn as **real thin geometry on top** — that is what makes the reference look soft.
 
-1. Every surface fragment shader (`STD_FS`, ground) calls `cellGrid(p, n, k, cen)` (in `GLYPHF`, fragment-only because it uses `dFdx`): a triplanar world grid (cell `.085 × .15 m` × `k` × `uCellK`; ground cells 1.5× taller), returns grid coords and the **cell centre**. Pattern + lighting are evaluated at the centre, so each glyph has one flat colour.
-2. `asciiOut(c, w, set)` picks the glyph by brightness and prints it with `textureGrad` on the atlas (mipmaps make far text soft): set 0 = density ramp `WRAMP` (sorted by real ink coverage of the font, per-cell random jitter for letter variety), 1 = foliage `. : o O 0 Q @ 8`, 2 = water `. - ~ =`, 3 = ground (only bright things like cobbles print).
-3. Per-material glyph size: `stdMat({cell})` — scenery 1, tree leaves .72, characters .48, items .4. `plain: true` skips glyphs (editor rings).
-4. Grass = thin real blades (no glyphs), tile shifted ahead of the camera (`uGOff`). Rain = thin streaks. Snow and particles = additive glyph billboards (`*`, `o`, fire `@$&%#*`, runes) — `emit()` assigns `o.g` (atlas index).
-5. Scene → `sceneRT` (full res, 8-bit, MSAA from quality preset) → `brightMat` + `blurMat` bloom → `finalMat` (calm grade, vignette; tone-mapped raw in «ASCII: выкл» mode). `U.uAscii` switches glyphs off everywhere.
-6. Scenery dissolves within 5.5 m of the camera and in a window around the hero when it is in front of them (`uPN`), so the third-person camera is never blocked.
+1. **Scene pass** (`camera.layers = 0`) → `sceneRT` at `W×H × Q().ss` (1–1.5), half-float, `DepthTexture`. Materials write alpha as a glyph-set code: `1` solid (density ramp `WRAMP` sorted by real ink coverage + 3×3 shape match against `EDGE` for contrasty cells), `.92` foliage (`. : o O 0 Q @ 8`), `.945` water (`. - ~ =`).
+2. **Overlay pass** (`layers = 1`: grass mesh, rain, snow, particles `pMesh`, cursor/selRing, area rings) → `ovRT` at full drawing-buffer size with MSAA, cleared to transparent. Overlay fragment shaders include `OVF.behindScene()`: they compare their linear depth with `sceneRT.depthTexture` and discard when hidden behind a solid object (trees hide grass etc.). Opaque overlay (grass, rain) writes alpha 1; additive glyph billboards use `ADD_KEEP_ALPHA` (colour adds, alpha untouched).
+3. **`cellMat` → `cellRT`** (one texel per cell): 3×6 samples of `sceneRT` per cell → avg colour, brightest texel's code, 3×3 zone luminance → glyph index (`a = index/255`) + normalised colour.
+4. **Bloom** from scene + overlay (`brightMat`, threshold .82) → separable blur.
+5. **`finalMat`**: glyph atlas sampled per screen cell over the navy background `uBg`, calm grade, then `ascii*(1-ov.a) + ov.rgb`, + bloom, vignette. «ASCII: выкл» renders both layers into `rawRT` (MSAA) and tone-maps it.
 
-Camera: third person behind the hero (`pitch .6`, dist ≈10.5 on phones, fov 58/46); the editor lerps to a higher top-down view (`edPitch`). Detail button = world glyph scale `CELLK` (крупно 1.45 … ультра .55).
+Camera: high and centred on the hero like the reference — forest pitch .98 rad (~56°), dungeon 1.22, distance 18 (portrait) / 16, fov 42 / 34; editor lerps to pitch 1.15, distance 22 × zoom. Follow uses the real frame time (`fdt`), so it never lags on slow phones. Generated forests have clearings (`keepTree` noise; old maps migrated once via `MAP.groves`).
 
 ## Materials / lighting
 
 - All meshes use `stdMat({color, emis, rim, pat, sway, fill, mode})` (custom GLSL, flat normals via `dFdx/dFdy`). `pat`: 1 bricks, 2 floor slabs, 3 leafy noise. `emis > 1` blooms.
 - Lighting = `uAmb` + moon (`uMoonDir/uMoonCol`) + up to `MAXL = 8` point lights. Each frame call `L(x,y,z,radius,r,g,b)`; `pushLights()` keeps the 8 nearest the player.
-- Glyph brightness curve lives in `asciiOut` (`lum = pow(max*1.3, .78)`, colour normalisation `.3 + m*1.5`) and the ramp jitter in `glyphAt`. Tune there for a globally brighter/denser look; tune per-object colour or `cell` for local changes.
+- Glyph choice/brightness lives in `cellMat` (zone luminance `*1.7`, `pow 1.1`, ramp jitter `(hv-.5)*2.6`, edge threshold `.34`, foliage `*2.9`; colour normalisation `.24 + m*1.55`). Tune there for a globally brighter/denser look; tune per-object colour for local changes. `stdMat({cell})` now only marks scenery (`cell > .6`) for the camera/hero cut-outs.
 
 ## World
 
