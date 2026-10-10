@@ -13,7 +13,7 @@ Files: `ascii/index.html` (HUD, buttons, CSS; loads `./game.js?v=N` — **bump N
    - `a ≈ 1` → hybrid glyph choice: flat cells use the density ramp `RAMP`; cells with contrast inside (max−min of the 3×3 sub-zone luminance > 0.22) are matched by **shape** against `EDGE` glyphs (`_ - / \ | ( ) < > [ ] ' , ^ L J 7 T …`) using 3×3 coverage descriptors (`desc` DataTexture, computed from the atlas at startup). This is what makes silhouettes and edges detailed;
    - `0.1…0.9` → directional stroke `- / | \`, angle = screen-space direction (grass blades, rain);
    - `0.935…0.95` (`.945`) → water `. - ~ =`;
-   - `0.905…0.935` (`mode: .92`) → foliage: round glyphs `. : o O 0 Q @ 8` by light (tree canopies = clusters of round blobs, `CANOPY`);
+   - `0.905…0.935` (`mode: .92`) → foliage: round glyphs `. : o O 0 Q @ 8` by light (trees: 4 species in `TREES` — oak, poplar, young, old — trunk + branches + crown blobs, chosen by `treeKind(p)` = `p.v` or id-based, selectable in the inspector; canopies cut into see-through leaf clumps by 3D noise `vnoise3` in `STD_FS`);
    - `< 0.09` (`RUNEM = .05`) → random rune glyphs (spell particles, portal motes).
 2. **`cellMat` → `cellRT`** (one texel per cell): reads the SX×SY block with `texelFetch`, builds the 3×3 sub-luminances, averages colour, takes the brightest texel's code, stores colour + glyph index (`a = index/255`). Glyph indices refer to `GLYPHS` = all printable ASCII (`SHAPES`, index = charCode−32) + 4 custom strokes (`DIRG`).
 3. **Bloom**: `brightMat` (threshold 1.0 on half-float — only emissive > 1 glows) → 2× separable `blurMat`.
@@ -48,6 +48,12 @@ Camera aspect is `cols*cellW / rows*cellH` (the grid overhangs the screen by < 1
 - **Events & quests**: see `EVENTS.md` next to this file (JSON triggers/conditions/actions, `ascii/events.json`, in-game editor, dialog box `#dlg`, quest tracker `#quests`).
 - **Items** (`ITEMS` registry), world items `worldItems`, inventory `inv` (20 slots). **All item state changes go through `act({type: 'pickup'|'drop'|'move'|'use', …})`** — future network messages. Save: `localStorage['ascii-save-v1']` (`inv`, world items, hp, quest state). Interact prompt `#pick` (key **E**): item pickup or 💬 talk to the nearest NPC.
 - Font: `ascii/vendor/jetbrains-mono-latin-500-normal.woff2` (OFL) loaded with `FontFace` (top-level await) before the glyph atlas is built.
+
+## Performance / quality
+
+- `QUAL` presets (низкое / среднее / высокое): pixel ratio, grass share, prop draw radius (`view`), glyph overlap in `finalMat` (`uNb` 0 = single cell), bloom passes, particle cap, rain share. Button «⚙» cycles авто → низкое → среднее → высокое (`localStorage['ascii-quality']`). Auto: first guess from `deviceMemory`/`hardwareConcurrency`/screen pixels, then steps down when frames > 34 ms and up (max twice) when < 19 ms.
+- Props are instanced only within `Q().view` of the camera (`buildPropMeshes`, rebuilt when the camera moves > 30 % of the radius); collision still covers the whole map. Crown blobs are icosahedron detail 1 — leaf detail comes from the noise cut-out.
+- Grass shading: meadow patches, clumps, wind sheen on bent tips (`vGust`), moon back-light at the tips, contact shadow under the hero (also on the ground).
 
 ## Checklist for changes
 
