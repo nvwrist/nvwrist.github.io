@@ -122,7 +122,7 @@ const U = {
   tSD: { value: null }, uOvRes: { value: new THREE.Vector2(1, 1) }, uDT: { value: 0 }, uCN: { value: .3 }, uCF: { value: 200 },
   uTime: { value: 0 },
   // grass settings (see GR_UI): shape / wind / patches, shading, extras; stroke look shared with rain
-  uGA: { value: new THREE.Vector4() }, uGB: { value: new THREE.Vector4() }, uGC: { value: new THREE.Vector4() }, uGD: { value: new THREE.Vector4() }, uGE: { value: new THREE.Vector4() }, uGF: { value: new THREE.Vector4() },
+  uGA: { value: new THREE.Vector4() }, uGB: { value: new THREE.Vector4() }, uGC: { value: new THREE.Vector4() }, uGD: { value: new THREE.Vector4() }, uGE: { value: new THREE.Vector4() }, uGF: { value: new THREE.Vector4() }, uOl: { value: new THREE.Vector4() },   // uOl = outline: halo, rim, depth threshold
   uSt: { value: new THREE.Vector4() }, uStW: { value: 1 }, uJit: { value: 1 }, uStGain: { value: 1.8 },
   uAmb: { value: new THREE.Color(.1, .12, .18) },
   uMoonDir: { value: new THREE.Vector3(.35, .85, .4).normalize() },
@@ -420,7 +420,7 @@ grass.mat.uniforms.uB0.value.set(BLD.x0 - .4, BLD.z0 - .4);
 grass.mat.uniforms.uB1.value.set(BLD.x1 + .4, BLD.z1 + .4);
 grass.mat.uniforms.uCamp.value.set(CAMP.x, CAMP.z);
 
-/* grass settings (panel «🌿 трава»), stored in localStorage['ascii-grass-v5'].
+/* grass settings (panel «🌿 трава»), stored in localStorage['ascii-grass-v6'].
    Each row: key, label, min, max, step, default, hint. Defaults = the current look. */
 const GR_UI = [
   ['Форма', [
@@ -450,6 +450,11 @@ const GR_UI = [
     ['clump', 'пятнистость', 0, 2, .05, 1, 'тёмные/светлые комки'],
     ['shadow', 'тень героя', 0, 1, .05, .45, ''],
   ]],
+  ['Контуры (cell shading)', [
+    ['olHalo', 'тёмный ореол', 0, 1, .05, .8, 'ячейки дальнего объекта рядом с ближним гаснут — объекты не сливаются'],
+    ['olRim', 'подсветка кромки', 0, 3, .05, .7, 'силуэт ближнего объекта светлее'],
+    ['olThr', 'порог глубины, м', .1, 4, .05, .5, 'насколько ближе должен быть объект, чтобы получить контур'],
+  ]],
   ['Штрихи (трава и дождь)', [
     ['steps', 'углов штриха', 2, 50, 1, 50, 'меньше — спокойнее, 50 — плавно (мерцает)'],
     ['stGain', 'яркость штриха', .3, 4, .05, 1.8, 'в ячейке сетки'],
@@ -463,13 +468,13 @@ const GR_UI = [
 ];
 const GR_DEF = {}; for (const [, rows] of GR_UI) for (const r of rows) GR_DEF[r[0]] = r[5];
 const GR = { ...GR_DEF };
-try { const v = JSON.parse(localStorage.getItem('ascii-grass-v5') || '{}'); for (const k in GR_DEF) if (typeof v[k] === 'number' && isFinite(v[k])) GR[k] = v[k]; } catch (_) { }
+try { const v = JSON.parse(localStorage.getItem('ascii-grass-v6') || '{}'); for (const k in GR_DEF) if (typeof v[k] === 'number' && isFinite(v[k])) GR[k] = v[k]; } catch (_) { }
 function applyGrass() {
   U.uGA.value.set(GR.h, GR.hVar, GR.width, GR.lean);
   U.uGB.value.set(GR.wind, GR.gustSpd, GR.flutter, GR.push);
   U.uGC.value.set(GR.radius, GR.patch, GR.dry, GR.clump);
   U.uGD.value.set(GR.br, GR.gamma, GR.base, GR.sheen);
-  U.uGE.value.set(GR.sat, GR.shadow, Math.max(2, Math.round(GR.steps)), GR.jitter); U.uGF.value.set(GR.tint, 0, 0, 0);
+  U.uGE.value.set(GR.sat, GR.shadow, Math.max(2, Math.round(GR.steps)), GR.jitter); U.uGF.value.set(GR.tint, 0, 0, 0); U.uOl.value.set(GR.olHalo, GR.olRim, GR.olThr, 0);
   U.uSt.value.set(GR.stBr, GR.stVar, GR.stLen, GR.stLenVar); U.uStW.value = GR.stW; U.uJit.value = GR.jit; U.uStGain.value = GR.stGain;
   grass.geo.instanceCount = Math.min(grass.N, Math.floor(grass.N * GR.dens * Q().grass * (Math.min(innerWidth, innerHeight) < 600 ? .7 : 1)));
 }
@@ -1171,7 +1176,7 @@ $('bQ').onclick = () => {
 };
 {
   const box = $('grBody'), fmt = (v, st) => (st >= 1 ? String(Math.round(v)) : v.toFixed(2));
-  const save = () => { try { localStorage.setItem('ascii-grass-v5', JSON.stringify(GR)); } catch (_) { } };
+  const save = () => { try { localStorage.setItem('ascii-grass-v6', JSON.stringify(GR)); } catch (_) { } };
   const ins = [];
   for (const [title, rows] of GR_UI) {
     const hd = document.createElement('h4'); hd.textContent = title; box.appendChild(hd);
@@ -1186,7 +1191,7 @@ $('bQ').onclick = () => {
   }
   $('bGr').onclick = () => { const g = $('gr'); g.style.display = g.style.display === 'block' ? 'none' : 'block'; };
   $('grClose').onclick = () => { $('gr').style.display = 'none'; };
-  $('grReset').onclick = () => { Object.assign(GR, GR_DEF); ins.forEach(f => f()); applyGrass(); try { localStorage.removeItem('ascii-grass-v5'); } catch (_) { } };
+  $('grReset').onclick = () => { Object.assign(GR, GR_DEF); ins.forEach(f => f()); applyGrass(); try { localStorage.removeItem('ascii-grass-v6'); } catch (_) { } };
   $('grCopy').onclick = async () => {
     const t = JSON.stringify(GR);
     try { await navigator.clipboard.writeText(t); toast('настройки травы скопированы'); } catch (_) { prompt('Настройки травы (JSON):', t); }
@@ -2027,10 +2032,10 @@ const EDGE_IDX2 = [...EDGE].map(GI);
 // one texel per glyph cell: sample the cell (3×6 points = 3×3 zones), choose the glyph, store colour + glyph index
 const cellMat = new THREE.ShaderMaterial({
   defines: { NRAMP: WRAMP.length, NEDGE: EDGE.length },
-  uniforms: { tScene: { value: null }, tDesc: { value: desc }, uRampIdx: { value: WRAMP }, uEdgeIdx: { value: EDGE_IDX2 }, uCellPx: { value: new THREE.Vector2() }, uSize: { value: new THREE.Vector2() }, uTime: U.uTime, uStGain: U.uStGain },
+  uniforms: { tScene: { value: null }, tDesc: { value: desc }, uRampIdx: { value: WRAMP }, uEdgeIdx: { value: EDGE_IDX2 }, uCellPx: { value: new THREE.Vector2() }, uSize: { value: new THREE.Vector2() }, uTime: U.uTime, uStGain: U.uStGain, tDepth: U.tSD, uCN: U.uCN, uCF: U.uCF, uOl: U.uOl },
   vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: /* glsl */`
-  uniform sampler2D tScene; uniform highp sampler2D tDesc; uniform float uRampIdx[NRAMP]; uniform float uEdgeIdx[NEDGE]; uniform vec2 uCellPx, uSize; uniform float uTime, uStGain;
+  uniform sampler2D tScene; uniform highp sampler2D tDesc; uniform float uRampIdx[NRAMP]; uniform float uEdgeIdx[NEDGE]; uniform vec2 uCellPx, uSize; uniform float uTime, uStGain, uCN, uCF; uniform highp sampler2D tDepth; uniform vec4 uOl;
   float hsh(vec2 p){ return fract(sin(dot(p, vec2(27.1,61.7)))*5317.3); }
   void main(){
     ivec2 cell = ivec2(gl_FragCoord.xy);
@@ -2081,6 +2086,19 @@ const cellMat = new THREE.ShaderMaterial({
       float k = clamp(dot(avg, vec3(.3,.59,.11))*2.9, 0., 1.) + (hv-.5)*.3;
       g = k < .16 ? 14. : k < .3 ? 26. : k < .5 ? 79. : k < .68 ? (hv < .5 ? 47. : 16.) : k < .85 ? (hv < .5 ? 49. : 16.) : (hv < .6 ? 32. : 24.);
       col = mix(avg, best.rgb, .5)*1.25;
+    }
+    // cell-shading outline from scene depth: the nearer object's silhouette is lit (rim), the farther cells beside it fall dark (halo)
+    if(uOl.x + uOl.y > 0.){
+      ivec2 cc0 = ivec2(o + uCellPx*.5), st = ivec2(uCellPx + .5);
+      float kz = uCF - uCN, d0 = texelFetch(tDepth, clamp(cc0, ivec2(0), mx), 0).r*kz, nearer = 0., farther = 0.;
+      for(int q=0;q<4;q++){
+        ivec2 dq = q==0 ? ivec2(st.x,0) : q==1 ? ivec2(-st.x,0) : q==2 ? ivec2(0,st.y) : ivec2(0,-st.y);
+        float d1 = texelFetch(tDepth, clamp(cc0 + dq, ivec2(0), mx), 0).r*kz;
+        nearer = max(nearer, d1 - d0); farther = max(farther, d0 - d1);
+      }
+      float rim = smoothstep(uOl.z, uOl.z*1.6, nearer), halo = smoothstep(uOl.z, uOl.z*1.6, farther)*uOl.x;
+      col *= (1. + rim*uOl.y)*(1. - halo);
+      if(halo > .85) g = 0.;
     }
     if(bl < .016 || (best.a > .95 && bl < .05)) g = 0.;
     float m = max(max(col.r,col.g),col.b);
