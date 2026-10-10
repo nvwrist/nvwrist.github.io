@@ -121,6 +121,9 @@ const U = {
   tGlyph: { value: atlas }, uGlyphN: { value: GLYPHS.length }, uAscii: { value: 1 },
   tSD: { value: null }, uOvRes: { value: new THREE.Vector2(1, 1) }, uDT: { value: 0 }, uCN: { value: .3 }, uCF: { value: 200 },
   uTime: { value: 0 },
+  // grass settings (see GR_UI): shape / wind / patches, shading, extras; stroke look shared with rain
+  uGA: { value: new THREE.Vector4() }, uGB: { value: new THREE.Vector4() }, uGC: { value: new THREE.Vector4() }, uGD: { value: new THREE.Vector4() }, uGE: { value: new THREE.Vector4() },
+  uSt: { value: new THREE.Vector4() }, uStW: { value: 1 }, uJit: { value: 1 }, uStGain: { value: 1.8 },
   uAmb: { value: new THREE.Color(.1, .12, .18) },
   uMoonDir: { value: new THREE.Vector3(.35, .85, .4).normalize() },
   uMoonCol: { value: new THREE.Color(.3, .35, .45) },
@@ -340,34 +343,35 @@ const grass = (() => {
     side: THREE.DoubleSide,
     vertexShader: COMMON + /* glsl */`
     attribute vec4 aI; attribute float aV;
-    uniform float uTile; uniform vec2 uB0, uB1, uCamp, uGOff;
+    uniform float uTile; uniform vec2 uB0, uB1, uCamp, uGOff; uniform vec4 uGA, uGB, uGC, uGE;
     varying vec3 vP; varying float vH; varying float vAng; varying float vVar; varying float vGust; varying vec2 vRoot;
     void main(){
       vec2 c = uFocus.xz + uGOff;
       vec2 root = c + mod(aI.xy - c + uTile*.5, uTile) - uTile*.5;
       vec2 tsw = terS(root); float ty = tsw.x;
-      float h = .24 + aI.w*.28;
+      float h = (.24 + aI.w*.28*uGA.y)*uGA.x;
       h *= 1. - smoothstep(.12, .4, tsw.y);
       h *= smoothstep(1.3, 2.3, abs(root.y - pathZ(root.x)));
       if(root.x>uB0.x && root.x<uB1.x && root.y>uB0.y && root.y<uB1.y) h = 0.;
       h *= smoothstep(1.2, 2.2, length(root-uCamp));
-      h *= .45 + .85*noise(root*.13 + 3.);
-      float edge = smoothstep(uTile*.5, uTile*.36, length(root-c));
+      h *= mix(1., .45 + .85*noise(root*.13 + 3.), uGC.y);
+      float edge = smoothstep(uTile*.5*uGC.x, uTile*.36*uGC.x, length(root-c));
       h *= edge;
       float y = position.y;
       // wind: slow travelling gusts, no per-blade flutter (it made the strokes shimmer)
-      float gust = noise(root*.11 - uWind*uTime*1.7);
+      float gust = noise(root*.11 - uWind*uTime*1.7*uGB.y);
       gust = gust*gust*.7;
-      float flutter = sin(uTime*.9 + dot(root,vec2(.12,.08)))*.06;   // one slow wave shared by neighbours
-      float bend = (gust + flutter + .2) * (.25 + uWindS) ;
-      vec2 bv = uWind*bend*.4 + vec2(cos(aI.z*1.7), sin(aI.z*1.7))*(.02 + .05*aV);   // own random lean per blade
+      float flutter = sin(uTime*.9 + dot(root,vec2(.12,.08)))*.06*uGB.z
+        + sin(uTime*(2.6+aV) + aV*6.28 + dot(root,vec2(.7,.4)))*.12*uGE.w;   // slow shared wave + optional per-blade flutter
+      float bend = (gust + flutter + .2) * (.25 + uWindS) * uGB.x;
+      vec2 bv = uWind*bend*.4 + vec2(cos(aI.z*1.7), sin(aI.z*1.7))*(.02 + .05*aV)*uGA.w;   // own random lean per blade
       // push away from the player
       vec2 dp = root - uPlayer.xz; float dl = length(dp);
-      bv += (dl>1e-3 ? dp/dl : vec2(0.)) * clamp(1.-dl/1.4,0.,1.)*1.8;
+      bv += (dl>1e-3 ? dp/dl : vec2(0.)) * clamp(1.-dl/1.4,0.,1.)*1.8*uGB.w;
       float bl = min(length(bv), 1.6);
       float droop = 1. - .38*bl;
       float ca = cos(aI.z), sa = sin(aI.z);
-      vec2 side = vec2(ca,sa) * position.x * .026 * (1.-y*.6);
+      vec2 side = vec2(ca,sa) * position.x * .026 * uGA.z * (1.-y*.6);
       vec3 wp = vec3(root.x + side.x + bv.x*y*y*h, ty + y*h*droop, root.y + side.y + bv.y*y*y*h);
       vec3 tip = vec3(root.x + bv.x*h, ty + h*droop, root.y + bv.y*h);
       vec4 c0 = projectionMatrix*viewMatrix*vec4(root.x,ty,root.y,1.);
@@ -379,22 +383,24 @@ const grass = (() => {
     }`,
     fragmentShader: COMMON + OVF + /* glsl */`
     varying vec3 vP; varying float vH; varying float vAng; varying float vVar; varying float vGust; varying vec2 vRoot;
+    uniform vec4 uGC, uGD, uGE;
     void main(){
       vec3 tipc = vVar < .33 ? vec3(.24,.46,.28) : vVar < .66 ? vec3(.34,.56,.33) : vec3(.46,.6,.34);
       // meadow patches: lush / dry / dark clumps
       float mpatch = noise(vRoot*.07 + 11.), clump = noise(vRoot*.6);
-      tipc = mix(tipc, vec3(.5,.58,.3), smoothstep(.62,.85,mpatch)*.6);
-      tipc *= .75 + .45*clump;
-      vec3 base = mix(vec3(.03,.07,.04), tipc, smoothstep(.0,.95,vH));
+      tipc = mix(tipc, vec3(.5,.58,.3), smoothstep(.62,.85,mpatch)*uGC.z);
+      tipc *= mix(1., .75 + .45*clump, uGC.w);
+      vec3 base = mix(vec3(.03,.07,.04)*uGD.z, tipc, smoothstep(.0,.95,vH));
       // light: lamps/moon + wind sheen on bent tips + soft back-light at the tips
       vec3 Lc = lightAt(vP, normalize(vec3(uWind.x*.3, 1., uWind.y*.3)));
-      float sheen = smoothstep(.5, 1.6, vGust) * vH * vH * .55;
+      float sheen = smoothstep(.5, 1.6, vGust) * vH * vH * .55 * uGD.w;
       vec3 c = base*Lc*1.2 + vec3(.55,.7,.6)*sheen*(uAmb*2. + .12) + tipc*vH*vH*uMoonCol*.25;
       // contact shadow under the hero
-      float sh = smoothstep(1.1, .25, length(vRoot - uPlayer.xz)); c *= 1. - sh*.45*(1. - vH*.5);
-      c = uAscii > .5 ? pow(c*2.4, vec3(.9))*vec3(.72, 1.1, .66) : c;
-      // stroke angle in 4 steps: small wind changes no longer flip the glyph every frame
-      float qa = (floor(clamp(vAng, 0., .999)*4.) + .5)/4.;
+      float sh = smoothstep(1.1, .25, length(vRoot - uPlayer.xz)); c *= 1. - sh*uGE.y*(1. - vH*.5);
+      c *= uGD.x; c = mix(vec3(dot(c, vec3(.3,.59,.11))), c, uGE.x);
+      c = uAscii > .5 ? pow(c*2.4, vec3(uGD.y))*vec3(.72, 1.1, .66) : c;
+      // stroke angle in a few steps: small wind changes no longer flip the glyph every frame
+      float qa = (floor(clamp(vAng, 0., .999)*uGE.z) + .5)/uGE.z;
       gl_FragColor = vec4(fogIt(c,vP), .1 + .8*qa);
     }`,
   });
@@ -410,6 +416,60 @@ const CAMP = { x: 3.2, z: -3.2 };
 grass.mat.uniforms.uB0.value.set(BLD.x0 - .4, BLD.z0 - .4);
 grass.mat.uniforms.uB1.value.set(BLD.x1 + .4, BLD.z1 + .4);
 grass.mat.uniforms.uCamp.value.set(CAMP.x, CAMP.z);
+
+/* grass settings (panel «🌿 трава»), stored in localStorage['ascii-grass-v2'].
+   Each row: key, label, min, max, step, default, hint. Defaults = the current look. */
+const GR_UI = [
+  ['Форма', [
+    ['dens', 'количество', 0, 1, .01, .3, 'доля от 90 000 травинок (на слабых устройствах ещё меньше)'],
+    ['radius', 'дальность', .3, 1, .02, 1, 'радиус, в котором рисуется трава'],
+    ['h', 'высота', .2, 3, .05, 1, 'общий множитель высоты'],
+    ['hVar', 'разброс высоты', 0, 3, .05, 1, '0 — все одинаковые'],
+    ['width', 'толщина', .3, 4, .05, 1, 'ширина основания травинки'],
+    ['lean', 'случайный наклон', 0, 4, .05, 1, 'у каждой травинки свой наклон'],
+    ['patch', 'проплешины', 0, 1.5, .05, 1, 'крупные пятна: где выше, где ниже/пусто'],
+  ]],
+  ['Ветер', [
+    ['wind', 'сила ветра', 0, 3, .05, 1, 'амплитуда колебаний'],
+    ['gustSpd', 'скорость порывов', 0, 4, .05, 1, 'как быстро бегут волны'],
+    ['flutter', 'общая волна', 0, 4, .05, 1, 'медленное общее покачивание'],
+    ['jitter', 'дрожание', 0, 2, .05, 0, 'индивидуальное дрожание каждой травинки (рябь!)'],
+    ['push', 'отталкивание', 0, 3, .05, 1, 'как сильно героя «раздвигает» траву'],
+  ]],
+  ['Цвет и свет', [
+    ['br', 'яркость', .2, 3, .05, 1, ''],
+    ['gamma', 'гамма', .5, 1.5, .02, .9, 'ниже — светлее и контрастнее, выше — темнее'],
+    ['sat', 'насыщенность', 0, 2, .05, 1, '0 — серая'],
+    ['base', 'яркость корня', 0, 3, .05, 1, 'тёмный низ травинок'],
+    ['sheen', 'блики ветра', 0, 3, .05, 1, 'светлые кончики в порывах'],
+    ['dry', 'сухие пятна', 0, 1.5, .05, .6, 'жёлто-сухие участки'],
+    ['clump', 'пятнистость', 0, 2, .05, 1, 'тёмные/светлые комки'],
+    ['shadow', 'тень героя', 0, 1, .05, .45, ''],
+  ]],
+  ['Штрихи (трава и дождь)', [
+    ['steps', 'углов штриха', 2, 50, 1, 4, 'меньше — спокойнее, 50 — плавно (мерцает)'],
+    ['stGain', 'яркость штриха', .3, 4, .05, 1.8, 'в ячейке сетки'],
+    ['stBr', 'штрих: база', .1, 2, .05, .55, 'яркость поверх букв'],
+    ['stVar', 'штрих: разброс', 0, 1.5, .05, .3, 'случайная яркость'],
+    ['stLen', 'длина штриха', .3, 2.5, .05, 1, ''],
+    ['stLenVar', 'длина: разброс', 0, 1.5, .05, 0, ''],
+    ['stW', 'ширина штриха', .3, 3, .05, 1, ''],
+    ['jit', 'плавание букв', 0, 3, .05, 1, 'лёгкое дрожание обычных букв'],
+  ]],
+];
+const GR_DEF = {}; for (const [, rows] of GR_UI) for (const r of rows) GR_DEF[r[0]] = r[5];
+const GR = { ...GR_DEF };
+try { const v = JSON.parse(localStorage.getItem('ascii-grass-v2') || '{}'); for (const k in GR_DEF) if (typeof v[k] === 'number' && isFinite(v[k])) GR[k] = v[k]; } catch (_) { }
+function applyGrass() {
+  U.uGA.value.set(GR.h, GR.hVar, GR.width, GR.lean);
+  U.uGB.value.set(GR.wind, GR.gustSpd, GR.flutter, GR.push);
+  U.uGC.value.set(GR.radius, GR.patch, GR.dry, GR.clump);
+  U.uGD.value.set(GR.br, GR.gamma, GR.base, GR.sheen);
+  U.uGE.value.set(GR.sat, GR.shadow, Math.max(2, Math.round(GR.steps)), GR.jitter);
+  U.uSt.value.set(GR.stBr, GR.stVar, GR.stLen, GR.stLenVar); U.uStW.value = GR.stW; U.uJit.value = GR.jit; U.uStGain.value = GR.stGain;
+  grass.geo.instanceCount = Math.min(grass.N, Math.floor(grass.N * GR.dens * Q().grass / .3 * (Math.min(innerWidth, innerHeight) < 600 ? .8 : 1)));
+}
+applyGrass();
 
 const circles = new Map();            // spatial hash of round obstacles
 const boxes = [];                     // axis-aligned obstacles in the forest
@@ -1105,6 +1165,29 @@ $('bQ').onclick = () => {
   try { localStorage.setItem('ascii-quality', qMode === 'auto' ? 'auto' : String(qLevel)); } catch (_) { }
   resize(); qBtn(); toast('качество: ' + (qMode === 'auto' ? 'авто' : Q().name));
 };
+{
+  const box = $('grBody'), fmt = (v, st) => (st >= 1 ? String(Math.round(v)) : v.toFixed(2));
+  const save = () => { try { localStorage.setItem('ascii-grass-v2', JSON.stringify(GR)); } catch (_) { } };
+  const ins = [];
+  for (const [title, rows] of GR_UI) {
+    const hd = document.createElement('h4'); hd.textContent = title; box.appendChild(hd);
+    for (const [k, name, mn, mx, st, , hint] of rows) {
+      const l = document.createElement('label'); if (hint) l.title = hint;
+      l.innerHTML = `<span>${name}</span><input type="range" min="${mn}" max="${mx}" step="${st}"><em></em>`;
+      const i = l.children[1], e = l.children[2];
+      const show = () => { i.value = GR[k]; e.textContent = fmt(GR[k], st); };
+      i.oninput = () => { GR[k] = +i.value; e.textContent = fmt(GR[k], st); applyGrass(); save(); };
+      show(); ins.push(show); box.appendChild(l);
+    }
+  }
+  $('bGr').onclick = () => { const g = $('gr'); g.style.display = g.style.display === 'block' ? 'none' : 'block'; };
+  $('grClose').onclick = () => { $('gr').style.display = 'none'; };
+  $('grReset').onclick = () => { Object.assign(GR, GR_DEF); ins.forEach(f => f()); applyGrass(); try { localStorage.removeItem('ascii-grass-v2'); } catch (_) { } };
+  $('grCopy').onclick = async () => {
+    const t = JSON.stringify(GR);
+    try { await navigator.clipboard.writeText(t); toast('настройки травы скопированы'); } catch (_) { prompt('Настройки травы (JSON):', t); }
+  };
+}
 function qBtn() { $('bQ').textContent = '⚙ ' + (qMode === 'auto' ? 'авто · ' : '') + Q().name; }
 function setView(a, d) {
   asciiOn = a; detail = d; resize(); viewBtns();
@@ -1935,10 +2018,10 @@ const EDGE_IDX2 = [...EDGE].map(GI);
 // one texel per glyph cell: sample the cell (3×6 points = 3×3 zones), choose the glyph, store colour + glyph index
 const cellMat = new THREE.ShaderMaterial({
   defines: { NRAMP: WRAMP.length, NEDGE: EDGE.length },
-  uniforms: { tScene: { value: null }, tDesc: { value: desc }, uRampIdx: { value: WRAMP }, uEdgeIdx: { value: EDGE_IDX2 }, uCellPx: { value: new THREE.Vector2() }, uSize: { value: new THREE.Vector2() }, uTime: U.uTime },
+  uniforms: { tScene: { value: null }, tDesc: { value: desc }, uRampIdx: { value: WRAMP }, uEdgeIdx: { value: EDGE_IDX2 }, uCellPx: { value: new THREE.Vector2() }, uSize: { value: new THREE.Vector2() }, uTime: U.uTime, uStGain: U.uStGain },
   vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: /* glsl */`
-  uniform sampler2D tScene; uniform highp sampler2D tDesc; uniform float uRampIdx[NRAMP]; uniform float uEdgeIdx[NEDGE]; uniform vec2 uCellPx, uSize; uniform float uTime;
+  uniform sampler2D tScene; uniform highp sampler2D tDesc; uniform float uRampIdx[NRAMP]; uniform float uEdgeIdx[NEDGE]; uniform vec2 uCellPx, uSize; uniform float uTime, uStGain;
   float hsh(vec2 p){ return fract(sin(dot(p, vec2(27.1,61.7)))*5317.3); }
   void main(){
     ivec2 cell = ivec2(gl_FragCoord.xy);
@@ -1984,7 +2067,7 @@ const cellMat = new THREE.ShaderMaterial({
       col = mix(avg, best.rgb, .5);
     } else if(best.a < .9){                   // grass blade / rain: one stroke, angle stored in the glyph code (200…250)
       g = 200. + floor(clamp((best.a - .1)/.8, 0., 1.)*50. + .5);
-      col = mix(avg, best.rgb, .6)*1.8;
+      col = mix(avg, best.rgb, .6)*uStGain;
     } else {                                  // foliage: round glyphs . : o O 0 Q @ 8 by light
       float k = clamp(dot(avg, vec3(.3,.59,.11))*2.9, 0., 1.) + (hv-.5)*.3;
       g = k < .16 ? 14. : k < .3 ? 26. : k < .5 ? 79. : k < .68 ? (hv < .5 ? 47. : 16.) : k < .85 ? (hv < .5 ? 49. : 16.) : (hv < .6 ? 32. : 24.);
@@ -2013,10 +2096,10 @@ const blurMat = new THREE.ShaderMaterial({
 });
 const finalMat = new THREE.ShaderMaterial({
   uniforms: { tCell: { value: null }, tOv: { value: null }, tRaw: { value: null }, tBloom: { value: null }, tAtlas: { value: atlas }, uRaw: { value: 0 }, uBloomK: { value: .8 },
-    uCellPx: { value: new THREE.Vector2() }, uGridPx: { value: new THREE.Vector2() }, uGlyphN: { value: GLYPHS.length }, uDirV: { value: SHAPES.length + 2 }, uT: U.uTime, uBg: { value: new THREE.Color(.04, .046, .09) } },
+    uCellPx: { value: new THREE.Vector2() }, uGridPx: { value: new THREE.Vector2() }, uGlyphN: { value: GLYPHS.length }, uDirV: { value: SHAPES.length + 2 }, uT: U.uTime, uSt: U.uSt, uStW: U.uStW, uJit: U.uJit, uBg: { value: new THREE.Color(.04, .046, .09) } },
   vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: /* glsl */`
-  uniform sampler2D tCell, tOv, tRaw, tBloom, tAtlas; uniform float uRaw, uBloomK, uGlyphN, uDirV, uT; uniform vec2 uCellPx, uGridPx; uniform vec3 uBg;
+  uniform sampler2D tCell, tOv, tRaw, tBloom, tAtlas; uniform float uRaw, uBloomK, uGlyphN, uDirV, uT, uStW, uJit; uniform vec4 uSt; uniform vec2 uCellPx, uGridPx; uniform vec3 uBg;
   void main(){
     vec2 fc = gl_FragCoord.xy, uv = fc/uGridPx;
     vec3 c;
@@ -2033,8 +2116,8 @@ const finalMat = new THREE.ShaderMaterial({
         bool stroke = g > 199.5;
         float h1 = fract(sin(dot(vec2(nc), vec2(12.9898,78.233)))*43758.5453), h2 = fract(h1*91.7 + .13);
         vec2 jit; float rot; vec2 sc;
-        if(stroke){ rot = (g - 200.)/50.*3.14159265 - 1.5707963; g = uDirV; jit = vec2(0.); sc = vec2(1.); }
-        else { jit = (vec2(h1,h2)-.5)*vec2(.14,.09) + vec2(sin(uT*.9 + h2*40.), cos(uT*1.1 + h1*27.))*.03; rot = (h2-.5)*.1 + sin(uT*1.3 + h1*31.)*.03; sc = vec2(1.); }
+        if(stroke){ rot = (g - 200.)/50.*3.14159265 - 1.5707963; g = uDirV; jit = vec2(0.); sc = vec2(uStW, uSt.z + h1*uSt.w); }
+        else { jit = (vec2(h1,h2)-.5)*vec2(.14,.09) + vec2(sin(uT*.9 + h2*40.), cos(uT*1.1 + h1*27.))*.03; rot = (h2-.5)*.1 + sin(uT*1.3 + h1*31.)*.03; sc = vec2(1.); jit *= uJit; rot *= uJit; }
         vec2 d = fc - (vec2(nc) + .5 + jit)*uCellPx;
         float cs = cos(rot), sn = sin(rot);
         mat2 R = mat2(cs, -sn, sn, cs);
@@ -2043,7 +2126,7 @@ const finalMat = new THREE.ShaderMaterial({
         if(lp.x < 0. || lp.y < 0. || lp.x > 1. || lp.y > 1.) continue;
         vec2 ddx = (R*vec2(1.,0.))*k, ddy = (R*vec2(0.,1.))*k;
         float m = textureGrad(tAtlas, vec2((g + lp.x)/uGlyphN, lp.y), vec2(ddx.x/uGlyphN, ddx.y), vec2(ddy.x/uGlyphN, ddy.y)).r;
-        acc = max(acc, cv.rgb*(stroke ? .55 + .3*h2 : 1.)*m);
+        acc = max(acc, cv.rgb*(stroke ? uSt.x + uSt.y*h2 : 1.)*m);
       }
       c = uBg + acc;
       float l = dot(c, vec3(.3,.59,.11)); c = mix(vec3(l), c, .72)*vec3(.95,1.,1.03);
@@ -2087,7 +2170,7 @@ function resize() {
   cellMat.uniforms.uCellPx.value.set(cellW * sScale, cellH * sScale); cellMat.uniforms.uSize.value.set(sw, sh);
   finalMat.uniforms.uCellPx.value.set(cellW * db.x / W, cellH * db.y / H); finalMat.uniforms.uGridPx.value.set(db.x, db.y);
   finalMat.uniforms.uRaw.value = asciiOn ? 0 : 1;
-  grass.geo.instanceCount = Math.floor(grass.N * (small ? .8 : 1) * Q().grass);
+  applyGrass();
   propCenter = null;
 }
 addEventListener('resize', resize);

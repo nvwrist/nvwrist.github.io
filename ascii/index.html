@@ -74,6 +74,19 @@
   #insp .row{display:flex;gap:6px;margin:6px 0}
   #insp button{flex:1;background:rgba(40,52,76,.7);color:#e2eaf4;border:1px solid rgba(110,130,160,.5);border-radius:9px;padding:7px 6px;font:12px system-ui}
   #insp .ih button{flex:0;background:none;border:0;font-size:16px;padding:2px 6px}
+  #gr{position:fixed;right:10px;top:calc(max(12px,env(safe-area-inset-top)) + 4px);width:min(330px,calc(100vw - 20px));display:none;background:rgba(12,14,24,.92);border:1px solid rgba(110,130,160,.45);border-radius:14px;padding:10px 12px;font-size:12px;color:#cfd8e3;z-index:5;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+  #gr .ih{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  #gr .ih b{font-size:14px;flex:1}
+  #gr .ih button{background:none;border:0;color:#9ab;font-size:16px;padding:2px 6px}
+  #gr label{display:flex;align-items:center;gap:8px;margin:7px 0}
+  #gr label span{width:104px;opacity:.75}
+  #gr label em{width:44px;text-align:right;font-style:normal;font-variant-numeric:tabular-nums}
+  #gr input[type=range]{flex:1;accent-color:#7fe38a}
+  #gr .row{display:flex;gap:6px;margin-top:8px}
+  #grBody{max-height:min(62vh,520px);overflow:auto;overscroll-behavior:contain;padding-right:2px}
+  #gr h4{margin:10px 0 2px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#7fe38a;opacity:.85}
+  #gr .row button{flex:1;background:rgba(40,52,76,.7);color:#e2eaf4;border:1px solid rgba(110,130,160,.5);border-radius:9px;padding:7px 6px;font:12px system-ui}
+  body.editing #gr{display:none!important}
   body.editing .btns{display:none}
   #quests{top:calc(max(12px,env(safe-area-inset-top)) + 44px);left:14px;max-width:62vw;font-size:12px}
   #quests div{margin-bottom:5px}
@@ -114,7 +127,7 @@
 <div id="toast" class="hud"></div>
 <div id="log" class="hud"></div>
 <div id="hint" class="hud">WASD — ходить · Shift — бежать · клик / пробел — магия · Q — школа магии · 1–5 — погода · Enter — чат · E — подобрать / говорить · I — сумка · B — редактор · V — ASCII вкл/выкл · Z — детализация · руины справа по тропе →</div>
-<div class="btns"><button id="bInv">🎒 сумка</button><button id="bEdit">✎ редактор</button><button id="bWx">☁ погода</button><button id="bSp">✦ магия</button><button id="bAscii">▦ ASCII: вкл</button><button id="bDet">◫ средне</button><button id="bQ">⚙ качество</button></div>
+<div class="btns"><button id="bInv">🎒 сумка</button><button id="bEdit">✎ редактор</button><button id="bWx">☁ погода</button><button id="bSp">✦ магия</button><button id="bAscii">▦ ASCII: вкл</button><button id="bDet">◫ средне</button><button id="bGr">🌿 трава</button><button id="bQ">⚙ качество</button></div>
 <button id="cast">✦</button>
 <button id="pick"></button>
 <div id="inv"><div class="sheet">
@@ -123,6 +136,7 @@
   <div id="invInfo"></div>
 </div></div>
 <div id="insp"></div>
+<div id="gr"><div class="ih"><b>🌿 Трава</b><button id="grClose">✕</button></div><div id="grBody"></div><div class="row"><button id="grCopy">⧉ копировать</button><button id="grReset">↺ по умолчанию</button></div></div>
 <div id="editor">
   <div class="edTabs"><button data-tab="obj">🌲 Объекты</button><button data-tab="ter">⛰ Рельеф</button><button data-tab="ev">📜 События</button></div>
   <div id="edOpt"></div>
@@ -149,6 +163,6 @@
 <div id="stick"><i></i></div>
 <input id="chat" maxlength="80" placeholder="Сообщение…" autocomplete="off" enterkeyhint="send">
 <div id="err">Нужен браузер с поддержкой WebGL2.</div>
-<script type="module" src="./game.js?v=23"></script>
+<script type="module" src="./game.js?v=25"></script>
 </body>
 </html>
