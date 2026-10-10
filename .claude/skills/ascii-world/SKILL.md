@@ -7,23 +7,18 @@ description: Work on ASCII World (/ascii) — the Three.js game rendered as ASCI
 
 Files: `ascii/index.html` (HUD, buttons, CSS; loads `./game.js?v=N` — **bump N on every change** so phones/raw.githack/Pages do not serve a stale script), `ascii/game.js` (everything else, ES module), `ascii/vendor/three.module.min.js` (Three.js r160, vendored).
 
-## Render pipeline (per frame, `render()`)
+## Render pipeline — world-space ASCII (like the reference)
 
-1. **Scene → `sceneRT`** at `cols*SX × rows*SY` texels (SX=3, SY=6 → each cell = 3×3 sub-zones of 1×2 texels; half-float when supported). Every material writes **alpha as a glyph-set code**:
-   - `a ≈ 1` → hybrid glyph choice: flat cells use the density ramp `RAMP`; cells with contrast inside (max−min of the 3×3 sub-zone luminance > 0.22) are matched by **shape** against `EDGE` glyphs (`_ - / \ | ( ) < > [ ] ' , ^ L J 7 T …`) using 3×3 coverage descriptors (`desc` DataTexture, computed from the atlas at startup). This is what makes silhouettes and edges detailed;
-   - `0.1…0.9` → directional stroke `- / | \`, angle = screen-space direction (grass blades, rain);
-   - `0.935…0.95` (`.945`) → water `. - ~ =`;
-   - `0.905…0.935` (`mode: .92`) → foliage: round glyphs `. : o O 0 Q @ 8` by light (trees: 4 species in `TREES` — oak, poplar, young, old — trunk + branches + crown blobs, chosen by `treeKind(p)` = `p.v` or id-based, selectable in the inspector; canopies cut into see-through leaf clumps by 3D noise `vnoise3` in `STD_FS`);
-   - `< 0.09` (`RUNEM = .05`) → random rune glyphs (spell particles, portal motes).
-2. **`cellMat` → `cellRT`** (one texel per cell): reads the SX×SY block with `texelFetch`, builds the 3×3 sub-luminances, averages colour, takes the brightest texel's code, stores colour + glyph index (`a = index/255`). Glyph indices refer to `GLYPHS` = all printable ASCII (`SHAPES`, index = charCode−32) + 4 custom strokes (`DIRG`).
-3. **Bloom**: `brightMat` (threshold 1.0 on half-float — only emissive > 1 glows) → 2× separable `blurMat`.
-3b. **`auxMat` → `auxRT`** (one texel per cell): r = glyph rotation (strokes: exact screen angle of the blade/rain; other glyphs: small lean along the luminance gradient), g = stroke flag.
-4. **`finalMat` → screen**: for each pixel looks at the 3×3 neighbouring cells, draws each glyph rotated, with a tiny per-cell jitter, strokes stretched 1.75× so they overlap (soft grass); combined with `max`. Then a calm palette (desaturate 26 %, soft highlight roll-off), dim vignette background and bloom.
-   Old description: glyph atlas (`atlas`, built on a 2D canvas, mipmapped, sampled with `textureGrad`) × cell colour + bloom.
-   - `asciiOn = false` (button «ASCII», key **V**) skips 1–2: scene goes to full-res `rawRT` (MSAA 4) and `finalMat` (`uRaw=1`) tone-maps it. Useful to inspect models.
-   - Detail level (button «детали», key **Z**): `DETAIL.big/small` = cell width in CSS px (крупно/средне/мелко/ультра: 9/6/5/4 desktop, 8/5/4/3 phone; default средне). Saved in `localStorage['ascii-view']`.
+Glyphs are printed **on the surfaces in the 3D world**, not on a screen grid: near objects get big letters, far ones small, slanted with the surface; between glyphs is the dark background `uBg`.
 
-Camera aspect is `cols*cellW / rows*cellH` (the grid overhangs the screen by < 1 cell). Screen→world (`screenToWorld`) and name tags (`placeTag`) use the same mapping — keep them in sync if you change it.
+1. Every surface fragment shader (`STD_FS`, ground) calls `cellGrid(p, n, k, cen)` (in `GLYPHF`, fragment-only because it uses `dFdx`): a triplanar world grid (cell `.085 × .15 m` × `k` × `uCellK`; ground cells 1.5× taller), returns grid coords and the **cell centre**. Pattern + lighting are evaluated at the centre, so each glyph has one flat colour.
+2. `asciiOut(c, w, set)` picks the glyph by brightness and prints it with `textureGrad` on the atlas (mipmaps make far text soft): set 0 = density ramp `WRAMP` (sorted by real ink coverage of the font, per-cell random jitter for letter variety), 1 = foliage `. : o O 0 Q @ 8`, 2 = water `. - ~ =`, 3 = ground (only bright things like cobbles print).
+3. Per-material glyph size: `stdMat({cell})` — scenery 1, tree leaves .72, characters .48, items .4. `plain: true` skips glyphs (editor rings).
+4. Grass = thin real blades (no glyphs), tile shifted ahead of the camera (`uGOff`). Rain = thin streaks. Snow and particles = additive glyph billboards (`*`, `o`, fire `@$&%#*`, runes) — `emit()` assigns `o.g` (atlas index).
+5. Scene → `sceneRT` (full res, 8-bit, MSAA from quality preset) → `brightMat` + `blurMat` bloom → `finalMat` (calm grade, vignette; tone-mapped raw in «ASCII: выкл» mode). `U.uAscii` switches glyphs off everywhere.
+6. Scenery dissolves within 5.5 m of the camera and in a window around the hero when it is in front of them (`uPN`), so the third-person camera is never blocked.
+
+Camera: third person behind the hero (`pitch .6`, dist ≈10.5 on phones, fov 58/46); the editor lerps to a higher top-down view (`edPitch`). Detail button = world glyph scale `CELLK` (крупно 1.45 … ультра .55).
 
 ## Materials / lighting
 

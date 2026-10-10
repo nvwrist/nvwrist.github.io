@@ -34,14 +34,14 @@ const canHalf = renderer.extensions.has('EXT_color_buffer_float') || renderer.ex
 
 const SX = 3, SY = 6;                         // scene texels per glyph cell (3×3 sub-zones of 1×2 texels)
 let W, H, DPR, cellW, cellH, cols, rows, quality = 1, qLevel = 2, qMode = 'auto', asciiOn = true, detail = 1, rawRT = null;
-const DETAIL = { big: [9, 6, 5, 4], small: [8, 5, 4, 3], names: ['крупно', 'средне', 'мелко', 'ультра'] };
-try { const v = JSON.parse(localStorage.getItem('ascii-view3') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 3) detail = v.detail; } catch (_) { }
-let sceneRT, cellRT, auxRT, bA, bB;
+const DETAIL = { names: ['крупно', 'средне', 'мелко', 'ультра'] }, CELLK = [1.45, 1, .74, .55];
+try { const v = JSON.parse(localStorage.getItem('ascii-view4') || '{}'); if (typeof v.ascii === 'boolean') asciiOn = v.ascii; if (v.detail >= 0 && v.detail <= 3) detail = v.detail; } catch (_) { }
+let sceneRT, bA, bB;
 /* quality presets for weak phones: pixel ratio, grass share, prop draw radius, glyph overlap, bloom passes, particles */
 const QUAL = [
-  { name: 'низкое',  dpr: 1,   grass: .35, view: 38, nb: 0, bloom: 1, rain: .4, parts: 1500 },
-  { name: 'среднее', dpr: 1.5, grass: .65, view: 52, nb: 1, bloom: 1, rain: .7, parts: 3000 },
-  { name: 'высокое', dpr: 2,   grass: 1,   view: 70, nb: 1, bloom: 2, rain: 1,  parts: 5000 },
+  { name: 'низкое',  dpr: 1,   msaa: 0, grass: .35, view: 38, nb: 0, bloom: 1, rain: .4, parts: 1500 },
+  { name: 'среднее', dpr: 1.5, msaa: 4, grass: .65, view: 52, nb: 1, bloom: 1, rain: .7, parts: 3000 },
+  { name: 'высокое', dpr: 2,   msaa: 4, grass: 1,   view: 70, nb: 1, bloom: 2, rain: 1,  parts: 5000 },
 ];
 try { const q = localStorage.getItem('ascii-quality'); if (q && q !== 'auto') { qMode = 'fixed'; qLevel = clamp(+q | 0, 0, 2); } } catch (_) { }
 if (qMode === 'auto') {                                   // first guess from the device, then adapt to the measured frame time
@@ -70,7 +70,7 @@ try {
 } catch (_) { }
 let DEFAULT_EVENTS = [];
 try { DEFAULT_EVENTS = await (await fetch('./events.json?v=' + Date.now())).json(); } catch (_) { DEFAULT_EVENTS = []; }
-const { atlas, desc } = (() => {
+const { atlas, desc, cover } = (() => {
   const gw = 40, gh = 70, c = document.createElement('canvas');
   c.width = GLYPHS.length * gw; c.height = gh;
   const g = c.getContext('2d', { willReadFrequently: true });
@@ -100,16 +100,27 @@ const { atlas, desc } = (() => {
     const v = sum / ((xb - xa) * (yb - ya) * 255); d[(r * N + i) * 4 + q] = v; if (v > mx) mx = v;
   }
   for (let k = 0; k < d.length; k++) if (k % 4 !== 3) d[k] /= mx;
+  const cover = new Float32Array(N);
+  for (let i = 0; i < N; i++) { let a = 0; for (let r = 0; r < 3; r++) for (let q = 0; q < 3; q++) a += d[(r * N + i) * 4 + q]; cover[i] = a / 9; }
   const desc = new THREE.DataTexture(d, N, 3, THREE.RGBAFormat, THREE.FloatType);
   desc.minFilter = desc.magFilter = THREE.NearestFilter; desc.needsUpdate = true;
   const t = new THREE.CanvasTexture(c);
   t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = true;
-  return { atlas: t, desc };
+  return { atlas: t, desc, cover };
 })();
 
 /* ---------- shared uniforms / GLSL ---------- */
 const MAXL = 8;
+// world-space ASCII: every surface prints glyphs on itself (cells live in world space, so near = big letters,
+// far = small letters, slanted with the surface). Density ramp sorted by real ink coverage of the font.
+const RAMP_SRC = " .`',:;-~=+*ivxcunoszeawrdbpqgkhyQO0&%$#8@WM";
+const WRAMP = [...new Set(RAMP_SRC)].map(c => SHAPES.indexOf(c)).sort((a, b) => cover[a] - cover[b]);
+const GI = c => SHAPES.indexOf(c);
+const LEAFG = [...'.:oO0Q@8'].map(GI), FIREG = [...'@$&%#*'].map(GI), SMALLG = [...'*.+o'].map(GI);
 const U = {
+  tGlyph: { value: atlas }, uGlyphN: { value: GLYPHS.length }, uAscii: { value: 1 }, uCellK: { value: 1 },
+  uRamp: { value: WRAMP.concat(new Array(48 - WRAMP.length).fill(0)) }, uRampN: { value: WRAMP.length }, uLeafG: { value: LEAFG },
+  uBg: { value: new THREE.Color(.012, .015, .03) },
   uTime: { value: 0 },
   uAmb: { value: new THREE.Color(.1, .12, .18) },
   uMoonDir: { value: new THREE.Vector3(.35, .85, .4).normalize() },
@@ -158,6 +169,7 @@ uniform vec3 uLP[${MAXL}]; uniform vec3 uLC[${MAXL}]; uniform float uLR[${MAXL}]
 uniform vec3 uFogCol; uniform float uFogD; uniform vec2 uWind; uniform float uWindS;
 uniform vec3 uPlayer; uniform vec3 uFocus; uniform vec2 uRes; uniform float uWet; uniform vec3 uPN;
 uniform highp sampler2D tTer;
+uniform sampler2D tGlyph; uniform float uGlyphN, uAscii, uCellK; uniform float uRamp[48]; uniform int uRampN; uniform float uLeafG[8]; uniform vec3 uBg;
 vec2 terS(vec2 xz){
   vec2 g = clamp(xz + 128., 0., 255.999); ivec2 i = ivec2(floor(g)); vec2 f = fract(g);
   vec2 a = texelFetch(tTer, i, 0).rg, b = texelFetch(tTer, i+ivec2(1,0), 0).rg, c = texelFetch(tTer, i+ivec2(0,1), 0).rg, d = texelFetch(tTer, i+ivec2(1,1), 0).rg;
@@ -181,6 +193,33 @@ vec3 fogIt(vec3 c, vec3 p){ float d=length(p-cameraPosition); float f=1.-exp(-ma
 float pathZ(float x){ return sin(x*.05)*6.+sin(x*.13)*1.5; }
 `;
 
+const GLYPHF = /* glsl */`
+// glyph cell on a surface: triplanar world grid, returns grid coords; cen = cell centre (shading is done there,
+// so every glyph has one flat colour like a real character)
+vec2 cellGrid(vec3 p, vec3 n, float k, out vec3 cen){
+  vec2 cs = vec2(.085, .15)*k*uCellK; vec3 a = abs(n);
+  if(a.y >= a.x && a.y >= a.z){ cs.y *= 1.5; vec2 w = vec2(p.x, -p.z)/cs; vec2 cw = (floor(w)+.5)*cs; cen = vec3(cw.x, p.y, -cw.y); return w; }
+  if(a.x >= a.z){ float s = n.x >= 0. ? 1. : -1.; vec2 w = vec2(-p.z*s, p.y)/cs; vec2 cw = (floor(w)+.5)*cs; cen = vec3(p.x, cw.y, -cw.x*s); return w; }
+  float s = n.z >= 0. ? 1. : -1.; vec2 w = vec2(p.x*s, p.y)/cs; vec2 cw = (floor(w)+.5)*cs; cen = vec3(cw.x*s, cw.y, p.z); return w;
+}
+float glyphAt(vec2 w, float lum, int set){
+  vec2 dx = dFdx(w), dy = dFdy(w);
+  vec2 id = floor(w), f = fract(w);
+  float h = hash(id + 3.7), g;
+  if(set == 1){ g = uLeafG[int(clamp(lum*7.4 + (h-.5)*2.2, 0., 7.) + .5)]; if(lum < .06) g = 0.; }
+  else if(set == 2){ g = lum < .12 ? 0. : lum < .3 ? 14. : lum < .55 ? 13. : (h < .5 ? 94. : 29.); }
+  else { float mx = float(uRampN - 1); g = uRamp[int(clamp(lum*mx + (h-.5)*3.5, 0., mx) + .5)]; if(lum < (set == 3 ? .2 : .03)) g = 0.; }
+  if(g < .5) return 0.;
+  return textureGrad(tGlyph, vec2((g + f.x)/uGlyphN, f.y), vec2(dx.x/uGlyphN, dx.y), vec2(dy.x/uGlyphN, dy.y)).r;
+}
+vec3 asciiOut(vec3 c, vec2 w, int set){
+  float m = max(max(c.r,c.g),c.b);
+  float lum = clamp(pow(m*1.3, .78), 0., 1.);
+  float gm = glyphAt(w, lum, set);
+  vec3 cn = m > 1e-4 ? c/m*min(1.25, .3 + m*1.5) : c;
+  return mix(uBg, cn, gm);
+}
+`;
 const STD_VS = COMMON + /* glsl */`
 uniform float uSway;
 varying vec3 vP; varying vec4 vCl; varying float vVD;
@@ -199,21 +238,26 @@ void main(){
   vec4 vp = viewMatrix*wp; vVD = -vp.z; vCl = projectionMatrix*vp;
   gl_Position = vCl;
 }`;
-const STD_FS = COMMON + /* glsl */`
-uniform vec3 uColor; uniform vec3 uEmis; uniform float uRim; uniform float uMode; uniform float uPat; uniform vec3 uFill;
+const STD_FS = COMMON + GLYPHF + /* glsl */`
+uniform vec3 uColor; uniform vec3 uEmis; uniform float uRim; uniform float uMode; uniform float uPat; uniform vec3 uFill; uniform float uCellS; uniform float uPlain;
 varying vec3 vP; varying vec4 vCl; varying float vVD;
 void main(){
-  if(uMode > .905 && uMode < .935 && vVD < uPN.z - 1.){        // foliage between camera and hero: cut a window
+  if(uCellS > .6 && uPlain < .5 && vVD < 5.5 - 1.5*hash(floor(gl_FragCoord.xy*.5))) discard;   // scenery right at the camera dissolves
+  if(uCellS > .6 && uPlain < .5 && vVD < uPN.z - 1.2){            // scenery between camera and hero: cut a window
     vec2 dd = (vCl.xy/vCl.w - uPN.xy)*vec2(uRes.x/uRes.y, 1.);
-    if(length(dd) < .26 + .04*hash(floor(gl_FragCoord.xy*.3))) discard;
+    if(length(dd) < .3 + .05*hash(floor(gl_FragCoord.xy*.25))) discard;
   }
   vec3 n = normalize(cross(dFdx(vP),dFdy(vP)));
   vec3 V = normalize(cameraPosition-vP);
   if(dot(n,V)<0.) n=-n;
+  bool asc = uAscii > .5 && uPlain < .5;
+  vec3 Pc = vP; vec2 gw = vec2(0.);
+  if(asc) gw = cellGrid(vP, n, uCellS, Pc);
   float leafK = 1.;
-  if(uMode > .905 && uMode < .935){
+  bool leaf = uMode > .905 && uMode < .935;
+  if(leaf){
     // foliage is not a solid blob: 3D noise cuts it into leaf clumps with gaps (see-through, like the reference)
-    vec3 q = vP*3.1 + vec3(uWind.x, 0., uWind.y)*uTime*.25*(.3 + uWindS);
+    vec3 q = Pc*3.1 + vec3(uWind.x, 0., uWind.y)*uTime*.25*(.3 + uWindS);
     float c = vnoise3(q*.45)*.45 + vnoise3(q)*.35 + vnoise3(q*2.3 + 7.1)*.2;
     float edge = 1. - abs(dot(n, V));
     float th = .47 + edge*.3;
@@ -222,27 +266,28 @@ void main(){
   }
   vec3 base = uColor;
   if(uPat>.5 && uPat<1.5){            // bricks
-    vec2 q = vec2(vP.x+vP.z, vP.y); float row=floor(q.y/.42); float off=mod(row,2.)*.45;
+    vec2 q = vec2(Pc.x+Pc.z, Pc.y); float row=floor(q.y/.42); float off=mod(row,2.)*.45;
     vec2 b = fract(vec2((q.x+off)/.9, q.y/.42));
     float mort = step(b.x,.07)+step(b.y,.12);
     base *= mort>0. ? .18 : (.7+.6*hash(vec2(floor((q.x+off)/.9),row)));
   } else if(uPat>1.5 && uPat<2.5){    // floor slabs
-    vec2 b = fract(vP.xz*.9);
+    vec2 b = fract(Pc.xz*.9);
     float mort = step(b.x,.14)+step(b.y,.14);
-    base *= mort>0. ? .0 : (.85+.5*noise(vP.xz*2.1));
+    base *= mort>0. ? .0 : (.85+.5*noise(Pc.xz*2.1));
   } else if(uPat>2.5){                // leafy / bark noise
-    base *= .55+.9*noise(vP.xz*2.6+vP.y*3.1);
+    base *= .55+.9*noise(Pc.xz*2.6+Pc.y*3.1);
   }
   base *= leafK;
-  vec3 L = lightAt(vP,n) + uFill;
+  vec3 L = lightAt(Pc,n) + uFill;
   float rim = pow(1.-max(dot(n,V),0.),2.)*uRim;
   vec3 c = base*L + uEmis + rim*(base+.15)*(uAmb*3.+.25);
+  if(asc) c = asciiOut(c, gw, leaf ? 1 : 0);
   c = fogIt(c,vP);
-  gl_FragColor = vec4(c,uMode);
+  gl_FragColor = vec4(c,1.);
 }`;
-function stdMat({ color = [1, 1, 1], emis = [0, 0, 0], rim = 0, mode = 1, pat = 0, sway = 0, fill = [0, 0, 0] } = {}) {
+function stdMat({ color = [1, 1, 1], emis = [0, 0, 0], rim = 0, mode = 1, pat = 0, sway = 0, fill = [0, 0, 0], cell = 1, plain = false } = {}) {
   return new THREE.ShaderMaterial({
-    uniforms: { ...U, uColor: { value: new THREE.Color(...color) }, uEmis: { value: new THREE.Color(...emis) }, uRim: { value: rim }, uMode: { value: mode }, uPat: { value: pat }, uSway: { value: sway }, uFill: { value: new THREE.Color(...fill) } },
+    uniforms: { ...U, uColor: { value: new THREE.Color(...color) }, uEmis: { value: new THREE.Color(...emis) }, uRim: { value: rim }, uMode: { value: mode }, uPat: { value: pat }, uSway: { value: sway }, uFill: { value: new THREE.Color(...fill) }, uCellS: { value: cell }, uPlain: { value: plain ? 1 : 0 } },
     vertexShader: STD_VS, fragmentShader: STD_FS,
   });
 }
@@ -258,36 +303,40 @@ dungeon.visible = false;
 const groundMat = new THREE.ShaderMaterial({
   uniforms: { ...U },
   vertexShader: COMMON + `varying vec3 vP; void main(){ vec4 wp=modelMatrix*vec4(position,1.); wp.y = terS(wp.xz).x; vP=wp.xyz; gl_Position=projectionMatrix*viewMatrix*wp; }`,
-  fragmentShader: COMMON + /* glsl */`
+  fragmentShader: COMMON + GLYPHF + /* glsl */`
   varying vec3 vP;
   void main(){
     vec2 tw = terS(vP.xz);
     vec3 nrm = normalize(cross(dFdx(vP), dFdy(vP))); if(nrm.y < 0.) nrm = -nrm;
+    vec3 Pc = vP; vec2 gw = vec2(0.);
+    if(uAscii > .5) gw = cellGrid(vP, nrm, 1.15, Pc);
     if(tw.y > .45){
       // water: drifting ripples, moon glints
-      float rip = noise(vec2(vP.x*1.3 + uTime*.5, vP.z*2.4 - uTime*1.2))*.6 + noise(vP.xz*4.1 + uTime*vec2(.4,-.9))*.4;
+      float rip = noise(vec2(Pc.x*1.3 + uTime*.5, Pc.z*2.4 - uTime*1.2))*.6 + noise(Pc.xz*4.1 + uTime*vec2(.4,-.9))*.4;
       vec3 wc = vec3(.05,.13,.22)*(.55 + 1.1*rip) + vec3(.3,.42,.6)*pow(rip, 5.)*2.;
-      vec3 cw = wc*(lightAt(vP, vec3(0,1,0))*2. + .15);
-      gl_FragColor = vec4(fogIt(cw, vP), .945); return;
+      vec3 cw = wc*(lightAt(Pc, vec3(0,1,0))*2. + .15);
+      if(uAscii > .5) cw = asciiOut(cw*1.6, gw, 2);
+      gl_FragColor = vec4(fogIt(cw, vP), 1.); return;
     }
-    float dp = abs(vP.z-pathZ(vP.x));
-    vec3 soil = vec3(.012,.022,.015)*(.4+.9*noise(vP.xz*.8));
-    float pm = 1.-smoothstep(1.35,1.9,dp+(noise(vP.xz*1.4)-.5)*.7);
+    float dp = abs(Pc.z-pathZ(Pc.x));
+    vec3 soil = vec3(.012,.022,.015)*(.4+.9*noise(Pc.xz*.8));
+    float pm = 1.-smoothstep(1.35,1.9,dp+(noise(Pc.xz*1.4)-.5)*.7);
     // irregular cobbles: voronoi cells with dark gaps
-    vec2 g = vP.xz*1.9; vec2 ig=floor(g), fg=fract(g);
+    vec2 g = Pc.xz*1.9; vec2 ig=floor(g), fg=fract(g);
     float d1=9., d2=9.; vec2 cid=vec2(0.);
     for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++){
       vec2 o=vec2(float(x),float(y)); vec2 pt=o+vec2(hash(ig+o),hash(ig+o+19.))*.85+.075;
       float d=length(pt-fg); if(d<d1){d2=d1;d1=d;cid=ig+o;} else if(d<d2) d2=d;
     }
     float st = smoothstep(.02,.16,d2-d1);
-    vec3 stone = vec3(.15,.145,.135)*(.45+.7*hash(cid))*(.1+.9*st)*(.8+.4*noise(vP.xz*6.));
+    vec3 stone = vec3(.15,.145,.135)*(.45+.7*hash(cid))*(.1+.9*st)*(.8+.4*noise(Pc.xz*6.));
     vec3 base = mix(soil,stone,pm);
     float steep = smoothstep(.22, .5, 1. - nrm.y);                      // rocky cliffs on steep slopes
-    base = mix(base, vec3(.16,.16,.15)*(.5+.9*noise(vP.xz*1.7 + vP.y*2.)), steep);
+    base = mix(base, vec3(.16,.16,.15)*(.5+.9*noise(Pc.xz*1.7 + Pc.y*2.)), steep);
     base = mix(base, vec3(.05,.07,.06), smoothstep(.1,.45,tw.y));       // wet banks
-    base *= 1. - smoothstep(1.1, .2, length(vP.xz - uPlayer.xz))*.5;
-    vec3 c = base*lightAt(vP,nrm);
+    base *= 1. - smoothstep(1.1, .2, length(Pc.xz - uPlayer.xz))*.5;
+    vec3 c = base*lightAt(Pc,nrm);
+    if(uAscii > .5) c = asciiOut(c*1.5, gw, 3);
     gl_FragColor = vec4(fogIt(c,vP),1.);
   }`,
 });
@@ -316,17 +365,17 @@ const grass = (() => {
   geo.setAttribute('aV', new THREE.InstancedBufferAttribute(aV, 1));
   geo.instanceCount = N;
   const mat = new THREE.ShaderMaterial({
-    uniforms: { ...U, uTile: { value: GRASS_TILE }, uB0: { value: new THREE.Vector2() }, uB1: { value: new THREE.Vector2() }, uCamp: { value: new THREE.Vector2() } },
+    uniforms: { ...U, uGOff: { value: new THREE.Vector2() }, uTile: { value: GRASS_TILE }, uB0: { value: new THREE.Vector2() }, uB1: { value: new THREE.Vector2() }, uCamp: { value: new THREE.Vector2() } },
     side: THREE.DoubleSide,
     vertexShader: COMMON + /* glsl */`
     attribute vec4 aI; attribute float aV;
-    uniform float uTile; uniform vec2 uB0, uB1, uCamp;
+    uniform float uTile; uniform vec2 uB0, uB1, uCamp, uGOff;
     varying vec3 vP; varying float vH; varying float vAng; varying float vVar; varying float vGust; varying vec2 vRoot;
     void main(){
-      vec2 c = uFocus.xz;
+      vec2 c = uFocus.xz + uGOff;
       vec2 root = c + mod(aI.xy - c + uTile*.5, uTile) - uTile*.5;
       vec2 tsw = terS(root); float ty = tsw.x;
-      float h = .38 + aI.w*.45;
+      float h = .36 + aI.w*.5;
       h *= 1. - smoothstep(.12, .4, tsw.y);
       h *= smoothstep(1.3, 2.3, abs(root.y - pathZ(root.x)));
       if(root.x>uB0.x && root.x<uB1.x && root.y>uB0.y && root.y<uB1.y) h = 0.;
@@ -347,7 +396,7 @@ const grass = (() => {
       float bl = min(length(bv), 1.6);
       float droop = 1. - .38*bl;
       float ca = cos(aI.z), sa = sin(aI.z);
-      vec2 side = vec2(ca,sa) * position.x * .11 * (1.-y*.7);
+      vec2 side = vec2(ca,sa) * position.x * .026 * (1.-y*.6);
       vec3 wp = vec3(root.x + side.x + bv.x*y*y*h, ty + y*h*droop, root.y + side.y + bv.y*y*y*h);
       vec3 tip = vec3(root.x + bv.x*h, ty + h*droop, root.y + bv.y*h);
       vec4 c0 = projectionMatrix*viewMatrix*vec4(root.x,ty,root.y,1.);
@@ -372,7 +421,8 @@ const grass = (() => {
       vec3 c = base*Lc*1.2 + vec3(.55,.7,.6)*sheen*(uAmb*2. + .12) + tipc*vH*vH*uMoonCol*.25;
       // contact shadow under the hero
       float sh = smoothstep(1.1, .25, length(vRoot - uPlayer.xz)); c *= 1. - sh*.45*(1. - vH*.5);
-      gl_FragColor = vec4(fogIt(c,vP), .1 + .8*clamp(vAng,0.,.999));
+      c = uAscii > .5 ? pow(c*3.1, vec3(.85)) : c;
+      gl_FragColor = vec4(fogIt(c,vP), 1.);
     }`,
   });
   const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false;
@@ -430,13 +480,13 @@ const PGEO = {
   branch: new THREE.CylinderGeometry(.06, .13, 1, 5).translate(0, .5, 0),
 };
 const PMAT = {
-  trunk: stdMat({ color: [.66, .58, .5], pat: 3, rim: .6 }), leaf: stdMat({ color: [.62, .74, .78], pat: 3, sway: 1, rim: .2, mode: .92 }),
+  trunk: stdMat({ color: [.66, .58, .5], pat: 3, rim: .6 }), leaf: stdMat({ color: [.62, .74, .78], pat: 3, sway: 1, rim: .2, mode: .92, cell: .72 }),
   bush: stdMat({ color: [.42, .62, .45], pat: 3, sway: 1 }), rock: stdMat({ color: [.42, .42, .4], pat: 3 }),
   wall: stdMat({ color: [.5, .5, .47], pat: 1 }), crate: stdMat({ color: [.55, .4, .25], pat: 3 }),
   post: stdMat({ color: [.3, .22, .15] }), bowl: stdMat({ color: [.25, .2, .16], emis: [.5, .2, .05] }),
   hwall: stdMat({ color: [.55, .47, .38], pat: 1, rim: .4 }), hroof: stdMat({ color: [.42, .2, .16], pat: 3, rim: .4 }),
   dark: stdMat({ color: [.08, .06, .05] }), win: stdMat({ color: [0, 0, 0], emis: [1.5, .95, .4] }),
-  wood: stdMat({ color: [.45, .33, .22], pat: 3 }), area: stdMat({ color: [0, 0, 0], emis: [1.4, .3, 1.2] }),
+  wood: stdMat({ color: [.45, .33, .22], pat: 3 }), area: stdMat({ color: [0, 0, 0], emis: [1.4, .3, 1.2], plain: true }),
 };
 // part list per type: [geometry, material, local matrix (prop, m4)]; the prop's own transform is applied on top
 const _q = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3(), _s = new THREE.Vector3(), _m = new THREE.Matrix4();
@@ -659,7 +709,7 @@ rebuildProps();
 /* ---------- characters (low-poly) ---------- */
 function makeCharacter({ robe = [.9, .87, .8], hat = [.42, .4, .5], orb = [1.6, 1.1, .5], fill = [.02, .02, .02], rimK = 1.2, beard = [.93, .93, .9], trim = [.95, .72, .3] } = {}) {
   const g = new THREE.Group();
-  const M = (color, o = {}) => stdMat({ color, rim: rimK, fill, ...o });
+  const M = (color, o = {}) => stdMat({ color, rim: rimK, fill, cell: .48, ...o });
   const mRobe = M(robe), mRobeD = M(robe.map(v => v * .6)), mHat = M(hat), mSkin = M([.88, .72, .58], { rim: .8 }),
     mDark = M([.2, .18, .17], { rim: .8 }), mBoot = M([.34, .23, .15], { rim: .7 }), mStaff = M([.47, .32, .19], { rim: .6 }),
     mBeard = M(beard), mTrim = M(trim, { emis: trim.map(v => v * .12) }), mOrb = stdMat({ color: [0, 0, 0], emis: orb });
@@ -729,33 +779,47 @@ const parts = [];
 const pGeo = new THREE.InstancedBufferGeometry();
 pGeo.setIndex([0, 1, 2, 0, 2, 3]);
 pGeo.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0], 3));
-const pPos = new Float32Array(PMAX * 3), pCol = new Float32Array(PMAX * 4), pMode = new Float32Array(PMAX);
+const pPos = new Float32Array(PMAX * 3), pCol = new Float32Array(PMAX * 4), pMode = new Float32Array(PMAX), pG = new Float32Array(PMAX);
 const pPosA = new THREE.InstancedBufferAttribute(pPos, 3).setUsage(THREE.DynamicDrawUsage);
 const pColA = new THREE.InstancedBufferAttribute(pCol, 4).setUsage(THREE.DynamicDrawUsage);
 const pModeA = new THREE.InstancedBufferAttribute(pMode, 1).setUsage(THREE.DynamicDrawUsage);
-pGeo.setAttribute('iPos', pPosA); pGeo.setAttribute('iCol', pColA); pGeo.setAttribute('iMode', pModeA);
+const pGA = new THREE.InstancedBufferAttribute(pG, 1).setUsage(THREE.DynamicDrawUsage);
+pGeo.setAttribute('iPos', pPosA); pGeo.setAttribute('iCol', pColA); pGeo.setAttribute('iMode', pModeA); pGeo.setAttribute('iG', pGA);
 pGeo.instanceCount = 0;
 const pMesh = new THREE.Mesh(pGeo, new THREE.ShaderMaterial({
   uniforms: { ...U },
   vertexShader: COMMON + /* glsl */`
-  attribute vec3 iPos; attribute vec4 iCol; attribute float iMode;
-  varying vec3 vC; varying float vM; varying vec2 vQ;
+  attribute vec3 iPos; attribute vec4 iCol; attribute float iMode; attribute float iG;
+  varying vec3 vC; varying float vM; varying vec2 vQ; varying float vG;
   void main(){
     vec3 r = vec3(viewMatrix[0][0],viewMatrix[1][0],viewMatrix[2][0]);
     vec3 u = vec3(viewMatrix[0][1],viewMatrix[1][1],viewMatrix[2][1]);
-    vec3 wp = iPos + (r*position.x + u*position.y)*iCol.a;
-    vC = iCol.rgb; vM = iMode; vQ = position.xy;
+    float sz = iCol.a*(uAscii > .5 ? 1.9 : 1.);
+    vec3 wp = iPos + (r*position.x*(uAscii > .5 ? .6 : 1.) + u*position.y)*sz;
+    vC = iCol.rgb; vM = iMode; vQ = position.xy; vG = iG;
     gl_Position = projectionMatrix*viewMatrix*vec4(wp,1.);
   }`,
   fragmentShader: /* glsl */`
-  varying vec3 vC; varying float vM; varying vec2 vQ;
-  void main(){ if(dot(vQ,vQ)>1.) discard; gl_FragColor = vec4(vC, vM); }`,
+  uniform sampler2D tGlyph; uniform float uGlyphN, uAscii;
+  varying vec3 vC; varying float vM; varying vec2 vQ; varying float vG;
+  void main(){
+    float m;
+    if(uAscii > .5){ vec2 lp = vQ*.5 + .5; m = texture2D(tGlyph, vec2((vG + lp.x)/uGlyphN, lp.y)).r; }
+    else m = 1. - smoothstep(.55, 1., length(vQ));
+    if(m < .04) discard;
+    gl_FragColor = vec4(vC*m, 1.);
+  }`,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
 }));
 pMesh.frustumCulled = false; scene.add(pMesh);
 const RUNEM = .05;
 function emit(o) {
   if (parts.length >= Q().parts) return;
   o.vx ??= 0; o.vy ??= 0; o.vz ??= 0; o.grav ??= 0; o.drag ??= 0; o.mode ??= 1; o.size ??= .1; o.life ??= 1;
+  if (o.g === undefined) {
+    const pick = a => a[rnd() * a.length | 0];
+    o.g = o.mode === RUNEM ? pick(RUNE_IDX) : o.r > 1.4 && o.r > o.b * 3 ? pick(FIREG) : o.size < .06 ? pick(SMALLG) : pick([GI('o'), GI('*'), GI('0')]);
+  }
   o.max = o.life; parts.push(o);
 }
 function updateParts(dt) {
@@ -777,10 +841,10 @@ function updateParts(dt) {
     pPos[n * 3] = p.x; pPos[n * 3 + 1] = p.y; pPos[n * 3 + 2] = p.z;
     pCol[n * 4] = p.r * f; pCol[n * 4 + 1] = p.g * f; pCol[n * 4 + 2] = p.b * f;
     pCol[n * 4 + 3] = p.size * (p.shrink ? .3 + .7 * k : 1) * (p.grow ? 1 + (1 - k) * p.grow : 1);
-    pMode[n] = p.mode; n++;
+    pMode[n] = p.mode; pG[n] = p.g; n++;
   }
   pGeo.instanceCount = n;
-  pPosA.needsUpdate = pColA.needsUpdate = pModeA.needsUpdate = true;
+  pPosA.needsUpdate = pColA.needsUpdate = pModeA.needsUpdate = pGA.needsUpdate = true;
   pPosA.addUpdateRange?.(0, n * 3); pColA.addUpdateRange?.(0, n * 4); pModeA.addUpdateRange?.(0, n);
 }
 
@@ -810,7 +874,7 @@ const rain = (() => {
       vec3 vd = normalize(cameraPosition - p);
       vec3 rr = normalize(cross(d, vd));
       float len = .7 + aO.w*.6;
-      vec3 wp = p + d*(position.y-.5)*len + rr*position.x*.018;
+      vec3 wp = p + d*(position.y-.5)*len + rr*position.x*.007;
       vec4 c0 = projectionMatrix*viewMatrix*vec4(p,1.), c1 = projectionMatrix*viewMatrix*vec4(p+d,1.);
       vec2 dd = (c1.xy/c1.w - c0.xy/c0.w)*uRes; float ang = atan(dd.y,dd.x); if(ang<0.) ang += 3.14159265;
       vAng = ang/3.14159265; vB = .55 + aO.w*.45 + uFlash; vP = wp;
@@ -820,7 +884,7 @@ const rain = (() => {
     varying float vAng; varying float vB; varying vec3 vP;
     void main(){
       vec3 c = vec3(.50,.58,.72)*vB*(.55 + .7*min(lightAt(vP,vec3(0,1,0)), vec3(1.6)));
-      gl_FragColor = vec4(c, .1 + .8*clamp(vAng,0.,.999));
+      gl_FragColor = vec4(fogIt(c, vP), 1.);
     }`,
   });
   const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; weatherG.add(mesh);
@@ -838,9 +902,9 @@ const snow = (() => {
   const mat = new THREE.ShaderMaterial({
     uniforms: { ...U },
     vertexShader: COMMON + /* glsl */`
-    attribute vec4 aO; varying vec2 vQ;
+    attribute vec4 aO; varying vec2 vQ; varying float vSG;
     void main(){
-      vec2 c = uFocus.xz; float fall = 1.1 + aO.w*.9;
+      vec2 c = uFocus.xz; float fall = 1.1 + aO.w*.9; vSG = aO.w;
       float y = mod(aO.y - uTime*fall, 14.);
       vec3 p = vec3(0., y, 0.);
       vec2 sway = vec2(sin(uTime*1.3+aO.w*30.), cos(uTime*1.1+aO.w*20.))*.5 + uWind*uWindS*y*.4;
@@ -848,9 +912,12 @@ const snow = (() => {
       vec3 r = vec3(viewMatrix[0][0],viewMatrix[1][0],viewMatrix[2][0]);
       vec3 u = vec3(viewMatrix[0][1],viewMatrix[1][1],viewMatrix[2][1]);
       vQ = position.xy;
-      gl_Position = projectionMatrix*viewMatrix*vec4(p + (r*position.x+u*position.y)*(.04+aO.w*.04),1.);
+      float sz = (uAscii > .5 ? .09 + aO.w*.07 : .04 + aO.w*.04) * smoothstep(3., 5., length(p - cameraPosition));
+      gl_Position = projectionMatrix*viewMatrix*vec4(p + (r*position.x*(uAscii > .5 ? .6 : 1.)+u*position.y)*sz,1.);
     }`,
-    fragmentShader: `varying vec2 vQ; void main(){ if(dot(vQ,vQ)>1.) discard; gl_FragColor = vec4(vec3(.85,.9,1.),.02); }`,
+    fragmentShader: `uniform sampler2D tGlyph; uniform float uGlyphN, uAscii; varying vec2 vQ; varying float vSG;
+      void main(){ float m; if(uAscii > .5){ vec2 lp = vQ*.5+.5; float g = vSG < .55 ? 10. : vSG < .85 ? 79. : 14.; m = texture2D(tGlyph, vec2((g+lp.x)/uGlyphN, lp.y)).r; } else m = 1.-step(1., dot(vQ,vQ));
+        if(m < .1) discard; gl_FragColor = vec4(vec3(.85,.9,1.)*m, 1.); }`,
   });
   const mesh = new THREE.Mesh(geo, mat); mesh.frustumCulled = false; weatherG.add(mesh);
   return { geo };
@@ -900,7 +967,7 @@ const D = { map: null, start: new THREE.Vector3(), exit: new THREE.Vector3(), br
     const b = new THREE.Mesh(new THREE.CylinderGeometry(.3, .18, .7, 6), bm); b.position.set(x, .35, z); dungeon.add(b);
     D.braziers.push(new THREE.Vector3(x, .8, z));
   });
-  const eyeMat = stdMat({ color: [0, 0, 0], emis: [.5, 2.2, .6] }), bodyMat = stdMat({ color: [.16, .2, .16], rim: .5 });
+  const eyeMat = stdMat({ color: [0, 0, 0], emis: [.5, 2.2, .6], cell: .35 }), bodyMat = stdMat({ color: [.16, .2, .16], rim: .5, cell: .55 });
   for (let i = 0; i < 12; i++) {
     const o = rooms[1 + (r() * (rooms.length - 1) | 0)], [x, z] = t2w(o.x + (r() * o.w | 0), o.y + (r() * o.h | 0));
     const g = new THREE.Group();
@@ -954,9 +1021,9 @@ const LINES = ['кто-нибудь видел вход в руины?', 'это
 
 /* weather presets */
 const WX = [
-  { n: 'Ясно', rain: 0, snow: 0, fog: .012, wind: .35, storm: 0, amb: [.11, .13, .2], moon: [.45, .52, .68], fogc: [.02, .025, .04] },
-  { n: 'Дождь', rain: .7, snow: 0, fog: .022, wind: .75, storm: 0, amb: [.075, .09, .13], moon: [.3, .35, .46], fogc: [.03, .035, .05] },
-  { n: 'Гроза', rain: 1, snow: 0, fog: .03, wind: 1.35, storm: 1, amb: [.05, .06, .09], moon: [.17, .2, .28], fogc: [.02, .025, .04] },
+  { n: 'Ясно', rain: 0, snow: 0, fog: .018, wind: .35, storm: 0, amb: [.11, .13, .2], moon: [.45, .52, .68], fogc: [.025, .035, .07] },
+  { n: 'Дождь', rain: .7, snow: 0, fog: .026, wind: .75, storm: 0, amb: [.075, .09, .13], moon: [.3, .35, .46], fogc: [.03, .04, .075] },
+  { n: 'Гроза', rain: 1, snow: 0, fog: .032, wind: 1.35, storm: 1, amb: [.05, .06, .09], moon: [.17, .2, .28], fogc: [.022, .03, .06] },
   { n: 'Снег', rain: 0, snow: 1, fog: .03, wind: .3, storm: 0, amb: [.12, .13, .17], moon: [.38, .42, .52], fogc: [.08, .085, .1] },
   { n: 'Туман', rain: 0, snow: 0, fog: .12, wind: .15, storm: 0, amb: [.08, .09, .11], moon: [.2, .22, .26], fogc: [.13, .14, .16] },
 ];
@@ -1056,7 +1123,7 @@ function qBtn() { $('bQ').textContent = '⚙ ' + (qMode === 'auto' ? 'авто �
 function setView(a, d) {
   asciiOn = a; detail = d; resize(); viewBtns();
   toast(asciiOn ? 'ASCII · ' + DETAIL.names[detail] : 'без ASCII');
-  try { localStorage.setItem('ascii-view3', JSON.stringify({ ascii: asciiOn, detail })); } catch (_) { }
+  try { localStorage.setItem('ascii-view4', JSON.stringify({ ascii: asciiOn, detail })); } catch (_) { }
 }
 function viewBtns() { $('bAscii').textContent = asciiOn ? '▦ ASCII: вкл' : '▦ ASCII: выкл'; $('bDet').textContent = '◫ ' + DETAIL.names[detail]; $('bDet').style.display = asciiOn ? '' : 'none'; }
 canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -1067,7 +1134,7 @@ const ray = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 
 const projGeo = new THREE.IcosahedronGeometry(.2, 0);
 const projMats = SP.map(s => stdMat({ color: [0, 0, 0], emis: s.c.map(v => v * 1.3) }));
 function screenToWorld(x, y, out, lift = .9) {
-  const nx = x / (cols * cellW) * 2 - 1, ny = (H - y) / (rows * cellH) * 2 - 1;
+  const nx = x / W * 2 - 1, ny = (H - y) / H * 2 - 1;
   ray.setFromCamera({ x: nx, y: ny }, camera);
   let h = focus.y;
   for (let i = 0; i < 5; i++) {                       // walk the ray onto the heightmap
@@ -1131,7 +1198,7 @@ const imatCache = {};
 function imat(d) {
   if (imatCache[d]) return imatCache[d];
   const D = ITEMS[d];
-  return imatCache[d] = stdMat({ color: D.col, rim: 1, emis: D.col.map(v => v * (D.glow ? 1.1 : .22)) });
+  return imatCache[d] = stdMat({ color: D.col, rim: 1, cell: .4, emis: D.col.map(v => v * (D.glow ? 1.1 : .22)) });
 }
 function itemMesh(d) {
   const g = new THREE.Group(), m = imat(d), add = (geo, x = 0, y = 0, z = 0, rx = 0, rz = 0) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.rotation.set(rx, 0, rz); g.add(o); return o; };
@@ -1327,9 +1394,9 @@ document.querySelectorAll('.edTabs button').forEach(b => b.onclick = () => {
   if (b.dataset.tab === 'ev') { openEvEd(); return; }
   ED.tab = b.dataset.tab; if (ED.tab === 'ter') select(null); edRenderTools();
 });
-const cursor = new THREE.Mesh(PGEO.ring, stdMat({ color: [0, 0, 0], emis: [.4, 1.4, 1.2] }));
+const cursor = new THREE.Mesh(PGEO.ring, stdMat({ color: [0, 0, 0], emis: [.4, 1.4, 1.2], plain: true }));
 cursor.material.depthTest = false; cursor.renderOrder = 10; cursor.visible = false; scene.add(cursor);
-const selRing = new THREE.Mesh(PGEO.ring, stdMat({ color: [0, 0, 0], emis: [1.6, 1.3, .3] }));
+const selRing = new THREE.Mesh(PGEO.ring, stdMat({ color: [0, 0, 0], emis: [1.6, 1.3, .3], plain: true }));
 selRing.material.depthTest = false; selRing.renderOrder = 10; selRing.visible = false; scene.add(selRing);
 function setEditor(on) {
   if (on && zone !== 'forest') { toast('редактор работает в лесу'); return; }
@@ -1683,7 +1750,7 @@ function pushLights() {
 
 /* ---------- update ---------- */
 function turn(a, b, k) { let d = b - a; d = Math.atan2(Math.sin(d), Math.cos(d)); return a + d * k; }
-const emitAcc = { v: 0 }; let edZoom = 1;
+const emitAcc = { v: 0 }; let edZoom = 1, edPitch = 0;
 function update(dt, rdt = dt) {
   T += dt; U.uTime.value = T;
   P.cd -= dt; P.sayT -= dt; P.inv -= dt; P.hurt -= dt;
@@ -1723,12 +1790,15 @@ function update(dt, rdt = dt) {
   const fk = 1 - Math.exp(-dt * 4.5);
   focus.x = lerp(focus.x, ED.on ? ED.fx : P.x, fk); focus.z = lerp(focus.z, ED.on ? ED.fz : P.z, fk);
   U.uFocus.value.copy(focus);
-  const aspect = (cols * cellW) / (rows * cellH);
+  const aspect = W / H;
   edZoom = lerp(edZoom, ED.on ? ED.zoom : 1, fk);
+  edPitch = lerp(edPitch, ED.on ? 1 : 0, fk);
   focus.y = lerp(focus.y, groundY(focus.x, focus.z), fk);
-  const dist = (aspect < 1 ? 11 + (1 - aspect) * 4.5 : 10.5) * edZoom, pitch = clamp(.9 + (edZoom - 1) * .3, .6, 1.35);
-  camera.position.set(focus.x, focus.y + Math.sin(pitch) * dist + .8, focus.z + Math.cos(pitch) * dist);
-  camera.lookAt(focus.x, focus.y + 1.1, focus.z);
+  const dist = lerp(aspect < 1 ? 10.5 : 9.5, 14, edPitch) * edZoom, pitch = lerp(zone === 'dungeon' ? .8 : .6, 1.0, edPitch);
+  camera.position.set(focus.x, focus.y + Math.sin(pitch) * dist + .6, focus.z + Math.cos(pitch) * dist);
+  camera.lookAt(focus.x, focus.y + 1.3 - edPitch * .3, focus.z);
+  grass.mat.uniforms.uGOff.value.set(0, -9 * (1 - edPitch));
+  renderer.setClearColor(new THREE.Color(...Wc.fogc), 1);
   ground.position.set(Math.round(focus.x), 0, Math.round(focus.z));
   camera.updateMatrixWorld(); tmpV.set(P.x, P.y + 1, P.z).project(camera);
   { const vz = tmpV2.set(P.x, P.y + 1, P.z).applyMatrix4(camera.matrixWorldInverse).z; U.uPN.value.set(tmpV.x, tmpV.y, -vz); }
@@ -1865,7 +1935,7 @@ function update(dt, rdt = dt) {
 const tagV = new THREE.Vector3();
 function placeTag(el, x, y, z, sayT, txt) {
   tagV.set(x, y, z).project(camera);
-  const sx = (tagV.x * .5 + .5) * cols * cellW, sy = H - (tagV.y * .5 + .5) * rows * cellH;
+  const sx = (tagV.x * .5 + .5) * W, sy = H - (tagV.y * .5 + .5) * H;
   el.style.transform = `translate(${sx | 0}px,${sy | 0}px) translate(-50%,-100%)`;
   const sp = el.firstChild;
   if (sayT > 0) { if (sp.textContent !== txt) sp.textContent = txt; sp.classList.add('on'); } else sp.classList.remove('on');
@@ -1875,118 +1945,6 @@ function placeTag(el, x, y, z, sayT, txt) {
 const postScene = new THREE.Scene(), postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2)); quad.frustumCulled = false; postScene.add(quad);
 const QUAD_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy,0.,1.); }`;
-const cellMat = new THREE.ShaderMaterial({
-  defines: { SX, SY, NRAMP: RAMP.length, NEDGE: EDGE.length, NRUNE: RUNE.length },
-  uniforms: { tScene: { value: null }, tDesc: { value: desc }, uDir: { value: SHAPES.length }, uRuneIdx: { value: RUNE_IDX }, uRampIdx: { value: RAMP_IDX }, uEdgeIdx: { value: EDGE_IDX }, uTime: U.uTime, uExpo: { value: 1 } },
-  vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
-  fragmentShader: /* glsl */`
-  uniform sampler2D tScene; uniform highp sampler2D tDesc; uniform float uDir, uTime; uniform float uRuneIdx[NRUNE]; uniform float uExpo; uniform float uRampIdx[NRAMP]; uniform float uEdgeIdx[NEDGE];
-  void main(){
-    ivec2 cell = ivec2(gl_FragCoord.xy);
-    ivec2 b = cell*ivec2(SX,SY);
-    vec3 sum = vec3(0.); float bl = -1.; vec4 best = vec4(0.);
-    float sub[9];
-    for(int k=0;k<9;k++) sub[k] = 0.;
-    for(int j=0;j<SY;j++) for(int i=0;i<SX;i++){
-      vec4 t = texelFetch(tScene, b+ivec2(i,j), 0); t.rgb *= uExpo;
-      sum += t.rgb; float l = dot(t.rgb, vec3(.3,.59,.11));
-      if(l>bl){ bl=l; best=t; }
-      sub[(2-(j*3)/SY)*3 + (i*3)/SX] += l;
-    }
-    vec3 avg = sum/float(SX*SY);
-    float g; vec3 col;
-    if(best.a > .95){
-      float w = 9./float(SX*SY);
-      vec3 t0, t1, t2;
-      for(int k=0;k<3;k++){
-        vec3 v = vec3(sub[k*3], sub[k*3+1], sub[k*3+2])*w;
-        v = pow(clamp(v*1.7, 0., 1.), vec3(1.1));
-        if(k==0) t0=v; else if(k==1) t1=v; else t2=v;
-      }
-      float mean = (dot(t0,vec3(1.))+dot(t1,vec3(1.))+dot(t2,vec3(1.)))/9.;
-      float hi = max(max(max(t0.x,t0.y),max(t0.z,t1.x)),max(max(t1.y,t1.z),max(t2.x,max(t2.y,t2.z))));
-      float lo = min(min(min(t0.x,t0.y),min(t0.z,t1.x)),min(min(t1.y,t1.z),min(t2.x,min(t2.y,t2.z))));
-      // flat: density ramp
-      float ri = clamp(floor(mean*float(NRAMP-1)+.5), 0., float(NRAMP-1));
-      g = 0.;
-      for(int k=0;k<NRAMP;k++) if(float(k)==ri) g = uRampIdx[k];
-      // strong contrast inside the cell: pick the contour glyph whose 3x3 shape fits best
-      if(hi - lo > .34){
-        int gi = int(g);
-        vec3 a0 = texelFetch(tDesc, ivec2(gi,0), 0).rgb - t0, a1 = texelFetch(tDesc, ivec2(gi,1), 0).rgb - t1, a2 = texelFetch(tDesc, ivec2(gi,2), 0).rgb - t2;
-        float bc = (dot(a0,a0)+dot(a1,a1)+dot(a2,a2))*.85;
-        for(int k=0;k<NEDGE;k++){
-          int s = int(uEdgeIdx[k]);
-          vec3 d0 = texelFetch(tDesc, ivec2(s,0), 0).rgb - t0;
-          vec3 d1 = texelFetch(tDesc, ivec2(s,1), 0).rgb - t1;
-          vec3 d2 = texelFetch(tDesc, ivec2(s,2), 0).rgb - t2;
-          float c = dot(d0,d0) + dot(d1,d1) + dot(d2,d2);
-          if(c < bc){ bc = c; g = uEdgeIdx[k]; }
-        }
-      }
-      col = mix(avg, best.rgb, .55);
-    } else if(best.a > .935){
-      // water: drifting ~ - = by ripple brightness
-      float wl = clamp(dot(avg, vec3(.3,.59,.11))*3., 0., 1.);
-      float hv = fract(sin(dot(vec2(cell) + vec2(floor(uTime*2.), 0.), vec2(19.7,47.3)))*7351.1);
-      g = wl < .12 ? (hv < .5 ? 14. : 0.) : wl < .3 ? 13. : wl < .6 ? 94. : (hv < .5 ? 29. : 94.);   // . - ~ =
-      col = mix(avg, best.rgb, .5)*1.4;
-    } else if(best.a > .905){
-      // foliage: uniform round glyphs, density by light, a little per-cell variety
-      float fl = clamp(dot(avg, vec3(.3,.59,.11))*2.2, 0., 1.);
-      float hv = fract(sin(dot(vec2(cell), vec2(27.1,61.7)))*5317.3);
-      float k = fl + (hv-.5)*.22;
-      g = k < .16 ? 14. : k < .3 ? 26. : k < .5 ? 79. : k < .68 ? (hv < .5 ? 47. : 16.) : k < .85 ? (hv < .5 ? 49. : 16.) : (hv < .6 ? 32. : 24.); // . : o O0 Q0 @8
-      col = mix(avg, best.rgb, .4);
-    } else if(best.a < .035 && bl > .02){
-      float hs = fract(sin(dot(vec2(cell), vec2(41.3,17.7)))*9137.1);
-      g = hs < .45 ? 10. : hs < .75 ? 79. : hs < .9 ? 14. : 11.;   // * o . +
-      col = best.rgb;
-    } else if(best.a > .09){
-      float a = (best.a-.1)/.8;
-      g = uDir + mod(floor(a*4.+.5), 4.);
-      col = mix(avg, best.rgb, .6)*1.8;
-    } else {
-      float h = fract(sin(dot(vec2(cell)+floor(uTime*9.), vec2(12.9898,78.233)))*43758.5453);
-      int ri = int(floor(h*float(NRUNE)));
-      float rg = 0.;
-      for(int k=0;k<NRUNE;k++) if(k==ri) rg = uRuneIdx[k];
-      g = rg; col = best.rgb;
-    }
-    if(bl < .014 || (best.a > .95 && bl < .05)) g = 0.;
-    float m = max(max(col.r,col.g),col.b);
-    vec3 cc = m > 0. ? col/m * min(1.15, .22 + m*1.5) : col;
-    gl_FragColor = vec4(min(cc,vec3(1.)), g/255.);
-  }`,
-});
-// per-cell orientation: strokes get their exact screen angle, other glyphs lean slightly along contours
-const auxMat = new THREE.ShaderMaterial({
-  defines: { SX, SY },
-  uniforms: { tScene: { value: null }, uExpo: { value: 1 } },
-  vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
-  fragmentShader: /* glsl */`
-  uniform sampler2D tScene; uniform float uExpo;
-  void main(){
-    ivec2 cell = ivec2(gl_FragCoord.xy), b = cell*ivec2(SX,SY);
-    float bl = -1.; vec4 best = vec4(0.); float gx = 0., gy = 0., tot = 0.;
-    for(int j=0;j<SY;j++) for(int i=0;i<SX;i++){
-      vec4 t = texelFetch(tScene, b+ivec2(i,j), 0);
-      float l = dot(t.rgb, vec3(.3,.59,.11))*uExpo;
-      if(l>bl){ bl=l; best=t; }
-      gx += l*(float(i)-float(SX-1)*.5); gy += l*(float(j)-float(SY-1)*.5); tot += l;
-    }
-    float rot = 0., kind = 0., str = 0.;
-    if(best.a > .09 && best.a <= .9){
-      float ang = (best.a-.1)/.8*3.14159265;       // blade / rain direction, 0 = horizontal
-      rot = ang - 1.5707963; kind = 1.;
-    } else if(tot > 1e-4){
-      float th = atan(gy*.5, gx);                  // luminance gradient direction (cells are ~2:1)
-      str = clamp(length(vec2(gx, gy*.5))/(tot+.05)*1.4, 0., 1.);
-      rot = .32*sin(2.*th)*str;
-    }
-    gl_FragColor = vec4(rot/3.14159265 + .5, kind, str, 1.);
-  }`,
-});
 const brightMat = new THREE.ShaderMaterial({
   uniforms: { tScene: { value: null }, uTh: { value: canHalf ? 1.0 : .82 } }, vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: `uniform sampler2D tScene; uniform float uTh; varying vec2 vUv;
@@ -2003,57 +1961,16 @@ const blurMat = new THREE.ShaderMaterial({
   }`,
 });
 const finalMat = new THREE.ShaderMaterial({
-  uniforms: { tCell: { value: null }, tAux: { value: null }, uDirV: { value: SHAPES.length + 2 }, uT: U.uTime, uNb: { value: 1 }, tRaw: { value: null }, uRaw: { value: 0 }, tAtlas: { value: atlas }, tBloom: { value: null }, uCellPx: { value: new THREE.Vector2() }, uGridPx: { value: new THREE.Vector2() }, uGlyphN: { value: GLYPHS.length }, uBloomK: { value: .95 } },
+  uniforms: { tScene: { value: null }, tBloom: { value: null }, uBloomK: { value: .7 }, uRaw: { value: 0 } },
   vertexShader: QUAD_VS, depthTest: false, depthWrite: false,
   fragmentShader: /* glsl */`
-  uniform sampler2D tCell, tAtlas, tBloom, tRaw, tAux; uniform vec2 uCellPx, uGridPx; uniform float uGlyphN, uBloomK, uRaw, uDirV, uT; uniform int uNb;
+  uniform sampler2D tScene, tBloom; uniform float uBloomK, uRaw; varying vec2 vUv;
   void main(){
-    vec2 fc = gl_FragCoord.xy, cf = fc/uCellPx;
-    if(uRaw > .5){
-      vec3 r = texture2D(tRaw, fc/uGridPx).rgb*2.2 + texture2D(tBloom, fc/uGridPx).rgb*uBloomK*.8;
-      r = 1. - exp(-r*1.6);
-      gl_FragColor = vec4(pow(r, vec3(.8)), 1.);
-      return;
-    }
-    ivec2 cell = ivec2(floor(cf));
-    ivec2 gmax = ivec2(uGridPx/uCellPx) - 1;
-    vec3 acc = vec3(0.);
-    for(int dy=-1; dy<=1; dy++) for(int dx=-1; dx<=1; dx++){
-      if(abs(dx) > uNb || abs(dy) > uNb) continue;
-      ivec2 nc = cell + ivec2(dx,dy);
-      if(nc.x<0 || nc.y<0 || nc.x>gmax.x || nc.y>gmax.y) continue;
-      vec4 cv = texelFetch(tCell, nc, 0);
-      float g = floor(cv.a*255.+.5);
-      if(g < .5) continue;
-      vec4 ax = texelFetch(tAux, nc, 0);
-      bool stroke = ax.g > .5;
-      // hand-placed look: tiny per-cell offset and lean
-      float h1 = fract(sin(dot(vec2(nc), vec2(12.9898,78.233)))*43758.5453);
-      float h2 = fract(h1*91.7 + .13);
-      vec2 jit = (vec2(h1,h2)-.5)*vec2(.16,.1);
-      float rot = (ax.r-.5)*3.14159265 + (stroke ? 0. : (h2-.5)*.12 + sin(uT*1.3 + h1*31.)*.035);
-      jit += stroke ? vec2(0.) : vec2(sin(uT*.9 + h2*40.), cos(uT*1.1 + h1*27.))*.035;
-      if(stroke) g = uDirV;
-      vec2 sc = stroke ? vec2(1.0, 1.12 + h1*.25) : vec2(1.0, 1.0);
-      vec2 d = fc - (vec2(nc) + .5 + jit)*uCellPx;
-      float cs = cos(rot), sn = sin(rot);
-      mat2 R = mat2(cs, -sn, sn, cs);               // rotate into glyph space
-      vec2 k = 1./(uCellPx*sc);
-      vec2 lp = (R*d)*k + .5;
-      if(lp.x < 0. || lp.y < 0. || lp.x > 1. || lp.y > 1.) continue;
-      vec2 ddx = (R*vec2(1.,0.))*k, ddy = (R*vec2(0.,1.))*k;
-      float m = textureGrad(tAtlas, vec2((g+lp.x)/uGlyphN, lp.y), vec2(ddx.x/uGlyphN, ddx.y), vec2(ddy.x/uGlyphN, ddy.y)).r;
-      vec3 col = cv.rgb*(stroke ? .7 + .8*h2 : 1.);
-      acc = max(acc, col*m);
-    }
-    // calm palette: soften saturation and highlights
-    float l = dot(acc, vec3(.3,.59,.11));
-    acc = mix(vec3(l), acc, .66)*vec3(.95,1.,.96);
-    acc = acc/(1. + acc*.35)*1.18;
-    vec3 bloom = texture2D(tBloom, fc/uGridPx).rgb;
-    vec2 q = fc/uGridPx - .5;
-    vec3 bg = vec3(.022,.024,.036)*(1. - dot(q,q)*.9);
-    vec3 c = bg + acc + bloom*uBloomK;
+    vec3 c = texture2D(tScene, vUv).rgb;
+    if(uRaw > .5){ c = 1. - exp(-c*2.6); c = pow(c, vec3(.85)); }
+    else { float l = dot(c, vec3(.3,.59,.11)); c = mix(vec3(l), c, .74)*vec3(.95,1.,1.02); }
+    c += texture2D(tBloom, vUv).rgb*uBloomK;
+    vec2 q = vUv - .5; c *= 1. - dot(q,q)*.6;
     gl_FragColor = vec4(c, 1.);
   }`,
 });
@@ -2065,51 +1982,34 @@ function resize() {
   DPR = Math.min(Q().dpr, devicePixelRatio || 1);
   renderer.setPixelRatio(DPR); renderer.setSize(W, H, false);
   const small = Math.min(W, H) < 600;
-  cellW = (small ? DETAIL.small : DETAIL.big)[detail]; cellH = Math.round(cellW * 1.75);
-  cols = Math.ceil(W / cellW); rows = Math.ceil(H / cellH);
-  [sceneRT, cellRT, auxRT, bA, bB, rawRT].forEach(r => r && r.dispose()); rawRT = null;
-  sceneRT = makeRT(cols * SX, rows * SY, { depthBuffer: true, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, type: canHalf ? THREE.HalfFloatType : THREE.UnsignedByteType });
-  cellRT = makeRT(cols, rows, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
-  auxRT = makeRT(cols, rows, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
-  const bw = Math.ceil(cols * SX / 3), bh = Math.ceil(rows * SY / 3);
-  bA = makeRT(bw, bh, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, type: canHalf ? THREE.HalfFloatType : THREE.UnsignedByteType });
-  bB = makeRT(bw, bh, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, type: canHalf ? THREE.HalfFloatType : THREE.UnsignedByteType });
-  camera.aspect = (cols * cellW) / (rows * cellH);
-  camera.fov = camera.aspect < 1 ? 40 : 34;
+  [sceneRT, bA, bB].forEach(r => r && r.dispose());
+  const pw = Math.round(W * DPR), ph = Math.round(H * DPR);
+  // 8-bit + MSAA works everywhere (half-float MSAA is not supported on some iPhones)
+  sceneRT = makeRT(pw, ph, { depthBuffer: true, samples: Q().msaa, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+  bA = makeRT(Math.ceil(pw / 4), Math.ceil(ph / 4), { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+  bB = makeRT(Math.ceil(pw / 4), Math.ceil(ph / 4), { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+  camera.aspect = W / H;
+  camera.fov = camera.aspect < 1 ? 58 : 46;
   camera.updateProjectionMatrix();
-  U.uRes.value.set(cols * cellW, rows * cellH);
-  finalMat.uniforms.uCellPx.value.set(cellW * DPR, cellH * DPR);
-  finalMat.uniforms.uGridPx.value.set(cols * cellW * DPR, rows * cellH * DPR);
-  grass.geo.instanceCount = Math.floor(grass.N * (small ? .7 : 1) * Q().grass);
-  finalMat.uniforms.uNb.value = Q().nb;
+  U.uRes.value.set(W, H);
+  U.uAscii.value = asciiOn ? 1 : 0;
+  U.uCellK.value = CELLK[detail] * (small ? .9 : 1);
+  grass.geo.instanceCount = Math.floor(grass.N * (small ? .8 : 1) * Q().grass);
   propCenter = null;
-  if (!asciiOn) {
-    const rs = Math.min(1, 1.6 / DPR);
-    // 8-bit + MSAA works everywhere (half-float MSAA is not supported on some iPhones)
-    rawRT = makeRT(Math.round(cols * cellW * DPR * rs), Math.round(rows * cellH * DPR * rs), { depthBuffer: true, samples: 4, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
-  }
   finalMat.uniforms.uRaw.value = asciiOn ? 0 : 1;
-  brightMat.uniforms.uTh.value = asciiOn && canHalf ? 1.0 : .8;
+  brightMat.uniforms.uTh.value = .82;
 }
 addEventListener('resize', resize);
 
 function render() {
-  if (asciiOn) {
-    renderer.setRenderTarget(sceneRT); renderer.render(scene, camera);
-    cellMat.uniforms.tScene.value = sceneRT.texture; pass(cellMat, cellRT);
-    auxMat.uniforms.tScene.value = sceneRT.texture; auxMat.uniforms.uExpo.value = cellMat.uniforms.uExpo.value; pass(auxMat, auxRT);
-    brightMat.uniforms.tScene.value = sceneRT.texture; pass(brightMat, bA);
-  } else {
-    renderer.setRenderTarget(rawRT); renderer.render(scene, camera);
-    brightMat.uniforms.tScene.value = rawRT.texture; pass(brightMat, bA);
-    finalMat.uniforms.tRaw.value = rawRT.texture;
-  }
+  renderer.setRenderTarget(sceneRT); renderer.render(scene, camera);
+  brightMat.uniforms.tScene.value = sceneRT.texture; pass(brightMat, bA);
   const bw = bA.width, bh = bA.height;
   for (let i = 0; i < Q().bloom; i++) {
     blurMat.uniforms.tSrc.value = bA.texture; blurMat.uniforms.uDir.value.set((1 + i) / bw, 0); pass(blurMat, bB);
     blurMat.uniforms.tSrc.value = bB.texture; blurMat.uniforms.uDir.value.set(0, (1 + i) / bh); pass(blurMat, bA);
   }
-  finalMat.uniforms.tCell.value = cellRT.texture; finalMat.uniforms.tAux.value = auxRT.texture; finalMat.uniforms.tBloom.value = bA.texture; pass(finalMat, null);
+  finalMat.uniforms.tScene.value = sceneRT.texture; finalMat.uniforms.tBloom.value = bA.texture; pass(finalMat, null);
   // tags
   placeTag(P.tag, P.x, P.y + 2.75, P.z, P.sayT, P.say);
   if (zone === 'forest') for (const n of NPCS) placeTag(n.tag, n.x, terH(n.x, n.z) + 2.75, n.z, n.sayT, n.say);
