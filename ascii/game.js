@@ -56,6 +56,8 @@ try {
   const ff = new FontFace('AsciiMono', 'url(./vendor/jetbrains-mono-latin-500-normal.woff2)');
   await Promise.race([ff.load().then(f => document.fonts.add(f)), new Promise(r => setTimeout(r, 2500))]);
 } catch (_) { }
+let DEFAULT_EVENTS = [];
+try { DEFAULT_EVENTS = await (await fetch('./events.json?v=' + Date.now())).json(); } catch (_) { DEFAULT_EVENTS = []; }
 const { atlas, desc } = (() => {
   const gw = 40, gh = 70, c = document.createElement('canvas');
   c.width = GLYPHS.length * gw; c.height = gh;
@@ -114,11 +116,41 @@ const U = {
   uWet: { value: 0 },
   uPN: { value: new THREE.Vector3(0, 0, 1e9) },
 };
+/* terrain: 1 m heightmap + water mask, 256×256 m centred on the origin (RG32F texture, read in shaders) */
+const TN = 257, THALF = 128;
+const TER = { h: new Float32Array(TN * TN), w: new Float32Array(TN * TN), data: new Float32Array(TN * TN * 2), dirty: false };
+TER.tex = new THREE.DataTexture(TER.data, TN, TN, THREE.RGFormat, THREE.FloatType);
+TER.tex.minFilter = TER.tex.magFilter = THREE.NearestFilter; TER.tex.needsUpdate = true;
+U.tTer = { value: TER.tex };
+function terSample(a, x, z) {
+  const gx = clamp(x + THALF, 0, TN - 1.001), gz = clamp(z + THALF, 0, TN - 1.001), i = gx | 0, j = gz | 0, fx = gx - i, fz = gz - j, k = j * TN + i;
+  return (a[k] * (1 - fx) + a[k + 1] * fx) * (1 - fz) + (a[k + TN] * (1 - fx) + a[k + TN + 1] * fx) * fz;
+}
+const terH = (x, z) => terSample(TER.h, x, z), terW = (x, z) => terSample(TER.w, x, z);
+function terUpload() { for (let k = 0; k < TN * TN; k++) { TER.data[k * 2] = TER.h[k]; TER.data[k * 2 + 1] = TER.w[k]; } TER.tex.needsUpdate = true; }
+function b64e(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
+function b64d(s) { const b = atob(s), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+function terPack() {
+  const h = new Int16Array(TN * TN), w = new Uint8Array(TN * TN);
+  for (let k = 0; k < TN * TN; k++) { h[k] = Math.round(clamp(TER.h[k], -300, 300) * 100); w[k] = Math.round(clamp(TER.w[k], 0, 1) * 255); }
+  return { n: TN, h: b64e(new Uint8Array(h.buffer)), w: b64e(w) };
+}
+function terUnpack(t) {
+  const h = new Int16Array(b64d(t.h).buffer), w = b64d(t.w);
+  for (let k = 0; k < TN * TN; k++) { TER.h[k] = (h[k] || 0) / 100; TER.w[k] = (w[k] || 0) / 255; }
+  terUpload();
+}
 const COMMON = /* glsl */`
 uniform float uTime; uniform vec3 uAmb; uniform vec3 uMoonDir; uniform vec3 uMoonCol;
 uniform vec3 uLP[${MAXL}]; uniform vec3 uLC[${MAXL}]; uniform float uLR[${MAXL}]; uniform int uNL;
 uniform vec3 uFogCol; uniform float uFogD; uniform vec2 uWind; uniform float uWindS;
 uniform vec3 uPlayer; uniform vec3 uFocus; uniform vec2 uRes; uniform float uWet; uniform vec3 uPN;
+uniform highp sampler2D tTer;
+vec2 terS(vec2 xz){
+  vec2 g = clamp(xz + 128., 0., 255.999); ivec2 i = ivec2(floor(g)); vec2 f = fract(g);
+  vec2 a = texelFetch(tTer, i, 0).rg, b = texelFetch(tTer, i+ivec2(1,0), 0).rg, c = texelFetch(tTer, i+ivec2(0,1), 0).rg, d = texelFetch(tTer, i+ivec2(1,1), 0).rg;
+  return mix(mix(a,b,f.x), mix(c,d,f.x), f.y);
+}
 float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
 float noise(vec2 p){ vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.-2.*f);
   return mix(mix(hash(i),hash(i+vec2(1,0)),u.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),u.x), u.y); }
@@ -135,7 +167,7 @@ float pathZ(float x){ return sin(x*.05)*6.+sin(x*.13)*1.5; }
 
 const STD_VS = COMMON + /* glsl */`
 uniform float uSway;
-varying vec3 vP;
+varying vec3 vP; varying vec4 vCl; varying float vVD;
 void main(){
   mat4 m = modelMatrix;
   #ifdef USE_INSTANCING
@@ -148,12 +180,17 @@ void main(){
     wp.xz += uWind*(s*.3+.5)*uWindS*h*.06*uSway;
   }
   vP = wp.xyz;
-  gl_Position = projectionMatrix*viewMatrix*wp;
+  vec4 vp = viewMatrix*wp; vVD = -vp.z; vCl = projectionMatrix*vp;
+  gl_Position = vCl;
 }`;
 const STD_FS = COMMON + /* glsl */`
 uniform vec3 uColor; uniform vec3 uEmis; uniform float uRim; uniform float uMode; uniform float uPat; uniform vec3 uFill;
-varying vec3 vP;
+varying vec3 vP; varying vec4 vCl; varying float vVD;
 void main(){
+  if(uMode > .905 && uMode < .935 && vVD < uPN.z - 1.){        // foliage between camera and hero: cut a window
+    vec2 dd = (vCl.xy/vCl.w - uPN.xy)*vec2(uRes.x/uRes.y, 1.);
+    if(length(dd) < .26 + .04*hash(floor(gl_FragCoord.xy*.3))) discard;
+  }
   vec3 n = normalize(cross(dFdx(vP),dFdy(vP)));
   vec3 V = normalize(cameraPosition-vP);
   if(dot(n,V)<0.) n=-n;
@@ -193,10 +230,19 @@ dungeon.visible = false;
 /* ---------- ground ---------- */
 const groundMat = new THREE.ShaderMaterial({
   uniforms: { ...U },
-  vertexShader: COMMON + `varying vec3 vP; void main(){ vec4 wp=modelMatrix*vec4(position,1.); vP=wp.xyz; gl_Position=projectionMatrix*viewMatrix*wp; }`,
+  vertexShader: COMMON + `varying vec3 vP; void main(){ vec4 wp=modelMatrix*vec4(position,1.); wp.y = terS(wp.xz).x; vP=wp.xyz; gl_Position=projectionMatrix*viewMatrix*wp; }`,
   fragmentShader: COMMON + /* glsl */`
   varying vec3 vP;
   void main(){
+    vec2 tw = terS(vP.xz);
+    vec3 nrm = normalize(cross(dFdx(vP), dFdy(vP))); if(nrm.y < 0.) nrm = -nrm;
+    if(tw.y > .45){
+      // water: drifting ripples, moon glints
+      float rip = noise(vec2(vP.x*1.3 + uTime*.5, vP.z*2.4 - uTime*1.2))*.6 + noise(vP.xz*4.1 + uTime*vec2(.4,-.9))*.4;
+      vec3 wc = vec3(.05,.13,.22)*(.55 + 1.1*rip) + vec3(.3,.42,.6)*pow(rip, 5.)*2.;
+      vec3 cw = wc*(lightAt(vP, vec3(0,1,0))*2. + .15);
+      gl_FragColor = vec4(fogIt(cw, vP), .945); return;
+    }
     float dp = abs(vP.z-pathZ(vP.x));
     vec3 soil = vec3(.012,.022,.015)*(.4+.9*noise(vP.xz*.8));
     float pm = 1.-smoothstep(1.35,1.9,dp+(noise(vP.xz*1.4)-.5)*.7);
@@ -210,11 +256,15 @@ const groundMat = new THREE.ShaderMaterial({
     float st = smoothstep(.02,.16,d2-d1);
     vec3 stone = vec3(.15,.145,.135)*(.45+.7*hash(cid))*(.1+.9*st)*(.8+.4*noise(vP.xz*6.));
     vec3 base = mix(soil,stone,pm);
-    vec3 c = base*lightAt(vP,vec3(0,1,0));
+    float steep = smoothstep(.22, .5, 1. - nrm.y);                      // rocky cliffs on steep slopes
+    base = mix(base, vec3(.16,.16,.15)*(.5+.9*noise(vP.xz*1.7 + vP.y*2.)), steep);
+    base = mix(base, vec3(.05,.07,.06), smoothstep(.1,.45,tw.y));       // wet banks
+    vec3 c = base*lightAt(vP,nrm);
     gl_FragColor = vec4(fogIt(c,vP),1.);
   }`,
 });
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(260, 260).rotateX(-Math.PI / 2), groundMat);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200, 200, 200).rotateX(-Math.PI / 2), groundMat);
+ground.frustumCulled = false;
 forest.add(ground);
 
 /* ---------- grass (instanced blades, wind in the vertex shader) ---------- */
@@ -247,7 +297,9 @@ const grass = (() => {
     void main(){
       vec2 c = uFocus.xz;
       vec2 root = c + mod(aI.xy - c + uTile*.5, uTile) - uTile*.5;
+      vec2 tsw = terS(root); float ty = tsw.x;
       float h = .38 + aI.w*.45;
+      h *= 1. - smoothstep(.12, .4, tsw.y);
       h *= smoothstep(1.3, 2.3, abs(root.y - pathZ(root.x)));
       if(root.x>uB0.x && root.x<uB1.x && root.y>uB0.y && root.y<uB1.y) h = 0.;
       h *= smoothstep(1.2, 2.2, length(root-uCamp));
@@ -268,9 +320,9 @@ const grass = (() => {
       float droop = 1. - .38*bl;
       float ca = cos(aI.z), sa = sin(aI.z);
       vec2 side = vec2(ca,sa) * position.x * .11 * (1.-y*.7);
-      vec3 wp = vec3(root.x + side.x + bv.x*y*y*h, y*h*droop, root.y + side.y + bv.y*y*y*h);
-      vec3 tip = vec3(root.x + bv.x*h, h*droop, root.y + bv.y*h);
-      vec4 c0 = projectionMatrix*viewMatrix*vec4(root.x,0.,root.y,1.);
+      vec3 wp = vec3(root.x + side.x + bv.x*y*y*h, ty + y*h*droop, root.y + side.y + bv.y*y*y*h);
+      vec3 tip = vec3(root.x + bv.x*h, ty + h*droop, root.y + bv.y*h);
+      vec4 c0 = projectionMatrix*viewMatrix*vec4(root.x,ty,root.y,1.);
       vec4 c1 = projectionMatrix*viewMatrix*vec4(tip,1.);
       vec2 dd = (c1.xy/c1.w - c0.xy/c0.w)*uRes;
       float ang = atan(dd.y, dd.x); if(ang<0.) ang += 3.14159265;
@@ -303,17 +355,23 @@ const circles = new Map();            // spatial hash of round obstacles
 const boxes = [];                     // axis-aligned obstacles in the forest
 function addCircle(x, z, r) { const k = (Math.floor(x / 4)) + ',' + (Math.floor(z / 4)); if (!circles.has(k)) circles.set(k, []); circles.get(k).push({ x, z, r }); }
 
-/* =========== props: the editable layer of the map (trees, rocks, walls, torches…) ===========
-   The map is plain data ({props, items}) so the editor, saves and — later — the server can share it. */
+/* =========== props: the editable layer of the map (trees, rocks, houses, torches…) ===========
+   The map is plain data ({props, items, ter, events}) so the editor, saves and — later — the server share it.
+   Prop: {id, t, x, z, y (offset above ground), r (yaw), rx, rz (tilt), s (scale), tag (name for events)} */
 const PROP = {
-  tree:  { name: 'Дерево', icon: '🌲', r: .45, snap: 0 },
-  bush:  { name: 'Куст',   icon: '🌿', r: .45, snap: 0 },
-  rock:  { name: 'Камень', icon: '🪨', r: .55, snap: 0 },
-  wall:  { name: 'Стена',  icon: '🧱', box: .5, snap: 1 },
-  crate: { name: 'Ящик',   icon: '📦', box: .4, snap: .5 },
-  torch: { name: 'Факел',  icon: '🔥', r: .2, snap: 0 },
+  tree:  { name: 'Дерево', icon: '🌲', r: .45, hit: 1.4 },
+  bush:  { name: 'Куст',   icon: '🌿', hit: .8 },
+  rock:  { name: 'Камень', icon: '🪨', r: .55, hit: 1 },
+  house: { name: 'Дом',    icon: '🏠', box: [2.1, 1.7], hit: 2.6 },
+  wall:  { name: 'Стена',  icon: '🧱', box: [.5, .5], hit: .9 },
+  fence: { name: 'Забор',  icon: '🪵', box: [1, .12], hit: 1.1 },
+  crate: { name: 'Ящик',   icon: '📦', box: [.4, .4], hit: .8 },
+  torch: { name: 'Факел',  icon: '🔥', r: .2, hit: .7 },
+  area:  { name: 'Зона события', icon: '🎯', area: true, hit: 1.5 },
 };
 const propG = new THREE.Group(); forest.add(propG);
+const selG = new THREE.Group(); forest.add(selG);
+const areaG = new THREE.Group(); areaG.visible = false; forest.add(areaG);
 const propBoxes = [];
 const PGEO = {
   trunk: new THREE.CylinderGeometry(.16, .26, 1, 6).translate(0, .5, 0),
@@ -324,79 +382,152 @@ const PGEO = {
   crate: new THREE.BoxGeometry(.8, .8, .8).translate(0, .4, 0),
   post: new THREE.CylinderGeometry(.07, .09, 1.5, 5).translate(0, .75, 0),
   bowl: new THREE.CylinderGeometry(.22, .12, .2, 6).translate(0, 1.55, 0),
+  hbody: new THREE.BoxGeometry(4.2, 2.4, 3.4).translate(0, 1.2, 0),
+  hroof: new THREE.ConeGeometry(3.25, 1.8, 4).rotateY(Math.PI / 4).translate(0, 3.3, 0),
+  hdoor: new THREE.BoxGeometry(.9, 1.6, .1).translate(0, .8, 1.71),
+  hwin: new THREE.BoxGeometry(.65, .55, .08),
+  hchim: new THREE.BoxGeometry(.4, 1.2, .4).translate(1.1, 3.7, -.5),
+  fpost: new THREE.BoxGeometry(.13, .95, .13).translate(0, .47, 0),
+  frail: new THREE.BoxGeometry(2, .09, .06),
+  ring: new THREE.RingGeometry(.94, 1, 40).rotateX(-Math.PI / 2),
 };
 const PMAT = {
   trunk: stdMat({ color: [.5, .42, .34], pat: 3 }), leaf: stdMat({ color: [.66, .76, .82], pat: 3, sway: 1, rim: .35, mode: .92 }),
   bush: stdMat({ color: [.42, .62, .45], pat: 3, sway: 1 }), rock: stdMat({ color: [.42, .42, .4], pat: 3 }),
   wall: stdMat({ color: [.5, .5, .47], pat: 1 }), crate: stdMat({ color: [.55, .4, .25], pat: 3 }),
   post: stdMat({ color: [.3, .22, .15] }), bowl: stdMat({ color: [.25, .2, .16], emis: [.5, .2, .05] }),
+  hwall: stdMat({ color: [.55, .47, .38], pat: 1, rim: .4 }), hroof: stdMat({ color: [.42, .2, .16], pat: 3, rim: .4 }),
+  dark: stdMat({ color: [.08, .06, .05] }), win: stdMat({ color: [0, 0, 0], emis: [1.5, .95, .4] }),
+  wood: stdMat({ color: [.45, .33, .22], pat: 3 }), area: stdMat({ color: [0, 0, 0], emis: [1.4, .3, 1.2] }),
 };
-// each type → list of [geometry, material, (prop, m4) => fill matrix]
-const _q = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3(), _s = new THREE.Vector3();
+// part list per type: [geometry, material, local matrix (prop, m4)]; the prop's own transform is applied on top
+const _q = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3(), _s = new THREE.Vector3(), _m = new THREE.Matrix4();
+const loc = (x, y, z, sx = 1, sy = 1, sz = 1, q = null) => (p, m) => m.compose(_v.set(x, y, z), q ? q(p) : _q.identity(), _s.set(sx, sy, sz));
 // canopy = cluster of round blobs (offset x, height, offset z, radius)
 const CANOPY = [[0, 3.2, 0, 1.45], [.95, 2.85, .35, .95], [-.85, 2.9, .45, 1.0], [.2, 2.75, -.95, .95], [-.35, 4.1, -.2, .95], [.55, 3.9, .6, .8]];
 const PPARTS = {
-  tree: [[PGEO.trunk, PMAT.trunk, (p, m) => m.compose(_v.set(p.x, 0, p.z), _q.identity(), _s.set(p.s, 2.2 * p.s, p.s))],
-         ...CANOPY.map(([ox, oy, oz, r]) => [PGEO.blob, PMAT.leaf, (p, m) => {
-           const c = Math.cos(p.r), sn = Math.sin(p.r);
-           return m.compose(_v.set(p.x + (ox * c - oz * sn) * p.s, oy * p.s, p.z + (ox * sn + oz * c) * p.s), _q.identity(), _s.set(r * p.s, r * .82 * p.s, r * p.s));
-         }])],
-  bush: [[PGEO.ico, PMAT.bush, (p, m) => m.compose(_v.set(p.x, .4 * p.s, p.z), _q.setFromEuler(_e.set(0, p.r, 0)), _s.set(.75 * p.s, .55 * p.s, .75 * p.s))]],
-  rock: [[PGEO.rock, PMAT.rock, (p, m) => m.compose(_v.set(p.x, p.s * .35, p.z), _q.setFromEuler(_e.set(p.r * .7, p.r * 3, p.r * .4)), _s.set(p.s, p.s * .7, p.s))]],
-  wall: [[PGEO.wall, PMAT.wall, (p, m) => m.compose(_v.set(p.x, 0, p.z), _q.identity(), _s.set(1, 1, 1))]],
-  crate: [[PGEO.crate, PMAT.crate, (p, m) => m.compose(_v.set(p.x, 0, p.z), _q.setFromEuler(_e.set(0, p.r, 0)), _s.set(1, 1, 1))]],
-  torch: [[PGEO.post, PMAT.post, (p, m) => m.makeTranslation(p.x, 0, p.z)], [PGEO.bowl, PMAT.bowl, (p, m) => m.makeTranslation(p.x, 0, p.z)]],
+  tree: [[PGEO.trunk, PMAT.trunk, loc(0, 0, 0, 1, 2.2, 1)], ...CANOPY.map(([x, y, z, r]) => [PGEO.blob, PMAT.leaf, loc(x, y, z, r, r * .82, r)])],
+  bush: [[PGEO.ico, PMAT.bush, loc(0, .4, 0, .75, .55, .75)]],
+  rock: [[PGEO.rock, PMAT.rock, loc(0, .35, 0, 1, .7, 1, p => _q.setFromEuler(_e.set(h2(p.id, 1) * 3, 0, h2(p.id, 2) * 3)))]],
+  house: [[PGEO.hbody, PMAT.hwall, loc(0, 0, 0)], [PGEO.hroof, PMAT.hroof, loc(0, 0, 0, 1, 1, .82)], [PGEO.hdoor, PMAT.dark, loc(0, 0, 0)],
+          [PGEO.hwin, PMAT.win, loc(-1.35, 1.45, 1.71)], [PGEO.hwin, PMAT.win, loc(1.35, 1.45, 1.71)], [PGEO.hwin, PMAT.win, loc(2.11, 1.45, 0, 1, 1, 1, () => _q.setFromEuler(_e.set(0, Math.PI / 2, 0)))],
+          [PGEO.hchim, PMAT.hwall, loc(0, 0, 0)]],
+  wall: [[PGEO.wall, PMAT.wall, loc(0, 0, 0)]],
+  fence: [[PGEO.fpost, PMAT.wood, loc(-.95, 0, 0)], [PGEO.fpost, PMAT.wood, loc(.95, 0, 0)], [PGEO.frail, PMAT.wood, loc(0, .35, 0)], [PGEO.frail, PMAT.wood, loc(0, .72, 0)]],
+  crate: [[PGEO.crate, PMAT.crate, loc(0, 0, 0)]],
+  torch: [[PGEO.post, PMAT.post, loc(0, 0, 0)], [PGEO.bowl, PMAT.bowl, loc(0, 0, 0)]],
 };
+const propBase = (p, m) => m.compose(_v.set(p.x, terH(p.x, p.z) + (p.y || 0), p.z), _q.setFromEuler(_e.set(p.rx || 0, p.r || 0, p.rz || 0, 'YXZ')), _s.set(p.s || 1, p.s || 1, p.s || 1));
+function propMatrix(p, fill, out) { const base = propBase(p, new THREE.Matrix4()); fill(p, _m); return out.multiplyMatrices(base, _m); }
+
+/* default terrain: a small mountain with a stream running down across the path */
+const RIVER = [[-20, -15], [-17, -10], [-14.5, -5], [-13.5, 0], [-15, 5], [-13, 10], [-9, 15], [-5.5, 21], [-3.5, 28], [1, 36], [5, 46], [7, 60]];
+function distPoly(x, z, pts) {
+  let best = 1e9;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, az] = pts[i], [bx, bz] = pts[i + 1], dx = bx - ax, dz = bz - az, t = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+    best = Math.min(best, Math.hypot(x - ax - dx * t, z - az - dz * t));
+  }
+  return best;
+}
+const MOUNT = { x: -26, z: -24 };
+function genTerrain() {
+  for (let j = 0; j < TN; j++) for (let i = 0; i < TN; i++) {
+    const x = i - THALF, z = j - THALF, k = j * TN + i;
+    const d = Math.hypot(x - MOUNT.x, z - MOUNT.z), d2 = Math.hypot(x + 7, z + 40);
+    let h = 7.5 * Math.exp(-((d / 10.5) ** 2)) + 2.4 * Math.exp(-((d / 19) ** 2)) + Math.exp(-((d / 15) ** 2)) * (fbm(x * .13 + 9, z * .13 + 3) - .45) * 4.5;
+    h += 3 * Math.exp(-((d2 / 8) ** 2));
+    const keep = smoothstep(3, 9, Math.abs(z - pathZ(x))) * smoothstep(8, 16, Math.hypot(x - 2, z)) * (1 - smoothstep(10, 4, Math.hypot(x - 40, z - pathZ(40) + 7)));
+    h += (fbm(x * .035 + 4, z * .035 + 8) - .5) * 1.6 * keep;
+    const dr = distPoly(x, z, RIVER) + (vn(x * .35, z * .35) - .5) * .7;
+    const bank = 1 - smoothstep(1.1, 3.4, dr);
+    TER.w[k] = 1 - smoothstep(1.05, 1.6, dr);
+    TER.h[k] = h - .55 * bank;
+  }
+  terUpload(); TER.dirty = true;
+}
+function smoothstep(a, b, x) { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); }
+function defaultAreas(id) {
+  return [{ id: id++, t: 'area', x: MOUNT.x, z: MOUNT.z, s: 3.5, r: 0, tag: 'summit' }, { id: id++, t: 'area', x: -13.6, z: pathZ(-13.6), s: 3, r: 0, tag: 'stream' }];
+}
 function defaultMap() {
+  genTerrain();
   const props = [], items = [], R = mulberry(77);
   let id = 1;
   for (let gx = -120; gx <= 120; gx += 2.3) for (let gz = -120; gz <= 120; gz += 2.3) {
     const x = gx + (h2(gx * 10, gz * 10) - .5) * 2, z = gz + (h2(gz * 10 + 3, gx * 10) - .5) * 2;
     const d = fbm(x * .045 + 51, z * .045 + 12);
     if (h2(gx * 7 + 1, gz * 7) > (d - .47) * 3.4 + .06) continue;
-    if (Math.abs(z - pathZ(x)) < 3.2 || Math.hypot(x - 1, z - 1) < 6.5) continue;
+    if (Math.abs(z - pathZ(x)) < 3.2 || Math.hypot(x - 1, z - 1) < 6.5 || terW(x, z) > .05 || Math.hypot(x - MOUNT.x, z - MOUNT.z) < 4) continue;
     if (x > BLD.x0 - 6 && x < BLD.x1 + 6 && z > BLD.z0 - 5 && z < BLD.z1 + 6) continue;
     props.push({ id: id++, t: 'tree', x: +x.toFixed(2), z: +z.toFixed(2), s: +(.75 + h2(gx, gz * 3) * .75).toFixed(2), r: +(h2(gz, gx) * TAU).toFixed(2) });
   }
   for (let i = 0; i < 260; i++) {
     const x = (R() - .5) * 220, z = (R() - .5) * 220, sc = .25 + R() * .55;
-    if (Math.abs(z - pathZ(x)) < 2.4 || Math.hypot(x, z) < 6) continue;
+    if (Math.abs(z - pathZ(x)) < 2.4 || Math.hypot(x, z) < 6 || terW(x, z) > .3) continue;
     if (x > BLD.x0 - 2 && x < BLD.x1 + 2 && z > BLD.z0 - 2 && z < BLD.z1 + 3) continue;
-    props.push({ id: id++, t: R() < .35 ? 'bush' : 'rock', x: +x.toFixed(2), z: +z.toFixed(2), s: +sc.toFixed(2) * 1.4, r: +(R() * TAU).toFixed(2) });
+    props.push({ id: id++, t: R() < .35 ? 'bush' : 'rock', x: +x.toFixed(2), z: +z.toFixed(2), s: +(sc * 1.4).toFixed(2), r: +(R() * TAU).toFixed(2) });
   }
+  // a little hamlet by the stream, houses set at angles
+  props.push({ id: id++, t: 'house', x: -21, z: 4, s: 1, r: .55, tag: 'mira_house' }, { id: id++, t: 'house', x: -24.5, z: 12.5, s: .9, r: -.35 });
+  for (let k = 0; k < 6; k++) props.push({ id: id++, t: 'fence', x: +(-18 + k * 1.9 * Math.cos(.55)).toFixed(2), z: +(7.6 - k * 1.9 * Math.sin(.55)).toFixed(2), s: 1, r: .55 });
+  props.push(...defaultAreas(id)); id += 2;
   // loot around the clearing and along the path
   const loot = [['apple', 3, 4], ['stick', 2, 2], ['stone', 3, 2], ['mushroom', 3, 1], ['coin', 3, 7], ['herb', 2, 2], ['potion', 1, 1], ['crystal', 1, 1], ['apple', 4, 1], ['scroll', 1, 1]];
   loot.forEach(([d, k, n], j) => { for (let q = 0; q < k; q++) {
     const x = -4 + j * 3.6 + (R() - .5) * 3, z = pathZ(x) + (R() < .5 ? -1 : 1) * (2 + R() * 2.5);
     items.push({ uid: 'm' + j + '_' + q, d, n, x: +x.toFixed(2), z: +z.toFixed(2), zone: 'forest' });
   } });
-  return { v: 1, nextId: id, props, items };
+  return { v: 1, nextId: id, props, items, ter: terPack() };
 }
 let MAP;
 try { MAP = JSON.parse(localStorage.getItem('ascii-map-v1') || 'null'); } catch (_) { MAP = null; }
 if (!MAP || MAP.v !== 1) MAP = defaultMap();
+else if (!MAP.ter) {                               // older saves: add the mountain & stream, keep the user's edits
+  genTerrain(); MAP.ter = terPack();
+  MAP.props = MAP.props.filter(p => !(p.t === 'tree' && terW(p.x, p.z) > .05));
+  if (!MAP.props.some(p => p.t === 'area')) { MAP.props.push(...defaultAreas(MAP.nextId)); MAP.nextId += 2; }
+} else terUnpack(MAP.ter);
 let staticCircles = null;
-function rebuildProps() {
+const hiddenTags = {};                             // set by events: show/hide props by tag
+function rebuildProps(exclude = null) {
   if (!staticCircles) staticCircles = [...circles.values()].flat();
-  for (const c of [...propG.children]) { propG.remove(c); c.dispose(); }
+  for (const c of [...propG.children, ...areaG.children]) { c.parent.remove(c); c.dispose?.(); }
   circles.clear(); for (const c of staticCircles) addCircle(c.x, c.z, c.r);
   propBoxes.length = 0;
-  const byT = {};
+  const byT = {}, m4 = new THREE.Matrix4();
   for (const p of MAP.props) {
+    const def = PROP[p.t]; if (!def || (p.tag && hiddenTags[p.tag])) continue;
+    if (def.area) { const r = new THREE.Mesh(PGEO.ring, PMAT.area); r.position.set(p.x, terH(p.x, p.z) + .08, p.z); r.scale.setScalar(p.s || 3); areaG.add(r); continue; }
+    if (p === exclude) continue;
     (byT[p.t] ||= []).push(p);
-    const def = PROP[p.t]; if (!def) continue;
-    if (def.box) propBoxes.push({ x0: p.x - def.box, x1: p.x + def.box, z0: p.z - def.box, z1: p.z + def.box });
-    else if (p.t !== 'bush' && !(p.t === 'rock' && p.s < .55)) addCircle(p.x, p.z, def.r * (p.t === 'torch' ? 1 : p.s * .8));
+    if ((p.y || 0) > 2) continue;                    // floating things do not block
+    const sc = p.s || 1;
+    if (def.box) propBoxes.push({ x: p.x, z: p.z, c: Math.cos(p.r || 0), s: Math.sin(p.r || 0), hx: def.box[0] * sc, hz: def.box[1] * sc });
+    else if (def.r && !(p.t === 'rock' && sc < .55)) addCircle(p.x, p.z, def.r * (p.t === 'torch' ? 1 : sc * .8));
   }
-  const m4 = new THREE.Matrix4();
   for (const t in byT) for (const [geo, mat, fill] of PPARTS[t] || []) {
     const list = byT[t], im = new THREE.InstancedMesh(geo, mat, list.length);
-    list.forEach((p, i) => { fill(p, m4); im.setMatrixAt(i, m4); });
+    list.forEach((p, i) => im.setMatrixAt(i, propMatrix(p, fill, m4)));
     im.frustumCulled = false; propG.add(im);
   }
 }
+/* the selected prop is drawn on its own so moving / rotating it is cheap */
+function buildSel(p) {
+  for (const c of [...selG.children]) selG.remove(c);
+  if (!p || !PPARTS[p.t]) return;
+  for (const [geo, mat] of PPARTS[p.t]) { const m = new THREE.Mesh(geo, mat); m.matrixAutoUpdate = false; m.frustumCulled = false; selG.add(m); }
+  updateSel(p);
+}
+function updateSel(p) { if (!p || !PPARTS[p.t]) return; PPARTS[p.t].forEach(([, , fill], i) => { const m = selG.children[i]; if (m) propMatrix(p, fill, m.matrix); }); }
 let mapSaveT = 0;
-function saveMap() { clearTimeout(mapSaveT); mapSaveT = setTimeout(() => { try { localStorage.setItem('ascii-map-v1', JSON.stringify(MAP)); } catch (_) { toast('карта слишком большая для сохранения'); } }, 300); }
+function saveMap() {
+  clearTimeout(mapSaveT);
+  mapSaveT = setTimeout(() => {
+    if (TER.dirty) { MAP.ter = terPack(); TER.dirty = false; }
+    try { localStorage.setItem('ascii-map-v1', JSON.stringify(MAP)); } catch (_) { toast('карта слишком большая для сохранения'); }
+  }, 400);
+}
 
 /* ruins with a doorway into the depths */
 const torchPos = [];
@@ -720,7 +851,7 @@ function dSolid(x, z) {
 /* ---------- collision ---------- */
 let zone = 'forest';
 function fSolid(x, z, rad) {
-  for (const b of propBoxes) if (x > b.x0 - rad && x < b.x1 + rad && z > b.z0 - rad && z < b.z1 + rad) return true;
+  for (const b of propBoxes) { const dx = x - b.x, dz = z - b.z; if (Math.abs(dx * b.c - dz * b.s) < b.hx + rad && Math.abs(dx * b.s + dz * b.c) < b.hz + rad) return true; }
   for (const b of boxes) if (x > b.x0 - rad && x < b.x1 + rad && z > b.z0 - rad && z < b.z1 + rad) return true;
   const kx = Math.floor(x / 4), kz = Math.floor(z / 4);
   for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
@@ -741,7 +872,7 @@ const SP = [
   { n: 'Fire', c: [2.4, 1.0, .25], col: '#f94' },
   { n: 'Nature', c: [.8, 2.2, .45], col: '#8f6' },
 ];
-const P = { name: 'Странник', x: 0, z: 3, yaw: 0, hp: 5, cd: 0, spell: 0, inv: 0, hurt: 0, say: '', sayT: 0 };
+const P = { name: 'Странник', x: 0, y: 0, z: 3, yaw: 0, hp: 5, cd: 0, spell: 0, inv: 0, hurt: 0, say: '', sayT: 0 };
 const hero = makeCharacter({ fill: [.16, .14, .12], rimK: 2.2 });
 scene.add(hero.g);
 const NPC_DEF = [['Mira', [.75, .45, .55], [.35, .18, .25]], ['Kael', [.45, .55, .8], [.18, .22, .4]], ['Oru', [.5, .7, .45], [.2, .3, .18]]];
@@ -799,10 +930,14 @@ addEventListener('keydown', e => {
     else if (e.code === 'Escape') closeChat();
     return;
   }
+  const ae = document.activeElement; if (ae && (ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && ae.type === 'text'))) return;
+  if (dlgOpen && (e.code === 'Enter' || e.code === 'Space' || e.code === 'KeyE')) { $('dlgOpts').firstChild?.click(); e.preventDefault(); return; }
   if (e.code === 'Enter') { chatOpen = true; chatEl.style.display = 'block'; chatEl.value = ''; chatEl.focus(); e.preventDefault(); return; }
   keys[e.code] = true;
   if (e.code === 'Space') { if (!ED.on) cast(null); e.preventDefault(); }
   if (e.code === 'KeyE' || e.code === 'KeyF') pickUp();
+  if (ED.on && ED.sel && (e.code === 'Delete' || e.code === 'Backspace') && document.activeElement.tagName !== 'INPUT') { inspEl.querySelector('[data-a=del]')?.click(); }
+  if (ED.on && ED.sel && (e.code === 'KeyR')) { recordProp(ED.sel); ED.sel.r = (ED.sel.r || 0) + (e.shiftKey ? -1 : 1) * Math.PI / 12; edChanged(ED.sel); renderInsp(); }
   if (e.code === 'KeyI' || e.code === 'Tab') { toggleInv(); e.preventDefault(); }
   if (e.code === 'KeyB') setEditor(!ED.on);
   if (e.code === 'Escape') { toggleInv(false); if (ED.on) setEditor(false); }
@@ -857,10 +992,16 @@ function setWx(i) { wxIdx = i; if (zone !== 'dungeon') toast(WX[i].n); hud(); }
 const ray = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -.9), tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3();
 const projGeo = new THREE.IcosahedronGeometry(.2, 0);
 const projMats = SP.map(s => stdMat({ color: [0, 0, 0], emis: s.c.map(v => v * 1.3) }));
-function screenToWorld(x, y, out) {
+function screenToWorld(x, y, out, lift = .9) {
   const nx = x / (cols * cellW) * 2 - 1, ny = (H - y) / (rows * cellH) * 2 - 1;
   ray.setFromCamera({ x: nx, y: ny }, camera);
-  return ray.ray.intersectPlane(plane, out);
+  let h = focus.y;
+  for (let i = 0; i < 5; i++) {                       // walk the ray onto the heightmap
+    plane.constant = -(h + lift);
+    if (!ray.ray.intersectPlane(plane, out)) return null;
+    h = groundY(out.x, out.z);
+  }
+  return out;
 }
 function cast(target) {
   if (P.cd > 0 || fadeDir || ED.on) return;
@@ -877,7 +1018,7 @@ function fireSpell(ch, o, dx, dz, si, mine) {
   ch.g.updateMatrixWorld(true);
   const ob = orbWorld(ch, new THREE.Vector3());
   const m = new THREE.Mesh(projGeo, projMats[si]); m.position.copy(ob); scene.add(m);
-  projs.push({ m, x: ob.x, y: Math.max(ob.y, 1.1), z: ob.z, vx: dx * 15, vz: dz * 15, life: 1.3, sp: si, mine });
+  projs.push({ m, x: ob.x, y: ob.y, z: ob.z, vx: dx * 15, vz: dz * 15, life: 1.3, sp: si, mine });
   // sigil: rune ring around the caster
   const c = SP[si].c, center = { x: o.x, z: o.z };
   for (let i = 0; i < 22; i++) emit({ x: 0, y: .15 + rnd() * .2, z: 0, vy: .9 + rnd() * .6, orbit: { c: center, a: i / 22 * TAU, w: 2.6, r: .9, dr: 1.1 }, r: c[0], g: c[1], b: c[2], size: .09, life: .75, mode: RUNEM });
@@ -938,7 +1079,7 @@ const INV_N = 20;
 let inv = new Array(INV_N).fill(null), worldItems = [];
 const SAVE_KEY = 'ascii-save-v1';
 function spawnWorld(it) {
-  const w = { ...it, g: itemMesh(it.d), ph: rnd() * 10, y: it.y ?? .25, vy: it.vy ?? 0, vx: it.vx ?? 0, vz: it.vz ?? 0 };
+  const w = { ...it, g: itemMesh(it.d), ph: rnd() * 10, y: (it.y ?? .25) + (it.zone === 'forest' ? terH(it.x, it.z) : 0), vy: it.vy ?? 0, vx: it.vx ?? 0, vz: it.vz ?? 0 };
   delete w.vx0; w.g.position.set(w.x, w.y, w.z); w.g.visible = w.zone === zone; itemsG.add(w.g); worldItems.push(w); return w;
 }
 function removeWorld(w) { itemsG.remove(w.g); worldItems.splice(worldItems.indexOf(w), 1); }
@@ -946,11 +1087,12 @@ function plainItem(w) { return { uid: w.uid, d: w.d, n: w.n, x: +w.x.toFixed(2),
 let saveT = 0;
 function saveGame() {
   clearTimeout(saveT);
-  saveT = setTimeout(() => { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ v: 1, inv, items: worldItems.map(plainItem), hp: P.hp })); } catch (_) { } }, 250);
+  saveT = setTimeout(() => { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ v: 1, inv, items: worldItems.map(plainItem), hp: P.hp, ev: { flags: EV.flags, quests: EV.quests, done: EV.done } })); } catch (_) { } }, 250);
 }
 function loadGame() {
   let sv = null; try { sv = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch (_) { }
-  if (sv && sv.v === 1) { inv = (sv.inv || []).concat(new Array(INV_N).fill(null)).slice(0, INV_N).map(x => x && ITEMS[x.d] ? x : null); (sv.items || []).filter(x => ITEMS[x.d]).forEach(spawnWorld); if (sv.hp) P.hp = sv.hp; }
+  if (sv && sv.v === 1) { inv = (sv.inv || []).concat(new Array(INV_N).fill(null)).slice(0, INV_N).map(x => x && ITEMS[x.d] ? x : null); (sv.items || []).filter(x => ITEMS[x.d]).forEach(spawnWorld); if (sv.hp) P.hp = sv.hp;
+    if (sv.ev) { EV.flags = sv.ev.flags || {}; EV.quests = sv.ev.quests || {}; EV.done = sv.ev.done || {}; for (const k in EV.flags) if (k.startsWith('hidden:')) hiddenTags[k.slice(7)] = EV.flags[k]; } }
   else MAP.items.forEach(spawnWorld);
 }
 const uidGen = () => 'u' + Date.now().toString(36) + Math.floor(rnd() * 1e6).toString(36);
@@ -970,6 +1112,7 @@ function act(cmd) {
       const c = ITEMS[w.d].col;
       for (let k = 0; k < 14; k++) emit({ x: w.x, y: w.y + .1, z: w.z, vx: (rnd() - .5) * 2, vy: 1 + rnd() * 2, vz: (rnd() - .5) * 2, r: c[0] * 2, g: c[1] * 2, b: c[2] * 2, size: .06, life: .5, drag: 2, mode: RUNEM });
       say('Сумка', '+' + got + ' ' + ITEMS[w.d].name, ITEMS[w.d].c);
+      setTimeout(() => emitEvent('pickup', { item: w.d, n: got }), 0);
       if (left) w.n = left; else removeWorld(w);
       break;
     }
@@ -980,7 +1123,7 @@ function act(cmd) {
       const a = P.yaw + (rnd() - .5) * .8, sx = Math.sin(a), sz = Math.cos(a);
       let x = P.x + sx * .9, z = P.z + sz * .9;
       if (solid(x, z, .1)) { x = P.x; z = P.z; }
-      spawnWorld({ uid: uidGen(), d: s.d, n, x, z, zone, y: 1.1, vy: 2.2, vx: sx * 1.6, vz: sz * 1.6 });
+      spawnWorld({ uid: uidGen(), d: s.d, n, x, z, zone, y: P.y + 1.1 - groundY(x, z), vy: 2.2, vx: sx * 1.6, vz: sz * 1.6 });
       break;
     }
     case 'move': {
@@ -995,6 +1138,7 @@ function act(cmd) {
       const u = ITEMS[s.d].use; if (!u) { toast('нельзя использовать'); return false; }
       if (u.hp) { if (P.hp >= 5) { toast('здоровье полное'); return false; } P.hp = Math.min(5, P.hp + u.hp); hud(); }
       for (let k = 0; k < 18; k++) emit({ x: P.x, y: .3, z: P.z, orbit: { c: { x: P.x, z: P.z }, a: k / 18 * TAU, w: 3, r: .6, dr: .4 }, vy: 1.5, r: 1.6, g: .5, b: .6, size: .07, life: .7, mode: RUNEM });
+      setTimeout(() => emitEvent('use', { item: s.d }), 0);
       if (--s.n <= 0) inv[cmd.slot] = null;
       break;
     }
@@ -1011,10 +1155,11 @@ function updateItems(dt) {
   for (const w of worldItems) {
     w.g.visible = w.zone === zone && !w.hidden;
     if (!w.g.visible || Math.abs(w.x - focus.x) > 30 || Math.abs(w.z - focus.z) > 30) continue;
-    if (w.vy || w.y > .26) {                               // tossed: fall and settle
+    const fy = (w.zone === 'forest' ? terH(w.x, w.z) : 0) + .25;
+    if (w.vy || w.y > fy + .01 || w.y < fy - .01) {                               // tossed: fall and settle
       w.vy -= 9 * dt; w.y += w.vy * dt;
       const nx = w.x + w.vx * dt, nz = w.z + w.vz * dt; if (!solid(nx, nz, .1)) { w.x = nx; w.z = nz; }
-      if (w.y <= .25) { w.y = .25; w.vy = Math.abs(w.vy) > 1.2 ? -w.vy * .35 : 0; w.vx *= .5; w.vz *= .5; if (!w.vy) w.vx = w.vz = 0; }
+      if (w.y <= fy) { w.y = fy; w.vy = Math.abs(w.vy) > 1.2 ? -w.vy * .35 : 0; w.vx *= .5; w.vz *= .5; if (!w.vy) w.vx = w.vz = 0; }
     }
     const D = ITEMS[w.d];
     w.g.position.set(w.x, w.y + Math.sin(T * 2.2 + w.ph) * .05, w.z); w.g.rotation.y += dt * 1.3;
@@ -1022,14 +1167,20 @@ function updateItems(dt) {
     if (rnd() < dt * .9) emit({ x: w.x + (rnd() - .5) * .3, y: w.y, z: w.z + (rnd() - .5) * .3, vy: .6, r: D.col[0] * 1.6, g: D.col[1] * 1.6, b: D.col[2] * 1.6, size: .05, life: .8, mode: RUNEM });
   }
   // pickup prompt
-  const n = ED.on || fadeDir ? null : nearestItem(1.7);
+  const n = ED.on || fadeDir || dlgOpen ? null : nearestItem(1.7) || nearestNpc(2.4);
   if (n !== pickEl._w) {
     pickEl._w = n;
     pickEl.style.display = n ? 'block' : 'none';
-    if (n) { pickEl.innerHTML = '✋ <b></b>'; pickEl.lastChild.textContent = ITEMS[n.d].name + (n.n > 1 ? ' ×' + n.n : ''); pickEl.lastChild.style.color = ITEMS[n.d].c; }
+    if (n && n.d) { pickEl.innerHTML = '✋ <b></b>'; pickEl.lastChild.textContent = ITEMS[n.d].name + (n.n > 1 ? ' ×' + n.n : ''); pickEl.lastChild.style.color = ITEMS[n.d].c; }
+    else if (n) { pickEl.innerHTML = '💬 <b></b>'; pickEl.lastChild.textContent = n.name; pickEl.lastChild.style.color = n.col; }
   }
 }
-function pickUp() { const w = nearestItem(1.9); if (w) act({ type: 'pickup', uid: w.uid }); }
+function nearestNpc(maxD) { if (zone !== 'forest') return null; let b = null, bd = maxD; for (const n of NPCS) { const d = Math.hypot(n.x - P.x, n.z - P.z); if (d < bd) { bd = d; b = n; } } return b; }
+function talkTo(n) {
+  n.wait = 6; n.mv = false; n.yaw = Math.atan2(P.x - n.x, P.z - n.z); P.yaw = Math.atan2(n.x - P.x, n.z - P.z);
+  if (!emitEvent('talk', { npc: n.name })) { n.say = LINES[rnd() * LINES.length | 0]; n.sayT = 5; say(n.name, n.say, n.col); }
+}
+function pickUp() { if (dlgOpen) return; const w = nearestItem(1.9); if (w) { act({ type: 'pickup', uid: w.uid }); return; } const n = nearestNpc(2.6); if (n) talkTo(n); }
 
 /* inventory panel */
 const invEl = $('inv'), slotsEl = $('slots'), infoEl = $('invInfo'), pickEl = $('pick');
@@ -1067,67 +1218,170 @@ $('bInv').onclick = () => toggleInv();
 $('invClose').onclick = () => toggleInv(false);
 pickEl.onclick = e => { e.stopPropagation(); pickUp(); };
 
-/* =========== map editor =========== */
-const ED = { on: false, tool: 'tree', item: 'apple', fx: 0, fz: 0, undo: [] };
-const edEl = $('editor'), toolsEl = $('edTools');
-const TOOLS = [...Object.keys(PROP).map(k => [k, PROP[k].icon + ' ' + PROP[k].name]), ['item', '🎁 предмет'], ['erase', '⌫ ластик']];
-TOOLS.forEach(([k, label]) => {
-  const b = document.createElement('button'); b.textContent = label; b.dataset.t = k;
-  b.onclick = () => {
-    if (k === 'item' && ED.tool === 'item') { const ks = Object.keys(ITEMS); ED.item = ks[(ks.indexOf(ED.item) + 1) % ks.length]; }
-    ED.tool = k; edTools();
-  };
-  toolsEl.appendChild(b);
-});
-function edTools() {
-  [...toolsEl.children].forEach(b => {
-    b.classList.toggle('on', b.dataset.t === ED.tool);
-    if (b.dataset.t === 'item') b.textContent = '🎁 ' + ITEMS[ED.item].name + (ED.tool === 'item' ? ' ↻' : '');
-  });
+/* =========== map editor (Godot-like: select → inspector, gizmo-free touch controls) =========== */
+const ED = { on: false, tab: 'obj', tool: 'select', item: 'apple', sel: null, fx: 0, fz: 0, zoom: 1.6, undo: [], snap: false,
+  brush: 'raise', bsize: 4, bstr: 1, stroke: null, lastRec: 0, lastRecId: null };
+const edEl = $('editor'), toolsEl = $('edTools'), inspEl = $('insp'), edOptEl = $('edOpt');
+const OBJ_TOOLS = [['select', '👆 выбрать'], ...Object.keys(PROP).map(k => [k, PROP[k].icon + ' ' + PROP[k].name]), ['item', '🎁 предмет'], ['erase', '⌫ ластик']];
+const TER_TOOLS = [['raise', '⛰ поднять'], ['lower', '🕳 опустить'], ['smooth', '〰 сгладить'], ['flatten', '▭ выровнять'], ['water', '💧 вода'], ['dry', '☀ осушить']];
+const groundY = (x, z) => zone === 'dungeon' ? 0 : terH(x, z);
+function edRenderTools() {
+  document.querySelectorAll('.edTabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === ED.tab));
+  toolsEl.innerHTML = '';
+  const list = ED.tab === 'ter' ? TER_TOOLS : OBJ_TOOLS;
+  for (const [k, label] of list) {
+    const b = document.createElement('button'); b.dataset.t = k;
+    b.textContent = k === 'item' ? '🎁 ' + ITEMS[ED.item].name + (ED.tool === 'item' ? ' ↻' : '') : label;
+    b.classList.toggle('on', ED.tab === 'ter' ? ED.brush === k : ED.tool === k);
+    b.onclick = () => {
+      if (ED.tab === 'ter') ED.brush = k;
+      else { if (k === 'item' && ED.tool === 'item') { const ks = Object.keys(ITEMS); ED.item = ks[(ks.indexOf(ED.item) + 1) % ks.length]; } ED.tool = k; if (k !== 'select' && PROP[k] === undefined) select(null); }
+      edRenderTools();
+    };
+    toolsEl.appendChild(b);
+  }
+  edOptEl.innerHTML = '';
+  if (ED.tab === 'ter') {
+    edOptEl.innerHTML = `<label>кисть <input type="range" id="bSize" min="1" max="14" step=".5" value="${ED.bsize}"></label><label>сила <input type="range" id="bStr" min=".1" max="3" step=".1" value="${ED.bstr}"></label>`;
+    $('bSize').oninput = e => { ED.bsize = +e.target.value; }; $('bStr').oninput = e => { ED.bstr = +e.target.value; };
+  }
+  $('edHint').textContent = ED.tab === 'ter' ? 'води пальцем — рисовать · двумя пальцами — двигать и приближать'
+    : ED.tool === 'select' ? 'тап — выбрать объект · тяни объект — двигать · тяни пустое место — камера'
+    : 'тап — поставить · тяни объект — двигать · двумя пальцами — камера';
 }
-const cursor = new THREE.Mesh(new THREE.RingGeometry(.45, .6, 24).rotateX(-Math.PI / 2), stdMat({ color: [0, 0, 0], emis: [.4, 1.4, 1.2] }));
-cursor.visible = false; scene.add(cursor);
+document.querySelectorAll('.edTabs button').forEach(b => b.onclick = () => {
+  if (b.dataset.tab === 'ev') { openEvEd(); return; }
+  ED.tab = b.dataset.tab; if (ED.tab === 'ter') select(null); edRenderTools();
+});
+const cursor = new THREE.Mesh(PGEO.ring, stdMat({ color: [0, 0, 0], emis: [.4, 1.4, 1.2] }));
+cursor.material.depthTest = false; cursor.renderOrder = 10; cursor.visible = false; scene.add(cursor);
+const selRing = new THREE.Mesh(PGEO.ring, stdMat({ color: [0, 0, 0], emis: [1.6, 1.3, .3] }));
+selRing.material.depthTest = false; selRing.renderOrder = 10; selRing.visible = false; scene.add(selRing);
 function setEditor(on) {
   if (on && zone !== 'forest') { toast('редактор работает в лесу'); return; }
   ED.on = on; document.body.classList.toggle('editing', on);
-  edEl.style.display = on ? 'flex' : 'none'; cursor.visible = false;
-  if (on) { toggleInv(false); ED.fx = P.x; ED.fz = P.z; edTools(); toast('Редактор карты'); }
-  else toast('Игра');
+  edEl.style.display = on ? 'flex' : 'none'; cursor.visible = false; areaG.visible = on;
+  if (on) { toggleInv(false); ED.fx = P.x; ED.fz = P.z; edRenderTools(); toast('Редактор карты'); }
+  else { select(null); toast('Игра'); }
 }
 $('bEdit').onclick = () => setEditor(!ED.on);
 $('edExit').onclick = () => setEditor(false);
-function snapPos(t, x, z) { const sn = PROP[t]?.snap; return sn ? [Math.round(x / sn) * sn, Math.round(z / sn) * sn] : [x, z]; }
-function edApply(x, z) {
+$('edSnap').onclick = () => { ED.snap = !ED.snap; $('edSnap').classList.toggle('on', ED.snap); renderInsp(); };
+
+/* undo: snapshots of single props, items or the terrain */
+function recordProp(p, created = false) {
+  const now = performance.now();
+  if (!created && ED.lastRecId === p.id && now - ED.lastRec < 900) { ED.lastRec = now; return; }
+  ED.undo.push({ t: 'prop', id: p.id, before: created ? null : { ...p } }); ED.lastRec = now; ED.lastRecId = p.id;
+  if (ED.undo.length > 60) ED.undo.shift();
+}
+$('edUndo').onclick = () => {
+  const u = ED.undo.pop(); if (!u) return;
+  if (u.t === 'prop') {
+    const i = MAP.props.findIndex(p => p.id === u.id);
+    if (u.before) { if (i >= 0) MAP.props[i] = u.before; else MAP.props.push(u.before); } else if (i >= 0) MAP.props.splice(i, 1);
+    select(null);
+  }
+  if (u.t === 'ter') { TER.h.set(u.h); TER.w.set(u.w); terUpload(); TER.dirty = true; }
+  if (u.t === 'item-') { const w = worldItems.find(w => w.uid === u.uid); if (w) removeWorld(w); MAP.items = MAP.items.filter(i => i.uid !== u.uid); }
+  if (u.t === 'item+') { MAP.items.push(u.it); spawnWorld(u.it); }
+  rebuildProps(ED.sel); saveMap(); saveGame();
+};
+
+/* selection + inspector */
+function select(p) {
+  if (ED.sel === p) return;
+  ED.sel = p; buildSel(p); rebuildProps(p); renderInsp();
+}
+const deg = r => Math.round(((r || 0) * 180 / Math.PI) % 360 + 360) % 360;
+function renderInsp() {
+  const p = ED.sel;
+  if (!p) { inspEl.style.display = 'none'; selRing.visible = false; return; }
+  const def = PROP[p.t], st = ED.snap ? 15 : 1;
+  inspEl.style.display = 'block';
+  inspEl.innerHTML = `<div class="ih"><b>${def.icon} ${def.name}</b><span>#${p.id}</span><button data-a="close">✕</button></div>
+  ${def.area ? '' : `<label><span>поворот</span><input type="range" data-k="r" min="0" max="360" step="${st}" value="${deg(p.r)}"><em>${deg(p.r)}°</em></label>
+  <div class="row"><button data-a="r-">⟲ ${ED.snap ? 15 : 5}°</button><button data-a="r+">⟳ ${ED.snap ? 15 : 5}°</button><button data-a="ground">⬇ на землю</button></div>
+  <label><span>наклон X</span><input type="range" data-k="rx" min="-90" max="90" step="${st}" value="${Math.round((p.rx || 0) * 180 / Math.PI)}"><em>${Math.round((p.rx || 0) * 180 / Math.PI)}°</em></label>
+  <label><span>наклон Z</span><input type="range" data-k="rz" min="-90" max="90" step="${st}" value="${Math.round((p.rz || 0) * 180 / Math.PI)}"><em>${Math.round((p.rz || 0) * 180 / Math.PI)}°</em></label>
+  <label><span>высота</span><input type="range" data-k="y" min="-3" max="15" step=".05" value="${p.y || 0}"><em>${(p.y || 0).toFixed(2)}</em></label>`}
+  <label><span>${def.area ? 'радиус' : 'размер'}</span><input type="range" data-k="s" min="${def.area ? 1 : .2}" max="${def.area ? 15 : 5}" step=".05" value="${p.s || 1}"><em>${(p.s || 1).toFixed(2)}</em></label>
+  <label><span>метка</span><input type="text" data-k="tag" value="${(p.tag || '').replace(/"/g, '')}" placeholder="${def.area ? 'нужна для событий' : 'для событий (необяз.)'}"></label>
+  <div class="row"><button data-a="dup">⎘ копия</button><button data-a="del">🗑 удалить</button></div>`;
+  inspEl.querySelectorAll('input').forEach(inp => inp.oninput = () => {
+    recordProp(p);
+    const k = inp.dataset.k, v = inp.type === 'text' ? inp.value.trim().replace(/[^\wа-яё-]/gi, '') : +inp.value;
+    if (k === 'tag') { p.tag = v || undefined; }
+    else if (k === 'r' || k === 'rx' || k === 'rz') p[k] = v * Math.PI / 180; else p[k] = v;
+    if (inp.nextElementSibling) inp.nextElementSibling.textContent = k === 's' || k === 'y' ? (+v).toFixed(2) : v + '°';
+    edChanged(p);
+  });
+  inspEl.querySelectorAll('button').forEach(b => b.onclick = () => {
+    const a = b.dataset.a, stp = (ED.snap ? 15 : 5) * Math.PI / 180;
+    if (a === 'close') return select(null);
+    if (a === 'del') { recordProp(p); ED.lastRec = 0; MAP.props.splice(MAP.props.indexOf(p), 1); ED.sel = null; buildSel(null); rebuildProps(); renderInsp(); saveMap(); return; }
+    if (a === 'dup') { const c = { ...p, id: MAP.nextId++, x: p.x + 1.5, z: p.z + 1.5, tag: undefined }; MAP.props.push(c); recordProp(c, true); select(c); saveMap(); return; }
+    recordProp(p);
+    if (a === 'r-') p.r = (p.r || 0) - stp; if (a === 'r+') p.r = (p.r || 0) + stp;
+    if (a === 'ground') { p.y = 0; p.rx = 0; p.rz = 0; }
+    edChanged(p); renderInsp();
+  });
+}
+function edChanged(p) { if (p === ED.sel) updateSel(p); if (PROP[p.t].area) rebuildProps(ED.sel); saveMap(); }
+function propRadius(p) { return (PROP[p.t].area ? (p.s || 3) : PROP[p.t].hit * (p.s || 1)); }
+function pickProp(x, z) {
+  let best = null, bd = 1e9;
+  for (const p of MAP.props) { const d = Math.hypot(p.x - x, p.z - z) / Math.max(.6, propRadius(p)); if (d < 1 && d < bd) { bd = d; best = p; } }
+  return best;
+}
+function snapXZ(x, z) { return ED.snap ? [Math.round(x * 2) / 2, Math.round(z * 2) / 2] : [x, z]; }
+function edPlace(x, z) {
   if (ED.tool === 'erase') {
     let bi = null, bd = 1.1;
     for (const w of worldItems) { const d = Math.hypot(w.x - x, w.z - z); if (w.zone === 'forest' && d < bd) { bd = d; bi = w; } }
     if (bi) { removeWorld(bi); MAP.items = MAP.items.filter(i => i.uid !== bi.uid); ED.undo.push({ t: 'item+', it: plainItem(bi) }); saveGame(); saveMap(); return; }
-    let bp = null; bd = 1.6;
-    for (const p of MAP.props) { const d = Math.hypot(p.x - x, p.z - z); if (d < bd) { bd = d; bp = p; } }
-    if (bp) { MAP.props.splice(MAP.props.indexOf(bp), 1); ED.undo.push({ t: 'prop+', p: bp }); rebuildProps(); saveMap(); }
+    const bp = pickProp(x, z);
+    if (bp) { recordProp(bp); ED.lastRec = 0; MAP.props.splice(MAP.props.indexOf(bp), 1); if (ED.sel === bp) { ED.sel = null; buildSel(null); renderInsp(); } rebuildProps(ED.sel); saveMap(); }
     return;
   }
   if (ED.tool === 'item') {
     const it = { uid: uidGen(), d: ED.item, n: ED.item === 'coin' ? 5 : 1, x: +x.toFixed(2), z: +z.toFixed(2), zone: 'forest' };
     MAP.items.push(it); spawnWorld(it); ED.undo.push({ t: 'item-', uid: it.uid }); saveGame(); saveMap(); return;
   }
-  const t = ED.tool, [sx, sz] = snapPos(t, x, z);
-  if (MAP.props.some(p => p.t === t && Math.hypot(p.x - sx, p.z - sz) < (PROP[t].snap || .5) * .9)) return;
-  const sc = { tree: .8 + rnd() * .6, rock: .5 + rnd() * .6, bush: .7 + rnd() * .5 }[t] || 1;
-  const pr = { id: MAP.nextId++, t, x: +sx.toFixed(2), z: +sz.toFixed(2), s: +sc.toFixed(2), r: +(t === 'wall' ? 0 : rnd() * TAU).toFixed(2) };
-  MAP.props.push(pr); ED.undo.push({ t: 'prop-', id: pr.id }); rebuildProps(); saveMap();
-  for (let k = 0; k < 10; k++) emit({ x: sx, y: .2, z: sz, vx: (rnd() - .5) * 3, vy: 1 + rnd() * 2, vz: (rnd() - .5) * 3, r: .4, g: 1.4, b: 1.2, size: .06, life: .5, drag: 2, mode: RUNEM });
+  if (ED.tool === 'select') { select(pickProp(x, z)); return; }
+  const t = ED.tool, [sx, sz] = snapXZ(x, z);
+  const sc = { tree: .8 + rnd() * .6, rock: .5 + rnd() * .6, bush: .7 + rnd() * .5, area: 3 }[t] || 1;
+  const pr = { id: MAP.nextId++, t, x: +sx.toFixed(2), z: +sz.toFixed(2), s: +sc.toFixed(2), r: ['wall', 'fence', 'house', 'area'].includes(t) ? 0 : +(rnd() * TAU).toFixed(2) };
+  if (t === 'area') pr.tag = 'zone' + pr.id;
+  MAP.props.push(pr); recordProp(pr, true); select(pr); saveMap();
+  for (let k = 0; k < 10; k++) emit({ x: sx, y: terH(sx, sz) + .2, z: sz, vx: (rnd() - .5) * 3, vy: 1 + rnd() * 2, vz: (rnd() - .5) * 3, r: .4, g: 1.4, b: 1.2, size: .06, life: .5, drag: 2, mode: RUNEM });
 }
-$('edUndo').onclick = () => {
-  const u = ED.undo.pop(); if (!u) return;
-  if (u.t === 'prop-') MAP.props = MAP.props.filter(p => p.id !== u.id);
-  if (u.t === 'prop+') MAP.props.push(u.p);
-  if (u.t === 'item-') { const w = worldItems.find(w => w.uid === u.uid); if (w) removeWorld(w); MAP.items = MAP.items.filter(i => i.uid !== u.uid); }
-  if (u.t === 'item+') { MAP.items.push(u.it); spawnWorld(u.it); }
-  rebuildProps(); saveMap(); saveGame();
-};
+
+/* terrain brushes */
+function brushStart(x, z) { ED.stroke = { x, z, h0: terH(x, z), on: true }; ED.undo.push({ t: 'ter', h: TER.h.slice(), w: TER.w.slice() }); if (ED.undo.length > 60) ED.undo.shift(); }
+function brushApply(dt) {
+  const st = ED.stroke; if (!st || !st.on) return;
+  const R = ED.bsize, k0 = ED.bstr * dt, cx = st.x + THALF, cz = st.z + THALF;
+  const i0 = Math.max(1, Math.floor(cx - R)), i1 = Math.min(TN - 2, Math.ceil(cx + R)), j0 = Math.max(1, Math.floor(cz - R)), j1 = Math.min(TN - 2, Math.ceil(cz + R));
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const d = Math.hypot(i - cx, j - cz) / R; if (d >= 1) continue;
+    const f = (1 - d * d) ** 2 * k0, k = j * TN + i;
+    switch (ED.brush) {
+      case 'raise': TER.h[k] += f * 3; break;
+      case 'lower': TER.h[k] -= f * 3; break;
+      case 'smooth': { const a = (TER.h[k - 1] + TER.h[k + 1] + TER.h[k - TN] + TER.h[k + TN]) / 4; TER.h[k] += (a - TER.h[k]) * Math.min(1, f * 6); break; }
+      case 'flatten': TER.h[k] += (st.h0 - TER.h[k]) * Math.min(1, f * 4); break;
+      case 'water': { const nw = Math.min(1, TER.w[k] + f * 4); TER.h[k] -= Math.max(0, nw - TER.w[k]) * .5; TER.w[k] = nw; break; }
+      case 'dry': TER.w[k] = Math.max(0, TER.w[k] - f * 4); break;
+    }
+  }
+  terUpload(); TER.dirty = true;
+}
+function brushEnd() { if (ED.stroke) { ED.stroke = null; rebuildProps(ED.sel); updateSel(ED.sel); for (const w of worldItems) if (w.zone === 'forest') w.vy = -.01; saveMap(); } }
+
 $('edExport').onclick = () => {
-  const blob = new Blob([JSON.stringify(MAP)], { type: 'application/json' }), a = document.createElement('a');
+  if (TER.dirty) { MAP.ter = terPack(); TER.dirty = false; }
+  const blob = new Blob([JSON.stringify({ ...MAP, events: MAP.events || EV.list })], { type: 'application/json' }), a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = 'ascii-map.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 };
 $('edImport').onclick = () => $('mapFile').click();
@@ -1140,22 +1394,187 @@ $('mapFile').onchange = async e => {
 $('edReset').onclick = () => { if (confirm('Сбросить карту к исходной? Твои правки пропадут.')) { localStorage.removeItem('ascii-map-v1'); loadMap(defaultMap()); toast('карта сброшена'); } };
 function loadMap(m) {
   MAP = m; MAP.items ||= []; MAP.nextId ||= MAP.props.reduce((a, p) => Math.max(a, p.id || 0), 0) + 1;
+  if (MAP.ter) terUnpack(MAP.ter); else { genTerrain(); MAP.ter = terPack(); }
   for (const w of [...worldItems]) if (w.zone === 'forest') removeWorld(w);
-  MAP.items.forEach(spawnWorld); ED.undo.length = 0; rebuildProps(); saveMap(); saveGame();
+  ED.sel = null; buildSel(null); renderInsp();
+  MAP.items.forEach(spawnWorld); ED.undo.length = 0; rebuildProps(); evLoad(MAP.events || DEFAULT_EVENTS); saveMap(); saveGame();
 }
-/* editor pointer: tap = apply tool, drag = pan */
-let edPtr = null;
-function edDown(e) { edPtr = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, fx: ED.fx, fz: ED.fz }; screenToWorld(e.clientX, e.clientY, tmpV); edPtr.wx = tmpV.x; edPtr.wz = tmpV.z; }
-function edMove(e) {
-  if (e.pointerType === 'mouse' && screenToWorld(e.clientX, e.clientY, tmpV)) {
-    const [sx, sz] = ED.tool === 'erase' || ED.tool === 'item' ? [tmpV.x, tmpV.z] : snapPos(ED.tool, tmpV.x, tmpV.z);
-    cursor.position.set(sx, .05, sz); cursor.visible = true;
+
+/* editor pointers: one finger = tool / drag object / pan, two fingers = pan + pinch zoom, wheel = zoom */
+const edPtrs = new Map(); let edPtr = null, edPinch = null;
+function edWorld(e) { return screenToWorld(e.clientX, e.clientY, tmpV, 0) ? [tmpV.x, tmpV.z] : null; }
+function edDown(e) {
+  edPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (edPtrs.size === 2) {                                  // second finger: cancel tool, start pinch/pan
+    if (ED.stroke) { ED.stroke.on = false; brushEnd(); }
+    edPtr = null; const [a, b] = [...edPtrs.values()];
+    edPinch = { d: Math.hypot(a.x - b.x, a.y - b.y), zoom: ED.zoom, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    return;
   }
-  if (!edPtr || e.pointerId !== edPtr.id) return;
-  if (Math.hypot(e.clientX - edPtr.x, e.clientY - edPtr.y) > 9) edPtr.moved = true;
-  if (edPtr.moved && screenToWorld(e.clientX, e.clientY, tmpV)) { ED.fx += edPtr.wx - tmpV.x; ED.fz += edPtr.wz - tmpV.z; focus.x = ED.fx; focus.z = ED.fz; }
+  const w = edWorld(e); if (!w) return;
+  edPtr = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, wx: w[0], wz: w[1], pan: e.button === 1 || e.button === 2 };
+  if (edPtr.pan) return;
+  if (ED.tab === 'ter') { brushStart(w[0], w[1]); return; }
+  if (ED.sel && Math.hypot(ED.sel.x - w[0], ED.sel.z - w[1]) < Math.max(.9, propRadius(ED.sel))) { edPtr.drag = ED.sel; edPtr.ox = ED.sel.x - w[0]; edPtr.oz = ED.sel.z - w[1]; }
 }
-function edUp(e) { if (edPtr && e.pointerId === edPtr.id && !edPtr.moved) edApply(edPtr.wx, edPtr.wz); edPtr = null; }
+function edMove(e) {
+  const pp = edPtrs.get(e.pointerId); if (pp) { pp.x = e.clientX; pp.y = e.clientY; }
+  const w = edWorld(e);
+  if (w && (e.pointerType === 'mouse' || ED.tab === 'ter')) {
+    cursor.position.set(w[0], terH(w[0], w[1]) + .1, w[1]); cursor.scale.setScalar(ED.tab === 'ter' ? ED.bsize : .6); cursor.visible = true;
+  }
+  if (edPinch && edPtrs.size === 2) {
+    const [a, b] = [...edPtrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    ED.zoom = clamp(edPinch.zoom * edPinch.d / Math.max(20, d), .5, 4);
+    if (screenToWorld(edPinch.mx, edPinch.my, tmpV, 0)) { const ax = tmpV.x, az = tmpV.z; if (screenToWorld(mx, my, tmpV, 0)) { ED.fx += ax - tmpV.x; ED.fz += az - tmpV.z; } }
+    edPinch.mx = mx; edPinch.my = my; return;
+  }
+  if (!edPtr || e.pointerId !== edPtr.id || !w) return;
+  if (Math.hypot(e.clientX - edPtr.x, e.clientY - edPtr.y) > 9) edPtr.moved = true;
+  if (ED.tab === 'ter' && !edPtr.pan) { if (ED.stroke) { ED.stroke.x = w[0]; ED.stroke.z = w[1]; } return; }
+  if (!edPtr.moved) return;
+  if (edPtr.drag) { const p = edPtr.drag; recordProp(p); [p.x, p.z] = snapXZ(w[0] + edPtr.ox, w[1] + edPtr.oz); p.x = +p.x.toFixed(2); p.z = +p.z.toFixed(2); edChanged(p); return; }
+  ED.fx += edPtr.wx - w[0]; ED.fz += edPtr.wz - w[1];
+}
+function edUp(e) {
+  edPtrs.delete(e.pointerId);
+  if (edPtrs.size < 2) edPinch = null;
+  if (!edPtr || e.pointerId !== edPtr.id) return;
+  if (ED.tab === 'ter') brushEnd();
+  else if (!edPtr.moved && !edPtr.pan) edPlace(edPtr.wx, edPtr.wz);
+  else if (edPtr.drag) rebuildProps(ED.sel);
+  if (e.pointerType !== 'mouse') cursor.visible = false;
+  edPtr = null;
+}
+canvas.addEventListener('wheel', e => { if (ED.on) { ED.zoom = clamp(ED.zoom * Math.exp(e.deltaY * .0012), .5, 4); e.preventDefault(); } }, { passive: false });
+function updateEditor(dt) {
+  if (!ED.on) return;
+  if (ED.stroke) brushApply(dt);
+  const p = ED.sel;
+  if (p) { selRing.visible = true; selRing.position.set(p.x, terH(p.x, p.z) + .12, p.z); selRing.scale.setScalar(Math.max(.7, propRadius(p) * .8)); }
+}
+
+/* =========== events & quests: data-driven scripting ===========
+   Events are JSON ({id, on, if, do}) — they live in events.json / the map and can be edited in-game, so new quests
+   need no rebuild. The same data is meant to run on the server later. See .claude/skills/ascii-world/EVENTS.md */
+const EV = { list: [], flags: {}, quests: {}, done: {}, timers: {}, inside: new Set() };
+function evLoad(arr) { EV.list = Array.isArray(arr) ? arr : []; EV.timers = {}; }
+const invCount = d => inv.reduce((a, s) => a + (s && s.d === d ? s.n : 0), 0);
+function invTake(d, n) { for (let i = INV_N - 1; i >= 0 && n > 0; i--) { const s = inv[i]; if (s && s.d === d) { const k = Math.min(n, s.n); s.n -= k; n -= k; if (!s.n) inv[i] = null; } } }
+function cond(c) {
+  if (!c) return true;
+  if (Array.isArray(c)) return c.every(cond);
+  if (c.not) return !cond(c.not);
+  if (c.any) return c.any.some(cond);
+  if ('quest' in c) { const st = EV.quests[c.quest]?.state || 'none'; return 'is' in c ? [].concat(c.is).includes(st) : st !== 'none'; }
+  if ('has' in c) return invCount(c.has) >= (c.n ?? 1);
+  if ('flag' in c) { const v = EV.flags[c.flag]; if ('is' in c) return v === c.is; if ('gte' in c) return (+v || 0) >= c.gte; return !!v; }
+  if ('hp' in c) return P.hp >= c.hp;
+  if ('zone' in c) return zone === c.zone;
+  if ('chance' in c) return rnd() < c.chance;
+  return true;
+}
+function evMatch(e, type, data) {
+  if (e.on !== type || (e.once && EV.done[e.id])) return false;
+  for (const k of ['npc', 'area', 'item', 'mob']) if (e[k] && e[k] !== data[k]) return false;
+  return cond(e.if);
+}
+function emitEvent(type, data = {}) {
+  const hits = EV.list.filter(e => evMatch(e, type, data));        // conditions are checked before any action runs
+  for (const e of hits) { if (e.once) EV.done[e.id] = 1; runActions(e.do || [], e); }
+  if (hits.length) saveGame();
+  return hits.length;
+}
+async function runActions(list, e) {
+  for (const a of list) {
+    try { await doAction(a, e); } catch (err) { console.warn('event', e && e.id, err); toast('ошибка в событии ' + (e && e.id || '')); return; }
+  }
+}
+async function doAction(a, e) {
+  if ('say' in a) { npcBubble(a.who, a.say); return dialog(a.who || '', a.say); }
+  if ('ask' in a) { npcBubble(a.who, a.ask); const i = await dialog(a.who || '', a.ask, (a.options || []).map(o => o.text)); const o = (a.options || [])[i]; if (o && o.do) await runActions(o.do, e); return; }
+  if ('quest' in a) {
+    const q = EV.quests[a.quest] ||= { state: 'none' };
+    if (a.title) q.title = a.title; if (a.note) q.note = a.note;
+    if (a.set) { q.state = a.set; if (a.set === 'active') toast('Новый квест: ' + (q.title || a.quest)); if (a.set === 'done') { toast('✓ ' + (q.title || a.quest)); burst(P.x, groundY(P.x, P.z) + 1, P.z, 0, 40); } }
+    renderQuests(); saveGame(); return;
+  }
+  if ('give' in a) { if (!ITEMS[a.give]) throw new Error('нет предмета ' + a.give); const n = a.n || 1, left = invAdd(a.give, n); if (left) spawnWorld({ uid: uidGen(), d: a.give, n: left, x: P.x + .8, z: P.z, zone }); say('Сумка', '+' + n + ' ' + ITEMS[a.give].name, ITEMS[a.give].c); renderInv(); saveGame(); return; }
+  if ('take' in a) { invTake(a.take, a.n || 1); renderInv(); saveGame(); return; }
+  if ('flag' in a) { EV.flags[a.flag] = 'add' in a ? (+EV.flags[a.flag] || 0) + a.add : 'set' in a ? a.set : true; saveGame(); return; }
+  if ('hp' in a) { P.hp = clamp(P.hp + a.hp, 1, 5); hud(); saveGame(); return; }
+  if ('toast' in a) { toast(a.toast); return; }
+  if ('log' in a) { say(a.who || 'Система', a.log, a.color || '#9ab'); return; }
+  if ('weather' in a) { setWx(clamp(a.weather | 0, 0, WX.length - 1)); return; }
+  if ('spawn' in a) { if (!ITEMS[a.spawn]) throw new Error('нет предмета ' + a.spawn); spawnWorld({ uid: uidGen(), d: a.spawn, n: a.n || 1, x: a.x ?? P.x + 1, z: a.z ?? P.z, zone: 'forest' }); saveGame(); return; }
+  if ('teleport' in a) { P.x = a.teleport[0]; P.z = a.teleport[1]; focus.x = P.x; focus.z = P.z; return; }
+  if ('wait' in a) return new Promise(r => setTimeout(r, a.wait * 1000));
+  if ('show' in a || 'hide' in a) { hiddenTags[a.show || a.hide] = !!a.hide; EV.flags['hidden:' + (a.show || a.hide)] = !!a.hide; rebuildProps(ED.sel); saveGame(); return; }
+  if ('run' in a) { const t = EV.list.find(x => x.id === a.run); if (t) await runActions(t.do || [], t); return; }
+  if ('fx' in a) { const c = { arcane: 0, fire: 1, nature: 2 }[a.fx] ?? 0; burst(a.x ?? P.x, groundY(a.x ?? P.x, a.z ?? P.z) + 1, a.z ?? P.z, c, 50); return; }
+  throw new Error('неизвестное действие ' + Object.keys(a)[0]);
+}
+function npcBubble(who, txt) { const n = NPCS.find(n => n.name === who); if (n) { n.say = txt; n.sayT = 5; n.wait = Math.max(n.wait, 5); } }
+/* dialog box: one at a time, resolves with the chosen option index */
+const dlgEl = $('dlg'); let dlgQ = Promise.resolve(); let dlgOpen = false;
+function dialog(who, text, options) {
+  const run = () => new Promise(res => {
+    dlgOpen = true; dlgEl.style.display = 'flex';
+    $('dlgWho').textContent = who; $('dlgWho').style.color = NPCS.find(n => n.name === who)?.col || '#9fe3d8';
+    $('dlgText').textContent = text;
+    const box = $('dlgOpts'); box.innerHTML = '';
+    (options && options.length ? options : ['Далее']).forEach((t, i) => {
+      const b = document.createElement('button'); b.textContent = t;
+      b.onclick = ev => { ev.stopPropagation(); dlgEl.style.display = 'none'; dlgOpen = false; res(i); };
+      box.appendChild(b);
+    });
+  });
+  const p = dlgQ.then(run); dlgQ = p.catch(() => { }); return p;
+}
+function renderQuests() {
+  const el = $('quests'); el.innerHTML = '';
+  for (const id in EV.quests) {
+    const q = EV.quests[id]; if (q.state !== 'active') continue;
+    const d = document.createElement('div'); d.innerHTML = '<b></b><span></span>';
+    d.firstChild.textContent = '◆ ' + (q.title || id); d.lastChild.textContent = q.note || ''; el.appendChild(d);
+  }
+}
+function updateEvents(dt) {
+  if (zone !== 'forest' || ED.on) return;
+  const now = new Set();
+  for (const p of MAP.props) if (p.t === 'area' && p.tag && Math.hypot(P.x - p.x, P.z - p.z) < (p.s || 3)) now.add(p.tag);
+  for (const t of now) if (!EV.inside.has(t)) emitEvent('enter', { area: t });
+  for (const t of EV.inside) if (!now.has(t)) emitEvent('leave', { area: t });
+  EV.inside = now;
+  for (const e of EV.list) if (e.on === 'interval' && e.every > 0) { EV.timers[e.id] = (EV.timers[e.id] || 0) + dt; if (EV.timers[e.id] >= e.every) { EV.timers[e.id] = 0; if (evMatch(e, 'interval', {})) { if (e.once) EV.done[e.id] = 1; runActions(e.do || [], e); } } }
+}
+
+/* event editor: JSON text with templates and validation */
+const EV_TPL = {
+  'диалог': { id: 'talk_new', on: 'talk', npc: 'Kael', do: [{ say: 'Привет, путник!', who: 'Kael' }] },
+  'квест': { id: 'quest_new', on: 'talk', npc: 'Oru', if: [{ quest: 'quest_new', is: 'none' }], do: [{ ask: 'Найдёшь мне 2 гриба?', who: 'Oru', options: [{ text: 'Да', do: [{ quest: 'quest_new', set: 'active', title: 'Грибы для Ору', note: 'Найди 2 гриба' }] }, { text: 'Нет' }] }] },
+  'зона': { id: 'area_new', on: 'enter', area: 'summit', once: true, do: [{ toast: 'Ты нашёл особое место' }, { give: 'coin', n: 5 }] },
+};
+function openEvEd() {
+  $('evText').value = JSON.stringify(MAP.events || EV.list, null, 2); $('evErr').textContent = ''; $('evEd').style.display = 'flex';
+  $('evSrc').textContent = MAP.events ? 'события карты (правки сохранены в карте)' : 'события из events.json';
+}
+$('evClose').onclick = () => { $('evEd').style.display = 'none'; };
+$('evApply').onclick = () => {
+  try {
+    const arr = JSON.parse($('evText').value);
+    if (!Array.isArray(arr)) throw new Error('нужен массив [ … ]');
+    arr.forEach((e, i) => { if (!e.id || !e.on || !Array.isArray(e.do)) throw new Error(`событие №${i + 1}: нужны поля id, on и do[ ]`); });
+    MAP.events = arr; evLoad(arr); saveMap(); $('evErr').textContent = '✓ сохранено, ' + arr.length + ' событий'; $('evErr').className = 'ok';
+  } catch (err) { $('evErr').textContent = '✗ ' + err.message; $('evErr').className = ''; }
+};
+document.querySelectorAll('#evTpl button').forEach(b => b.onclick = () => {
+  let arr; try { arr = JSON.parse($('evText').value); } catch (_) { $('evErr').textContent = '✗ сначала исправь JSON'; return; }
+  const t = JSON.parse(JSON.stringify(EV_TPL[b.dataset.t])); t.id += '_' + Math.floor(rnd() * 1000);
+  arr.push(t); $('evText').value = JSON.stringify(arr, null, 2); $('evText').scrollTop = 1e9;
+});
+$('evFile').onclick = () => { if (confirm('Вернуть события из events.json? Правки событий в карте пропадут.')) { delete MAP.events; evLoad(DEFAULT_EVENTS); saveMap(); openEvEd(); } };
+$('evResetProg').onclick = () => { EV.flags = {}; EV.quests = {}; EV.done = {}; for (const k in hiddenTags) delete hiddenTags[k]; rebuildProps(ED.sel); renderQuests(); saveGame(); $('evErr').textContent = '✓ прогресс квестов сброшен'; $('evErr').className = 'ok'; };
 
 /* ---------- zone switching ---------- */
 function startTransition(to) { if (!fadeDir) { fadeDir = 1; fadeTo = to; } }
@@ -1170,7 +1589,7 @@ function enterZone(z) {
     D.monsters.forEach(m => { m.alive = true; m.g.visible = true; m.g.position.set(m.hx, 0, m.hz); });
   } else if (fromZone === 'dungeon') { P.x = DOOR.x; P.z = DOOR.z + 2.2; P.yaw = 0; toast('Шепчущий лес'); }
   else { P.x = 0; P.z = 3; P.yaw = 0; toast('Шепчущий лес'); }
-  focus.set(P.x, 0, P.z); hud();
+  P.y = groundY(P.x, P.z); focus.set(P.x, P.y, P.z); hud();
   if (ED && ED.on && z !== 'forest') setEditor(false);
 }
 
@@ -1204,15 +1623,19 @@ function update(dt, rdt = dt) {
   const run = keys.ShiftLeft || keys.ShiftRight || ml > .95 && (joy.x || joy.y);
   const spd = (run ? 6.2 : 3.6) * (fadeDir ? 0 : 1);
   if (ED.on && ml > .12) { ED.fx += mx * 14 * dt; ED.fz += mz * 14 * dt; }
-  const moving = ml > .12 && !chatOpen && !fadeDir && !ED.on;
+  const moving = ml > .12 && !chatOpen && !fadeDir && !ED.on && !dlgOpen;
+  const wet = zone === 'forest' ? terW(P.x, P.z) : 0;
   if (moving) {
-    tryMove(P, mx * spd * dt, mz * spd * dt);
+    const ws = wet > .5 ? .55 : 1;
+    tryMove(P, mx * spd * dt * ws, mz * spd * dt * ws);
+    if (wet > .5 && rnd() < dt * 14) emit({ x: P.x + (rnd() - .5) * .6, y: P.y + .05, z: P.z + (rnd() - .5) * .6, vx: (rnd() - .5) * 1.5, vy: 1.2 + rnd(), vz: (rnd() - .5) * 1.5, r: .5, g: .7, b: 1, size: .05, life: .45, grav: 6 });
     P.yaw = turn(P.yaw, Math.atan2(mx, mz), 1 - Math.exp(-dt * 14));
-    if (zone === 'forest' && rnd() < dt * 6) emit({ x: P.x + (rnd() - .5) * .4, y: .05, z: P.z + (rnd() - .5) * .4, vy: .6, r: .25, g: .3, b: .22, size: .05, life: .4 });
+    if (zone === 'forest' && rnd() < dt * 6) emit({ x: P.x + (rnd() - .5) * .4, y: P.y + .05, z: P.z + (rnd() - .5) * .4, vy: .6, r: .25, g: .3, b: .22, size: .05, life: .4 });
   }
-  hero.g.position.set(P.x, 0, P.z); hero.g.rotation.y = P.yaw;
+  P.y = lerp(P.y, groundY(P.x, P.z) - (wet > .5 ? .2 : 0), 1 - Math.exp(-dt * 18));
+  hero.g.position.set(P.x, P.y, P.z); hero.g.rotation.y = P.yaw;
   animChar(hero, dt, moving, spd);
-  U.uPlayer.value.set(P.x, 0, P.z);
+  U.uPlayer.value.set(P.x, P.y, P.z);
 
   /* zone triggers */
   if (!fadeDir) {
@@ -1225,13 +1648,15 @@ function update(dt, rdt = dt) {
   focus.x = lerp(focus.x, ED.on ? ED.fx : P.x, fk); focus.z = lerp(focus.z, ED.on ? ED.fz : P.z, fk);
   U.uFocus.value.copy(focus);
   const aspect = (cols * cellW) / (rows * cellH);
-  edZoom = lerp(edZoom, ED.on ? 1.6 : 1, fk);
-  const dist = (aspect < 1 ? 11 + (1 - aspect) * 4.5 : 10.5) * edZoom, pitch = .9 + (edZoom - 1) * .45;
-  camera.position.set(focus.x, Math.sin(pitch) * dist + .8, focus.z + Math.cos(pitch) * dist);
-  camera.lookAt(focus.x, 1.1, focus.z);
+  edZoom = lerp(edZoom, ED.on ? ED.zoom : 1, fk);
+  focus.y = lerp(focus.y, groundY(focus.x, focus.z), fk);
+  const dist = (aspect < 1 ? 11 + (1 - aspect) * 4.5 : 10.5) * edZoom, pitch = clamp(.9 + (edZoom - 1) * .3, .6, 1.35);
+  camera.position.set(focus.x, focus.y + Math.sin(pitch) * dist + .8, focus.z + Math.cos(pitch) * dist);
+  camera.lookAt(focus.x, focus.y + 1.1, focus.z);
   ground.position.set(Math.round(focus.x), 0, Math.round(focus.z));
-  camera.updateMatrixWorld(); tmpV.set(P.x, 1, P.z).project(camera);
-  { const vz = tmpV2.set(P.x, 1, P.z).applyMatrix4(camera.matrixWorldInverse).z; U.uPN.value.set(tmpV.x, tmpV.y, -vz); }
+  camera.updateMatrixWorld(); tmpV.set(P.x, P.y + 1, P.z).project(camera);
+  { const vz = tmpV2.set(P.x, P.y + 1, P.z).applyMatrix4(camera.matrixWorldInverse).z; U.uPN.value.set(tmpV.x, tmpV.y, -vz); }
+  if (ED.on) U.uPN.value.z = 0;
 
   /* weather */
   const tg = zone === 'forest' ? WX[wxIdx] : DUN_WX, wk = zone === 'dungeon' ? 1 : 1 - Math.exp(-dt * 1.2);
@@ -1278,7 +1703,7 @@ function update(dt, rdt = dt) {
     // rain splashes
     const ns = Wc.rain * dt * 90;
     for (let i = 0; i < Math.floor(ns) + (rnd() < ns % 1 ? 1 : 0); i++)
-      emit({ x: focus.x + (rnd() - .5) * 26, y: .04, z: focus.z + (rnd() - .5) * 20, r: .45, g: .55, b: .7, size: .03, grow: 2.5, life: .28 });
+      { const sx = focus.x + (rnd() - .5) * 26, sz = focus.z + (rnd() - .5) * 20; emit({ x: sx, y: terH(sx, sz) + .04, z: sz, r: .45, g: .55, b: .7, size: .03, grow: 2.5, life: .28 }); }
   } else {
     D.braziers.forEach((b, j) => {
       if (Math.abs(b.x - P.x) > 26 || Math.abs(b.z - P.z) > 26) return;
@@ -1307,7 +1732,7 @@ function update(dt, rdt = dt) {
         n.yaw = turn(n.yaw, Math.atan2(dx, dz), 1 - Math.exp(-dt * 8));
       }
     }
-    n.c.g.position.set(n.x, 0, n.z); n.c.g.rotation.y = n.yaw;
+    n.c.g.position.set(n.x, terH(n.x, n.z), n.z); n.c.g.rotation.y = n.yaw;
     animChar(n.c, dt, n.mv, 2.4);
     n.sayT -= dt; n.cd -= dt; n.talk -= dt;
     if (n.cd <= 0) {
@@ -1340,10 +1765,10 @@ function update(dt, rdt = dt) {
   for (let i = projs.length - 1; i >= 0; i--) {
     const p = projs[i]; p.life -= dt;
     const nx = p.x + p.vx * dt, nz = p.z + p.vz * dt;
-    let hit = p.life <= 0 || solid(nx, nz, .05);
+    let hit = p.life <= 0 || solid(nx, nz, .05) || p.y < groundY(nx, nz) + .15;
     if (!hit && dun && p.mine) for (const m of D.monsters) {
       if (m.alive && Math.hypot(m.g.position.x - nx, m.g.position.z - nz) < .8) {
-        m.alive = false; m.g.visible = false; m.rt = 15; hit = true; burst(m.g.position.x, 1, m.g.position.z, p.sp, 60);
+        m.alive = false; m.g.visible = false; m.rt = 15; hit = true; emitEvent('kill', { mob: 'shade' }); burst(m.g.position.x, 1, m.g.position.z, p.sp, 60);
       }
     }
     if (hit) { burst(p.x, p.y, p.z, p.sp, 36); scene.remove(p.m); projs.splice(i, 1); continue; }
@@ -1353,6 +1778,8 @@ function update(dt, rdt = dt) {
   }
 
   updateItems(dt);
+  updateEditor(dt);
+  updateEvents(dt);
   updateParts(dt);
   pushLights();
 }
@@ -1421,6 +1848,12 @@ const cellMat = new THREE.ShaderMaterial({
         }
       }
       col = mix(avg, best.rgb, .55);
+    } else if(best.a > .935){
+      // water: drifting ~ - = by ripple brightness
+      float wl = clamp(dot(avg, vec3(.3,.59,.11))*3., 0., 1.);
+      float hv = fract(sin(dot(vec2(cell) + vec2(floor(uTime*2.), 0.), vec2(19.7,47.3)))*7351.1);
+      g = wl < .12 ? (hv < .5 ? 14. : 0.) : wl < .3 ? 13. : wl < .6 ? 94. : (hv < .5 ? 29. : 94.);   // . - ~ =
+      col = mix(avg, best.rgb, .5)*1.4;
     } else if(best.a > .905){
       // foliage: uniform round glyphs, density by light, a little per-cell variety
       float fl = clamp(dot(avg, vec3(.3,.59,.11))*2.2, 0., 1.);
@@ -1598,8 +2031,8 @@ function render() {
   }
   finalMat.uniforms.tCell.value = cellRT.texture; finalMat.uniforms.tAux.value = auxRT.texture; finalMat.uniforms.tBloom.value = bA.texture; pass(finalMat, null);
   // tags
-  placeTag(P.tag, P.x, 2.75, P.z, P.sayT, P.say);
-  if (zone === 'forest') for (const n of NPCS) placeTag(n.tag, n.x, 2.75, n.z, n.sayT, n.say);
+  placeTag(P.tag, P.x, P.y + 2.75, P.z, P.sayT, P.say);
+  if (zone === 'forest') for (const n of NPCS) placeTag(n.tag, n.x, terH(n.x, n.z) + 2.75, n.z, n.sayT, n.say);
 }
 
 /* ---------- loop with simple adaptive quality ---------- */
@@ -1613,8 +2046,10 @@ function frame(now) {
   }
   requestAnimationFrame(frame);
 }
-loadGame(); renderInv();
+evLoad(MAP.events || DEFAULT_EVENTS);
+loadGame(); renderInv(); renderQuests(); rebuildProps();
 resize(); hud(); viewBtns(); toast('Шепчущий лес');
 say('Система', 'добро пожаловать в Шепчущий лес. Руины — по тропе вправо.', '#9ab');
-window.__game = { items: () => worldItems.map(plainItem), propsCount: () => MAP.props.length, P, setWx, enter: z => enterZone(z), cast: () => cast(null), get zone() { return zone; } };
+setTimeout(() => emitEvent('start'), 600);
+window.__game = { emitEvent, EV, MAP: () => MAP, select: id => select(MAP.props.find(p => p.id === id) || null), setEditor, terH, items: () => worldItems.map(plainItem), propsCount: () => MAP.props.length, P, setWx, enter: z => enterZone(z), cast: () => cast(null), get zone() { return zone; } };
 requestAnimationFrame(frame);

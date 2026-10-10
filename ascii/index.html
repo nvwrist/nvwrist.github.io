@@ -51,11 +51,55 @@
   .acts{display:flex;gap:8px;flex-wrap:wrap}
   .acts button,#editor button{background:rgba(40,52,76,.7);color:#e2eaf4;border:1px solid rgba(110,130,160,.5);border-radius:10px;padding:9px 13px;font:13px system-ui}
   #editor{position:fixed;left:0;right:0;bottom:0;display:none;flex-direction:column;gap:8px;padding:10px 10px calc(10px + env(safe-area-inset-bottom));background:linear-gradient(transparent,rgba(6,8,14,.9) 30%)}
-  #edTools,.edActs{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none}
+  #edTools,.edActs,.edTabs{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none}
   #edTools button{white-space:nowrap;flex:0 0 auto}
   #edTools button.on{border-color:#7fe3d8;background:rgba(127,227,216,.18)}
   .edActs button{white-space:nowrap;flex:0 0 auto;font-size:12px!important;padding:7px 10px!important}
   .edHint{font-size:11px;opacity:.55;text-align:center}
+  .edTabs button{flex:1 1 0;font-size:13px!important}
+  .edTabs button.on,.edActs button.on{border-color:#f2c45a!important;background:rgba(242,196,90,.16)!important}
+  #edOpt{display:flex;gap:14px;font-size:12px;color:#b8c4d2}
+  #edOpt:empty{display:none}
+  #edOpt label{flex:1;display:flex;align-items:center;gap:6px}
+  #edOpt input{flex:1;accent-color:#7fe3d8}
+  #insp{position:fixed;right:10px;top:calc(max(12px,env(safe-area-inset-top)) + 4px);width:min(280px,calc(100vw - 20px));display:none;background:rgba(12,14,24,.9);border:1px solid rgba(110,130,160,.45);border-radius:14px;padding:10px 12px;font-size:12px;color:#cfd8e3;z-index:4;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+  #insp .ih{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  #insp .ih b{font-size:14px;flex:1}
+  #insp .ih span{opacity:.5}
+  #insp label{display:flex;align-items:center;gap:8px;margin:5px 0}
+  #insp label span{width:62px;opacity:.75}
+  #insp label em{width:40px;text-align:right;font-style:normal;font-variant-numeric:tabular-nums}
+  #insp input[type=range]{flex:1;accent-color:#f2c45a}
+  #insp input[type=text]{flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(120,140,170,.35);border-radius:7px;color:#e8eef6;padding:5px 7px;font:12px system-ui;-webkit-user-select:text;user-select:text}
+  #insp .row{display:flex;gap:6px;margin:6px 0}
+  #insp button{flex:1;background:rgba(40,52,76,.7);color:#e2eaf4;border:1px solid rgba(110,130,160,.5);border-radius:9px;padding:7px 6px;font:12px system-ui}
+  #insp .ih button{flex:0;background:none;border:0;font-size:16px;padding:2px 6px}
+  body.editing .btns{display:none}
+  #quests{top:calc(max(12px,env(safe-area-inset-top)) + 44px);left:14px;max-width:62vw;font-size:12px}
+  #quests div{margin-bottom:5px}
+  #quests b{display:block;color:#f2c45a;font-weight:600}
+  #quests span{opacity:.75}
+  body.editing #quests{display:none}
+  #dlg{position:fixed;left:0;right:0;bottom:0;display:none;justify-content:center;padding:0 10px calc(14px + env(safe-area-inset-bottom));z-index:6}
+  #dlg .box{width:min(520px,100%);background:rgba(10,12,22,.93);border:1px solid rgba(120,140,170,.5);border-radius:16px;padding:14px 16px;box-shadow:0 10px 40px rgba(0,0,0,.6)}
+  #dlg b{font-size:14px}
+  #dlg p{margin:6px 0 12px;font-size:15px;line-height:1.45;color:#e8eef6}
+  #dlgOpts{display:flex;flex-direction:column;gap:7px}
+  #dlgOpts button{background:rgba(40,52,76,.75);color:#e8eef6;border:1px solid rgba(120,140,170,.5);border-radius:11px;padding:11px 14px;font:14px system-ui;text-align:left}
+  #evEd{position:fixed;inset:0;display:none;align-items:flex-end;justify-content:center;background:rgba(0,0,8,.45);z-index:7}
+  #evEd .sheet{width:min(720px,100%);height:min(88vh,860px);display:flex;flex-direction:column;gap:8px;background:rgba(12,14,24,.97);border:1px solid rgba(90,110,140,.45);border-radius:18px 18px 0 0;padding:12px 12px calc(12px + env(safe-area-inset-bottom))}
+  #evEd .head{display:flex;align-items:center;gap:10px;font-size:16px}
+  #evEd .head small{flex:1;opacity:.55;font-size:11px}
+  #evEd .head button{background:none;border:0;color:#9ab;font-size:20px}
+  #evText{flex:1;min-height:0;resize:none;background:#070910;color:#d6e2ee;border:1px solid rgba(120,140,170,.35);border-radius:10px;padding:10px;font:12px/1.45 "AsciiMono",ui-monospace,Menlo,monospace;-webkit-user-select:text;user-select:text;tab-size:2}
+  .evBar{display:flex;gap:7px;flex-wrap:wrap;align-items:center;font-size:12px;color:#9ab}
+  .evBar button{background:rgba(40,52,76,.7);color:#e2eaf4;border:1px solid rgba(110,130,160,.5);border-radius:10px;padding:8px 11px;font:12px system-ui}
+  #evErr{font-size:12px;color:#ff8b8b;min-height:15px}
+  #evErr.ok{color:#7fe3a0}
+  #evEd details{font-size:12px;color:#aab6c4;max-height:30vh;overflow:auto}
+  #evEd summary{cursor:pointer;color:#cfd8e3}
+  #evEd .help p{margin:6px 0;line-height:1.5}
+  #evEd code{background:rgba(255,255,255,.07);border-radius:4px;padding:0 3px;font-size:11px;color:#e6d9a8}
   body.editing #cast,body.editing #bWx,body.editing #bSp,body.editing #bInv,body.editing #pick,body.editing #log,body.editing #stick{display:none!important}
   @media (hover:none){#cast{display:block}#hint{display:none}}
 </style>
@@ -65,10 +109,11 @@
 <div id="tags"></div>
 <div id="fade"></div>
 <div id="zone" class="hud"></div>
+<div id="quests" class="hud"></div>
 <div id="hearts" class="hud"></div>
 <div id="toast" class="hud"></div>
 <div id="log" class="hud"></div>
-<div id="hint" class="hud">WASD — ходить · Shift — бежать · клик / пробел — магия · Q — школа магии · 1–5 — погода · Enter — чат · E — подобрать · I — сумка · B — редактор · V — ASCII вкл/выкл · Z — детализация · руины справа по тропе →</div>
+<div id="hint" class="hud">WASD — ходить · Shift — бежать · клик / пробел — магия · Q — школа магии · 1–5 — погода · Enter — чат · E — подобрать / говорить · I — сумка · B — редактор · V — ASCII вкл/выкл · Z — детализация · руины справа по тропе →</div>
 <div class="btns"><button id="bInv">🎒 сумка</button><button id="bEdit">✎ редактор</button><button id="bWx">☁ погода</button><button id="bSp">✦ магия</button><button id="bAscii">▦ ASCII: вкл</button><button id="bDet">◫ средне</button></div>
 <button id="cast">✦</button>
 <button id="pick"></button>
@@ -77,15 +122,33 @@
   <div id="slots"></div>
   <div id="invInfo"></div>
 </div></div>
+<div id="insp"></div>
 <div id="editor">
+  <div class="edTabs"><button data-tab="obj">🌲 Объекты</button><button data-tab="ter">⛰ Рельеф</button><button data-tab="ev">📜 События</button></div>
+  <div id="edOpt"></div>
   <div id="edTools"></div>
-  <div class="edActs"><button id="edUndo">↶ отменить</button><button id="edExport">⤓ экспорт</button><button id="edImport">⤒ импорт</button><button id="edReset">♻ сброс</button><button id="edExit">✓ готово</button></div>
-  <div class="edHint">тап — поставить · тяни — двигать карту</div>
+  <div class="edActs"><button id="edUndo">↶ отменить</button><button id="edSnap">▦ сетка</button><button id="edExport">⤓ экспорт</button><button id="edImport">⤒ импорт</button><button id="edReset">♻ сброс</button><button id="edExit">✓ готово</button></div>
+  <div class="edHint" id="edHint"></div>
 </div>
+<div id="evEd"><div class="sheet">
+  <div class="head"><b>События и квесты</b><small id="evSrc"></small><button id="evClose">✕</button></div>
+  <div class="evBar" id="evTpl"><span>+ шаблон:</span><button data-t="диалог">💬 диалог</button><button data-t="квест">◆ квест</button><button data-t="зона">🎯 зона</button></div>
+  <textarea id="evText" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+  <div id="evErr"></div>
+  <div class="evBar"><button id="evApply">✓ применить</button><button id="evResetProg">↺ сбросить прогресс</button><button id="evFile">⟲ из events.json</button></div>
+  <details><summary>Справка</summary><div class="help">
+    <p><b>Событие</b>: <code>{"id", "on", "if": [условия], "do": [действия], "once": true}</code></p>
+    <p><b>on</b> — когда: <code>start</code> · <code>talk</code> + <code>"npc"</code> · <code>enter</code>/<code>leave</code> + <code>"area"</code> (метка зоны 🎯) · <code>pickup</code>/<code>use</code> + <code>"item"</code> · <code>kill</code> · <code>interval</code> + <code>"every"</code> (сек)</p>
+    <p><b>if</b> — условия: <code>{"quest":"id","is":"none|active|done"}</code> · <code>{"has":"apple","n":3}</code> · <code>{"flag":"x"}</code>, <code>{"flag":"x","is":false}</code>, <code>{"flag":"n","gte":2}</code> · <code>{"not":{…}}</code> · <code>{"any":[…]}</code> · <code>{"chance":0.5}</code></p>
+    <p><b>do</b> — действия по порядку: <code>{"say":"текст","who":"Mira"}</code> · <code>{"ask":"вопрос","who":"Mira","options":[{"text":"Да","do":[…]}]}</code> · <code>{"quest":"id","set":"active|done","title","note"}</code> · <code>{"give":"coin","n":5}</code> · <code>{"take":"apple","n":3}</code> · <code>{"flag":"x","set":true}</code> / <code>"add":1</code> · <code>{"hp":2}</code> · <code>{"toast":"…"}</code> · <code>{"log":"…"}</code> · <code>{"weather":2}</code> · <code>{"spawn":"potion","x":0,"z":0}</code> · <code>{"teleport":[x,z]}</code> · <code>{"wait":1.5}</code> · <code>{"show":"метка"}</code>/<code>{"hide":"метка"}</code> · <code>{"fx":"arcane|fire|nature"}</code> · <code>{"run":"id"}</code></p>
+    <p>Предметы: apple, potion, mushroom, stick, stone, herb, coin, crystal, scroll. NPC: Mira, Kael, Oru.</p>
+  </div></details>
+</div></div>
+<div id="dlg"><div class="box"><b id="dlgWho"></b><p id="dlgText"></p><div id="dlgOpts"></div></div></div>
 <input type="file" id="mapFile" accept="application/json,.json" hidden>
 <div id="stick"><i></i></div>
 <input id="chat" maxlength="80" placeholder="Сообщение…" autocomplete="off" enterkeyhint="send">
 <div id="err">Нужен браузер с поддержкой WebGL2.</div>
-<script type="module" src="./game.js?v=13"></script>
+<script type="module" src="./game.js?v=15"></script>
 </body>
 </html>
