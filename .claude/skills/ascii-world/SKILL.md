@@ -19,7 +19,7 @@ Glyphs sit in **horizontal rows on a screen grid** (cell `cellW × cellW*1.75` C
 
 Quality presets (`QUAL`) only change scene resolution (`ss`), grass count, overlay resolution/MSAA, bloom passes and particle caps — never the glyph grid or the final resolution.
 
-Camera: high and centred on the hero like the reference — forest pitch .98 rad (~56°), dungeon 1.22, distance 18 (portrait) / 16, fov 42 / 34; editor lerps to pitch 1.15, distance 22 × zoom. Follow uses the real frame time (`fdt`). Fog starts 17 m from the camera. Generated forests have clearings (`keepTree` noise; old maps migrated once via `MAP.groves`).
+Camera: **orthographic axonometry** (Project Zomboid / Sims look): fixed yaw `CAM_YAW` = 45°, elevation .615 rad (true isometric; dungeon .72, editor .95), `CAM_DIST` 70 m along the view ray, visible half-height `hh` 6.4 m (landscape) / 8.5 m (portrait) × editor zoom — set every frame in `update()`. WASD/stick are screen-relative (rotated by `CAM_YAW`). Because the camera is far away, **never use `cameraPosition` distance** for effects: fog and rain use distance from `uFocus` (hero); `linZ` is linear. Follow uses the real frame time (`fdt`). Fog starts 8 m from the hero. Generated forests have clearings (`keepTree` noise; old maps migrated once via `MAP.groves`).
 
 ## Materials / lighting
 
@@ -32,7 +32,7 @@ Camera: high and centred on the hero like the reference — forest pitch .98 rad
 - Trees: 4 species in `TREES` (oak, poplar, young, old) — trunk + branches + crown blobs, chosen by `treeKind(p)` (`p.v` or id-based, switchable in the inspector). Crowns are cut into see-through leaf clumps by 3D noise (`vnoise3` in `STD_FS`) and printed with the foliage glyph set.
 
 - Forest: `pathZ(x)` path (same formula in JS and GLSL), trees/rocks instanced, collision via `circles` (spatial hash) + `boxes`. Ruins door at `DOOR`, campfire at `CAMP`.
-- Grass: 90k instanced blades (only 12–30 % drawn per `QUAL.grass`), short and soft: wind = slow travelling gusts + one shared wave (no per-blade flutter), stroke angle quantised to 4 steps, strokes dimmer than letters. Wrapped around `uFocus` in a `GRASS_TILE` square, pushed away from `uPlayer`. Excluded on the path, ruins box and campfire.
+- Grass: 90k instanced blades (share from the panel × `QUAL.grass`), short and soft: wind = slow travelling gusts + one shared wave (no per-blade flutter), stroke angle quantised to 4 steps, strokes dimmer than letters. Wrapped around `uFocus` in a `GRASS_TILE` square, pushed away from `uPlayer`. Excluded on the path, ruins box and campfire.
 - Weather presets `WX` (keys 1–5): rain/snow instanced streaks wrapped around the camera, lightning `flash`, fog. Values are lerped into `Wc`.
 - Dungeon: 48×48 tile map (`TS = 2` m), instanced floor/walls, braziers, monsters with glowing eyes, exit ring `D.exit`.
 - Characters: `makeCharacter()` builds the low-poly mage (robe, mantle, cloak, beard, hat with bent tip, sleeves, hands, boots, staff + crystal `orbM`). `animChar()` animates walk, cast (right arm), cloak and hat tip. Player and NPCs share it; colours via options.

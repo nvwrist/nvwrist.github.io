@@ -191,13 +191,14 @@ vec3 lightAt(vec3 p, vec3 n){
     float nd=max(dot(n,d/max(dist,1e-3)),0.)*.7+.3; c+=uLC[i]*a*nd; }
   return c;
 }
-vec3 fogIt(vec3 c, vec3 p){ float d=length(p-cameraPosition); float f=1.-exp(-max(d-17.,0.)*uFogD); return mix(c,uFogCol,f); }
+vec3 fogIt(vec3 c, vec3 p){ float d=length(p.xz-uFocus.xz); float f=1.-exp(-max(d-8.,0.)*uFogD);   // axonometry: fog by distance from the hero, not from the camera
+   return mix(c,uFogCol,f); }
 float pathZ(float x){ return sin(x*.05)*6.+sin(x*.13)*1.5; }
 `;
 
 const OVF = /* glsl */`
 uniform highp sampler2D tSD; uniform vec2 uOvRes; uniform float uDT, uCN, uCF;
-float linZ(float z){ return uCN*uCF/(uCF - z*(uCF - uCN)); }
+float linZ(float z){ return uCN + z*(uCF - uCN); }   // orthographic: depth is linear
 bool behindScene(){ if(uDT < .5) return false; float d = texture2D(tSD, gl_FragCoord.xy/uOvRes).r; return linZ(gl_FragCoord.z) > linZ(d) + .15; }
 `;
 const STD_VS = COMMON + /* glsl */`
@@ -271,7 +272,9 @@ function stdMat({ color = [1, 1, 1], emis = [0, 0, 0], rim = 0, mode = 1, pat = 
 
 /* ---------- scene & camera ---------- */
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(36, 1, .3, 200);
+/* 2D axonometry like Project Zomboid / The Sims: orthographic camera, fixed 45° yaw, ~35° elevation (true isometric) */
+const CAM_YAW = Math.PI / 4, CAM_DIST = 70;
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, .5, 220);
 const forest = new THREE.Group(), dungeon = new THREE.Group(), weatherG = new THREE.Group();
 scene.add(forest, dungeon, weatherG);
 dungeon.visible = false;
@@ -417,13 +420,13 @@ grass.mat.uniforms.uB0.value.set(BLD.x0 - .4, BLD.z0 - .4);
 grass.mat.uniforms.uB1.value.set(BLD.x1 + .4, BLD.z1 + .4);
 grass.mat.uniforms.uCamp.value.set(CAMP.x, CAMP.z);
 
-/* grass settings (panel «🌿 трава»), stored in localStorage['ascii-grass-v2'].
+/* grass settings (panel «🌿 трава»), stored in localStorage['ascii-grass-v3'].
    Each row: key, label, min, max, step, default, hint. Defaults = the current look. */
 const GR_UI = [
   ['Форма', [
-    ['dens', 'количество', 0, 1, .01, .3, 'доля от 90 000 травинок (на слабых устройствах ещё меньше)'],
+    ['dens', 'количество', 0, 1, .01, .4, 'доля от 90 000 травинок (на слабых устройствах ещё меньше)'],
     ['radius', 'дальность', .3, 1, .02, 1, 'радиус, в котором рисуется трава'],
-    ['h', 'высота', .2, 3, .05, 1, 'общий множитель высоты'],
+    ['h', 'высота', .2, 3, .05, 1.3, 'общий множитель высоты'],
     ['hVar', 'разброс высоты', 0, 3, .05, 1, '0 — все одинаковые'],
     ['width', 'толщина', .3, 4, .05, 1, 'ширина основания травинки'],
     ['lean', 'случайный наклон', 0, 4, .05, 1, 'у каждой травинки свой наклон'],
@@ -437,10 +440,10 @@ const GR_UI = [
     ['push', 'отталкивание', 0, 3, .05, 1, 'как сильно героя «раздвигает» траву'],
   ]],
   ['Цвет и свет', [
-    ['br', 'яркость', .2, 3, .05, 1, ''],
-    ['gamma', 'гамма', .5, 1.5, .02, .9, 'ниже — светлее и контрастнее, выше — темнее'],
+    ['br', 'яркость', .2, 3, .05, 1.9, ''],
+    ['gamma', 'гамма', .5, 1.5, .02, .8, 'ниже — светлее и контрастнее, выше — темнее'],
     ['sat', 'насыщенность', 0, 2, .05, 1, '0 — серая'],
-    ['base', 'яркость корня', 0, 3, .05, 1, 'тёмный низ травинок'],
+    ['base', 'яркость корня', 0, 3, .05, 1.6, 'тёмный низ травинок'],
     ['sheen', 'блики ветра', 0, 3, .05, 1, 'светлые кончики в порывах'],
     ['dry', 'сухие пятна', 0, 1.5, .05, .6, 'жёлто-сухие участки'],
     ['clump', 'пятнистость', 0, 2, .05, 1, 'тёмные/светлые комки'],
@@ -448,8 +451,8 @@ const GR_UI = [
   ]],
   ['Штрихи (трава и дождь)', [
     ['steps', 'углов штриха', 2, 50, 1, 4, 'меньше — спокойнее, 50 — плавно (мерцает)'],
-    ['stGain', 'яркость штриха', .3, 4, .05, 1.8, 'в ячейке сетки'],
-    ['stBr', 'штрих: база', .1, 2, .05, .55, 'яркость поверх букв'],
+    ['stGain', 'яркость штриха', .3, 4, .05, 2.4, 'в ячейке сетки'],
+    ['stBr', 'штрих: база', .1, 2, .05, .85, 'яркость поверх букв'],
     ['stVar', 'штрих: разброс', 0, 1.5, .05, .3, 'случайная яркость'],
     ['stLen', 'длина штриха', .3, 2.5, .05, 1, ''],
     ['stLenVar', 'длина: разброс', 0, 1.5, .05, 0, ''],
@@ -459,7 +462,7 @@ const GR_UI = [
 ];
 const GR_DEF = {}; for (const [, rows] of GR_UI) for (const r of rows) GR_DEF[r[0]] = r[5];
 const GR = { ...GR_DEF };
-try { const v = JSON.parse(localStorage.getItem('ascii-grass-v2') || '{}'); for (const k in GR_DEF) if (typeof v[k] === 'number' && isFinite(v[k])) GR[k] = v[k]; } catch (_) { }
+try { const v = JSON.parse(localStorage.getItem('ascii-grass-v3') || '{}'); for (const k in GR_DEF) if (typeof v[k] === 'number' && isFinite(v[k])) GR[k] = v[k]; } catch (_) { }
 function applyGrass() {
   U.uGA.value.set(GR.h, GR.hVar, GR.width, GR.lean);
   U.uGB.value.set(GR.wind, GR.gustSpd, GR.flutter, GR.push);
@@ -1167,7 +1170,7 @@ $('bQ').onclick = () => {
 };
 {
   const box = $('grBody'), fmt = (v, st) => (st >= 1 ? String(Math.round(v)) : v.toFixed(2));
-  const save = () => { try { localStorage.setItem('ascii-grass-v2', JSON.stringify(GR)); } catch (_) { } };
+  const save = () => { try { localStorage.setItem('ascii-grass-v3', JSON.stringify(GR)); } catch (_) { } };
   const ins = [];
   for (const [title, rows] of GR_UI) {
     const hd = document.createElement('h4'); hd.textContent = title; box.appendChild(hd);
@@ -1182,7 +1185,7 @@ $('bQ').onclick = () => {
   }
   $('bGr').onclick = () => { const g = $('gr'); g.style.display = g.style.display === 'block' ? 'none' : 'block'; };
   $('grClose').onclick = () => { $('gr').style.display = 'none'; };
-  $('grReset').onclick = () => { Object.assign(GR, GR_DEF); ins.forEach(f => f()); applyGrass(); try { localStorage.removeItem('ascii-grass-v2'); } catch (_) { } };
+  $('grReset').onclick = () => { Object.assign(GR, GR_DEF); ins.forEach(f => f()); applyGrass(); try { localStorage.removeItem('ascii-grass-v3'); } catch (_) { } };
   $('grCopy').onclick = async () => {
     const t = JSON.stringify(GR);
     try { await navigator.clipboard.writeText(t); toast('настройки травы скопированы'); } catch (_) { prompt('Настройки травы (JSON):', t); }
@@ -1832,16 +1835,18 @@ function update(dt, rdt = dt) {
   let mx = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0) + joy.x,
     mz = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0) + joy.y;
   const ml = Math.hypot(mx, mz); if (ml > 1) { mx /= ml; mz /= ml; }
+  // keys / stick are screen-relative: up = up on screen, i.e. along the camera's ground direction
+  const wx = mx * Math.cos(CAM_YAW) + mz * Math.sin(CAM_YAW), wz = -mx * Math.sin(CAM_YAW) + mz * Math.cos(CAM_YAW);
   const run = keys.ShiftLeft || keys.ShiftRight || ml > .95 && (joy.x || joy.y);
   const spd = (run ? 6.2 : 3.6) * (fadeDir ? 0 : 1);
-  if (ED.on && ml > .12) { ED.fx += mx * 14 * dt; ED.fz += mz * 14 * dt; }
+  if (ED.on && ml > .12) { ED.fx += wx * 14 * dt; ED.fz += wz * 14 * dt; }
   const moving = ml > .12 && !chatOpen && !fadeDir && !ED.on && !dlgOpen;
   const wet = zone === 'forest' ? terW(P.x, P.z) : 0;
   if (moving) {
     const ws = wet > .5 ? .55 : 1;
-    tryMove(P, mx * spd * dt * ws, mz * spd * dt * ws);
+    tryMove(P, wx * spd * dt * ws, wz * spd * dt * ws);
     if (wet > .5 && rnd() < dt * 14) emit({ x: P.x + (rnd() - .5) * .6, y: P.y + .05, z: P.z + (rnd() - .5) * .6, vx: (rnd() - .5) * 1.5, vy: 1.2 + rnd(), vz: (rnd() - .5) * 1.5, r: .5, g: .7, b: 1, size: .05, life: .45, grav: 6 });
-    P.yaw = turn(P.yaw, Math.atan2(mx, mz), 1 - Math.exp(-dt * 14));
+    P.yaw = turn(P.yaw, Math.atan2(wx, wz), 1 - Math.exp(-dt * 14));
     if (zone === 'forest' && rnd() < dt * 6) emit({ x: P.x + (rnd() - .5) * .4, y: P.y + .05, z: P.z + (rnd() - .5) * .4, vy: .6, r: .25, g: .3, b: .22, size: .05, life: .4 });
   }
   P.y = lerp(P.y, groundY(P.x, P.z) - (wet > .5 ? .2 : 0), 1 - Math.exp(-dt * 18));
@@ -1863,10 +1868,13 @@ function update(dt, rdt = dt) {
   edZoom = lerp(edZoom, ED.on ? ED.zoom : 1, fk);
   edPitch = lerp(edPitch, ED.on ? 1 : 0, fk);
   focus.y = lerp(focus.y, groundY(focus.x, focus.z), fk);
-  const dist = lerp(aspect < 1 ? 18 : 16, 22, edPitch) * edZoom, pitch = lerp(zone === 'dungeon' ? 1.22 : .98, 1.15, edPitch);
-  camera.position.set(focus.x, focus.y + Math.sin(pitch) * dist, focus.z + Math.cos(pitch) * dist);
+  const hh = lerp(aspect < 1 ? 8.5 : 6.4, aspect < 1 ? 10 : 8, edPitch) * edZoom;      // half of the visible height in metres
+  const pitch = lerp(zone === 'dungeon' ? .72 : .615, .95, edPitch);
+  camera.left = -hh * aspect; camera.right = hh * aspect; camera.top = hh; camera.bottom = -hh; camera.updateProjectionMatrix();
+  const hd = Math.cos(pitch) * CAM_DIST;
+  camera.position.set(focus.x + Math.sin(CAM_YAW) * hd, focus.y + .9 + Math.sin(pitch) * CAM_DIST, focus.z + Math.cos(CAM_YAW) * hd);
   camera.lookAt(focus.x, focus.y + .9, focus.z);
-  grass.mat.uniforms.uGOff.value.set(0, -1.5);
+  grass.mat.uniforms.uGOff.value.set(0, 0);
   clearCol.setRGB(...Wc.fogc);
   ground.position.set(Math.round(focus.x), 0, Math.round(focus.z));
   camera.updateMatrixWorld(); tmpV.set(P.x, P.y + 1, P.z).project(camera);
@@ -2162,9 +2170,7 @@ function resize() {
   bA = makeRT(Math.ceil(sw / 3), Math.ceil(sh / 3), { type: hf, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
   bB = makeRT(Math.ceil(sw / 3), Math.ceil(sh / 3), { type: hf, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
   if (!asciiOn) rawRT = makeRT(db.x, db.y, { depthBuffer: true, samples: 4, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
-  camera.aspect = W / H;
-  camera.fov = camera.aspect < 1 ? 42 : 34;
-  camera.updateProjectionMatrix();
+  camera.updateProjectionMatrix();     // frustum size is set every frame in update()
   U.uRes.value.set(W, H); U.uAscii.value = asciiOn ? 1 : 0;
   U.tSD.value = sceneRT.depthTexture; U.uOvRes.value.set(ow, oh); U.uCN.value = camera.near; U.uCF.value = camera.far;
   cellMat.uniforms.uCellPx.value.set(cellW * sScale, cellH * sScale); cellMat.uniforms.uSize.value.set(sw, sh);
