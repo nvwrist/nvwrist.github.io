@@ -9,6 +9,7 @@ Personal site on GitHub Pages, served straight from `main` (no build step in thi
 | `index.html`, `assets/`, `favicon.svg`, `icons.svg`, `screenshots/` | Portfolio — **built output** of a React/Vite app whose sources live elsewhere. Commits named `Deploy …` replace these files. | **No.** Never hand-edit or regenerate them. |
 | `freon/` | FridgeScope — standalone 3D page (single `index.html`). | Yes, self-contained. |
 | `ascii/` | ASCII World — browser game (Three.js scene → ASCII shader). See the `ascii-world` skill. | Yes, self-contained. |
+| `zone/` | «Зона: Торговец» — Godot 4.7 web export (no threads, PWA for offline play). Built output of https://github.com/nvwrist/zone: re-export there, copy `build/web/*` here. | Only by re-exporting. |
 | `.nojekyll` | Keeps Pages from running Jekyll. | Keep. |
 
 ## Rules
