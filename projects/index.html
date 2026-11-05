@@ -2,22 +2,66 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0b">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>Проекты — nvwrist</title>
-<meta name="description" content="Портфолио работ: лендинги и интернет-магазины.">
+<meta name="description" content="Проекты nvwrist: лендинги для малого бизнеса, 3D-приложение FridgeScope, интернет-магазины.">
+<link rel="preload" href="./vendor/fonts/onest-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-<main>
-<div class="crumbs"><a href="/">nvwrist</a> / проекты</div>
-<h1>Проекты</h1>
-<p class="lead">Мои работы по категориям.</p>
-<div class="grid">
-  <a class="card" href="./landing/"><b>Лендинги</b><span>Посадочные страницы для бизнеса и продуктов</span></a>
-  <a class="card" href="./ecomm/"><b>Интернет-магазины</b><span>Каталоги, корзины, оформление заказа</span></a>
-  <a class="card" href="./freon/"><b>FridgeScope</b><span>3D-обучение ремонту холодильников</span></a>
-</div>
+<a class="skip" href="#main">К содержимому</a>
+<header class="top">
+  <div class="wrap">
+    <nav class="crumbs" aria-label="Навигация"><a href="/">nvwrist</a><i>/</i><span aria-current="page">проекты</span></nav>
+    <a class="tg" href="https://t.me/nvwrist">✈<span> Написать в Telegram</span></a>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap hero">
+    <span class="eyebrow">Портфолио</span>
+    <h1>Про<span class="g">екты</span></h1>
+    <p class="lead">Работающие демо, которые можно открыть и потрогать: лендинги с калькуляторами и конструкторами, 3D-интерфейс в браузере. Всё адаптировано под телефон.</p>
+    <ul class="stats">
+      <li><b>3</b> лендинга</li>
+      <li><b>1</b> 3D-приложение</li>
+      <li><b>0</b> внешних CDN</li>
+    </ul>
+  </div>
+
+  <div class="wrap bento">
+    <a class="cell c-land rv" href="./landing/">
+      <div class="fan" aria-hidden="true">
+        <img src="./previews/auto.webp" alt="" width="1280" height="800" loading="lazy">
+        <img src="./previews/dental.webp" alt="" width="1280" height="800">
+        <img src="./previews/flowers.webp" alt="" width="1280" height="800" loading="lazy">
+      </div>
+      <div class="txt">
+        <h2>Лендинги <small>3 работы</small></h2>
+        <p>Стоматология с калькулятором лечения, автосервис с подбором работ по симптому, цветочная мастерская с конструктором букета.</p>
+        <span class="go" aria-hidden="true">↗</span>
+      </div>
+    </a>
+    <a class="cell c-fr rv" href="./freon/">
+      <div class="shot"><img src="./previews/freon.webp" alt="FridgeScope: 3D-модель холодильника с датчиками и панелью неисправностей" width="1280" height="800" loading="lazy"></div>
+      <div class="txt">
+        <h2>FridgeScope</h2>
+        <p>3D-модель холодильника с датчиками на ESP32-S3: неисправности, слои, обучающие ролики.</p>
+        <span class="go" aria-hidden="true">↗</span>
+      </div>
+    </a>
+    <a class="cell c-shop soon rv" href="./ecomm/">
+      <div class="txt">
+        <h2>Интернет-магазины <small>скоро</small></h2>
+        <p>Каталог, корзина и оформление заказа. Первая работа в процессе.</p>
+      </div>
+      <div class="chips" aria-hidden="true"><span>каталог и фильтры</span><span>корзина</span><span>оформление</span><span>админка</span></div>
+    </a>
+  </div>
 </main>
+
+<footer><div class="wrap"><span>nvwrist · проекты</span><span>Лендинги — демо с вымышленными компаниями · <a href="/">на главную</a></span></div></footer>
 </body>
 </html>

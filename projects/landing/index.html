@@ -2,22 +2,87 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0b">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<title>Лендинги — проекты</title>
-<meta name="description" content="Демо-лендинги для малого бизнеса: клиника, автосервис, цветочная мастерская.">
+<title>Лендинги — проекты nvwrist</title>
+<meta name="description" content="Демо-лендинги для малого бизнеса: стоматология, автосервис, цветочная мастерская. С калькуляторами, конструктором и онлайн-записью.">
+<link rel="preload" href="../vendor/fonts/onest-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="../style.css">
 </head>
 <body>
-<main>
-<div class="crumbs"><a href="/">nvwrist</a> / <a href="../">проекты</a> / лендинги</div>
-<h1>Лендинги</h1>
-<p class="lead">Три посадочные страницы для малого бизнеса. Компании вымышленные, вёрстка и тексты настоящие: цены в открытом виде, форма с проверкой, работает на телефоне.</p>
-<div class="grid">
-  <a class="card" href="./dental/"><b>Стоматология «Липа»</b><span>Цены, первый визит, врачи, запись на осмотр</span></a>
-  <a class="card" href="./auto/"><b>Автосервис «Гараж 12»</b><span>Прайс на типовые работы, порядок приёма, гарантия</span></a>
-  <a class="card" href="./flowers/"><b>Мастерская «Ольха»</b><span>Каталог букетов, доставка по часам, заказ на дату</span></a>
-</div>
+<a class="skip" href="#main">К содержимому</a>
+<header class="top">
+  <div class="wrap">
+    <nav class="crumbs" aria-label="Навигация"><a href="/">nvwrist</a><i>/</i><a href="../">проекты</a><i>/</i><span aria-current="page">лендинги</span></nav>
+    <a class="tg" href="https://t.me/nvwrist">✈<span> Заказать лендинг</span></a>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap hero">
+    <span class="eyebrow">3 работы</span>
+    <h1>Лен<span class="g">динги</span></h1>
+    <p class="lead">Три посадочные страницы для малого бизнеса, каждая со своим характером и своей интерактивной фишкой. Компании вымышленные — вёрстка, тексты и логика настоящие.</p>
+  </div>
+
+  <div class="wrap works">
+    <a class="work rv" href="./dental/" style="--tint:radial-gradient(70% 80% at 30% 20%,oklch(70% .13 140 / .45),transparent),oklch(24% .04 165);--dot:oklch(88% .17 125)">
+      <div class="vis" aria-hidden="true">
+        <div class="browser"><i><b></b><b></b><b></b></i><img src="../previews/dental.webp" alt="" width="1280" height="800"></div>
+        <div class="phone"><img src="../previews/dental-m.webp" alt="" width="390" height="844" loading="lazy"></div>
+      </div>
+      <div class="info">
+        <span class="n">01 · КЛИНИКА</span>
+        <h2>Стоматология «Липа»</h2>
+        <p>Спокойный светлый лендинг: цена на бумаге до начала лечения и запись на конкретное время.</p>
+        <ul>
+          <li>Калькулятор лечения с рассрочкой</li>
+          <li>Выбор дня и свободного слота</li>
+          <li>Bento-блоки, стеклянные карточки, SVG-иллюстрации</li>
+        </ul>
+        <span class="open">Открыть демо <span aria-hidden="true">↗</span></span>
+      </div>
+    </a>
+
+    <a class="work rv" href="./auto/" style="--tint:radial-gradient(70% 80% at 70% 20%,oklch(87% .18 95 / .3),transparent),#141416;--dot:oklch(87% .18 95)">
+      <div class="vis" aria-hidden="true">
+        <div class="browser"><i><b></b><b></b><b></b></i><img src="../previews/auto.webp" alt="" width="1280" height="800" loading="lazy"></div>
+        <div class="phone"><img src="../previews/auto-m.webp" alt="" width="390" height="844" loading="lazy"></div>
+      </div>
+      <div class="info">
+        <span class="n">02 · АВТОСЕРВИС</span>
+        <h2>Автосервис «Гараж 12»</h2>
+        <p>Тёмный плотный интерфейс: прозрачные цены, смета в мессенджер и ни одной работы без согласования.</p>
+        <ul>
+          <li>Подбор работ по симптому с ценой и сроком</li>
+          <li>Прайс с вкладками и макет переписки со сметой</li>
+          <li>Анимированный тормозной диск, нарисованный кодом</li>
+        </ul>
+        <span class="open">Открыть демо <span aria-hidden="true">↗</span></span>
+      </div>
+    </a>
+
+    <a class="work rv" href="./flowers/" style="--tint:radial-gradient(70% 80% at 30% 30%,oklch(80% .08 20 / .45),transparent),oklch(26% .03 20);--dot:oklch(80% .09 18)">
+      <div class="vis" aria-hidden="true">
+        <div class="browser"><i><b></b><b></b><b></b></i><img src="../previews/flowers.webp" alt="" width="1280" height="800" loading="lazy"></div>
+        <div class="phone"><img src="../previews/flowers-m.webp" alt="" width="390" height="844" loading="lazy"></div>
+      </div>
+      <div class="info">
+        <span class="n">03 · ЦВЕТЫ</span>
+        <h2>Мастерская «Ольха»</h2>
+        <p>Редакционная типографика и генеративные букеты: каждый рисуется кодом по составу.</p>
+        <ul>
+          <li>Конструктор букета с живым превью и ценой</li>
+          <li>Каталог с выбором прямо в форму заказа</li>
+          <li>Загрузка курьеров по часам доставки</li>
+        </ul>
+        <span class="open">Открыть демо <span aria-hidden="true">↗</span></span>
+      </div>
+    </a>
+  </div>
 </main>
+
+<footer><div class="wrap"><span>Шрифты Manrope, Unbounded, JetBrains Mono, Cormorant, Onest — OFL, лежат в папках страниц</span><span><a href="../">все проекты</a> · <a href="/">на главную</a></span></div></footer>
 </body>
 </html>
